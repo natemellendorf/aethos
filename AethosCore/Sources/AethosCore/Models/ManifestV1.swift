@@ -7,6 +7,11 @@ public struct ManifestV1: Codable, Equatable, Sendable {
     public let totalSize: Int
     public let chunkIds: [Data]
 
+    // Convenience aliases used by higher-level components.
+    public var totalBytes: Int { totalSize }
+    public var chunkCount: Int { chunkIds.count }
+    public var chunkSize: Int { Self.chunkSize }
+
     public init(
         version: ProtocolVersion = .v1,
         totalSize: Int,
