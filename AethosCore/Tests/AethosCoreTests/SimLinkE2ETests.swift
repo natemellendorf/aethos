@@ -15,9 +15,9 @@ func simulatedLinkEventuallyDeliversPayload() throws {
     let senderStore = try AethosStore(path: senderDB)
     let receiverStore = try AethosStore(path: receiverDB)
 
-    let sender = SimPeer(name: "sender", store: senderStore)
-    let receiver = SimPeer(name: "receiver", store: receiverStore)
-    let link = SimLink()
+    let duplex = SimDuplexLink()
+    let sender = SimPeer(name: "sender", store: senderStore, link: duplex.endpointA())
+    let receiver = SimPeer(name: "receiver", store: receiverStore, link: duplex.endpointB())
 
     // 200KB deterministic payload.
     let payload = Data((0..<(200 * 1024)).map { UInt8($0 % 251) })
@@ -49,7 +49,7 @@ func simulatedLinkEventuallyDeliversPayload() throws {
     var delivered = false
     for i in 0..<50 {
         let sessionNow = now.addingTimeInterval(TimeInterval(i))
-        _ = try link.runSession(from: sender, to: receiver, budget: budget, now: sessionNow)
+        _ = try SimSession.run(from: sender, to: receiver, budget: budget, now: sessionNow)
 
         // Try to reassemble if receiver has manifest and all chunks.
         // Receiver records manifest/envelope into inbox; for E2E we use the sender's manifest
