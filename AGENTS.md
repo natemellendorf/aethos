@@ -29,19 +29,26 @@ Use 'bd' for task tracking
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
-# Aethos: Agent Operating Rules
+# Aethos Agent Rules (MVP0)
 
-## Non-negotiable
-- Use `bd` for all task tracking. Do not use ad-hoc TODO markdown.
-- On session start: run `bd prime` and `bd ready`.
-- Before ending session: run `bd sync`.
+## Always use Beads
+- At session start: `bd prime` then `bd ready`
+- Before finishing: `bd sync`
+- Work must map to a bd issue. If you discover work, create a new issue.
 
-## MVP0 Scope
-- Protocol + core model + identity + crypto + chunking + store.
-- No Zephyrs (relays) in MVP0.
-- No BLE transport in MVP0 (comes after core is stable).
+## Scope (MVP0)
+- Implement: Protocol, Identity, Crypto, Chunking, Store, Routing
+- No Zephyrs (relays)
+- No BLE transport yet
+- iOS app UI is not part of MVP0 (core only)
 
-## Architecture Style
-- Bead-style decomposition: each module owns its state; communicate via explicit interfaces.
-- Do not change protocol IDs/encoding rules without filing a bd issue tagged `protocol-change`.
+## Protocol Decisions (frozen for MVP0)
+- Encoding: CBOR
+- Hashing: SHA-256 for IDs
+- Signatures: Ed25519
+- Chunk size: 32768 bytes (32KB) fixed for v1
+- Envelope includes `toWayfarerId` visible in MVP0
 
+## Boundaries
+- Each bead owns its module directory only.
+- No cross-module changes without opening a bd issue tagged `boundary-change`.
