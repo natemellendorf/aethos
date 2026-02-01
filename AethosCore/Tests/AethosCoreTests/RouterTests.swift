@@ -66,7 +66,7 @@ func smallBudgetFitsOnlyMetadata() throws {
 
     let metadataBytes = manifestBytes.count + envelopeBytes.count
     let plan = try router.planNextSession(
-        budget: SessionBudget(maxBytes: metadataBytes + 10, maxItems: 10),
+        budget: SessionBudget(maxBytes: metadataBytes, maxItems: 10),
         now: now
     )
 
