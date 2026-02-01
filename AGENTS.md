@@ -28,3 +28,20 @@ Use 'bd' for task tracking
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+# Aethos: Agent Operating Rules
+
+## Non-negotiable
+- Use `bd` for all task tracking. Do not use ad-hoc TODO markdown.
+- On session start: run `bd prime` and `bd ready`.
+- Before ending session: run `bd sync`.
+
+## MVP0 Scope
+- Protocol + core model + identity + crypto + chunking + store.
+- No Zephyrs (relays) in MVP0.
+- No BLE transport in MVP0 (comes after core is stable).
+
+## Architecture Style
+- Bead-style decomposition: each module owns its state; communicate via explicit interfaces.
+- Do not change protocol IDs/encoding rules without filing a bd issue tagged `protocol-change`.
+
