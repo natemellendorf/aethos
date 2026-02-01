@@ -35,12 +35,34 @@ public struct SimPeer {
     public let router: Router
     public let link: Link
 
+    // Simulation-only state for multipart chunk delivery.
+    fileprivate let sendState = ChunkSendState()
+    fileprivate let receiveState = ChunkReceiveState()
+
     public init(name: String, store: AethosStore, link: Link) {
         self.name = name
         self.store = store
         self.router = Router(store: store)
         self.link = link
     }
+}
+
+// Mutable reference types to allow state updates without changing public API.
+fileprivate final class ChunkSendState {
+    var nextPartByChunkIdHex: [String: UInt16] = [:]
+}
+
+fileprivate final class ChunkReceiveState {
+    struct Partial {
+        let partCount: UInt16
+        var parts: [UInt16: Data]
+    }
+
+    var partialByChunkIdHex: [String: Partial] = [:]
+
+    var receivedManifestIds: Set<String> = []
+    var receivedEnvelopeIds: Set<String> = []
+    var receivedReceiptIds: Set<String> = []
 }
 
 public struct SessionReport: Equatable {
@@ -58,114 +80,162 @@ public struct SessionReport: Equatable {
 }
 
 public enum SimSession {
-    // Placeholder cargo encoding:
-    // payload := [cargoType: UInt8] + raw bytes
-    // id := sha256(payload)
-    private enum CargoType: UInt8 {
-        case envelope = 1
-        case manifest = 2
-        case chunk = 3
-        case receipt = 4
-    }
-
     public static func run(from: SimPeer, to: SimPeer, budget: SessionBudget, now: Date) throws -> SessionReport {
+        // Budget is treated as a frame budget.
         let plan = try from.router.planNextSession(budget: budget, now: now)
-        var sent = 0
-        var dup = 0
 
-        for (i, item) in plan.enumerated() {
-            let frame = encode(item)
-            try from.link.send(frame)
-            sent += 1
+        // Choose a payload size derived from session budget.
+        // Keep it small enough to require multipart for 32KB chunks, but large enough
+        // to make progress with small budgets.
+        let maxFramePayloadBytes = min(
+            CargoItem.defaultChunkPartBudgetBytes,
+            max(1, (budget.maxBytes / 2) - 64)
+        )
+        var remainingBytes = budget.maxBytes
+        var remainingItems = budget.maxItems
 
-            // Intentional duplication: every 3rd item is resent.
-            if i % 3 == 0 {
-                try from.link.send(frame)
-                sent += 1
-                dup += 1
-            }
-        }
+        var sentFrames = 0
+        var dupFrames = 0
 
-        var received = 0
-        while let frame = try to.link.receive() {
-            try handle(frame: frame, receiver: to, sender: from, now: now)
-            received += 1
-        }
+        for item in plan {
+            if remainingItems <= 0 || remainingBytes <= 0 { break }
 
-        return SessionReport(plannedCount: plan.count, sentFrames: sent, receivedFrames: received, duplicateFrames: dup)
-    }
+            switch item {
+            case .receipt, .envelope, .manifest:
+                let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
+                guard let frame = frames.first else { continue }
 
-    private static func encode(_ item: CargoItem) -> Frame {
-        let payload: Data
-        let type: UInt8
-
-        switch item {
-        case let .envelope(bytes):
-            payload = Data([CargoType.envelope.rawValue]) + bytes
-            type = CargoType.envelope.rawValue
-        case let .manifest(bytes):
-            payload = Data([CargoType.manifest.rawValue]) + bytes
-            type = CargoType.manifest.rawValue
-        case let .receipt(bytes):
-            payload = Data([CargoType.receipt.rawValue]) + bytes
-            type = CargoType.receipt.rawValue
-        case let .chunk(id, bytes):
-            // Include the chunkId explicitly to allow reconstruction without inspecting payload.
-            payload = Data([CargoType.chunk.rawValue]) + id + bytes
-            type = CargoType.chunk.rawValue
-        }
-
-        let id = AethosIDs.sha256(payload)
-        return Frame(type: type, id: id, partIndex: 0, partCount: 1, payload: payload)
-    }
-
-    private static func handle(frame: Frame, receiver: SimPeer, sender: SimPeer, now: Date) throws {
-        // Minimal handler based on placeholder encoding.
-        guard frame.partCount == 1, frame.partIndex == 0 else { return }
-        guard let cargoType = frame.payload.first else { return }
-
-        switch cargoType {
-        case CargoType.chunk.rawValue:
-            // [type][chunkId:32][bytes...]
-            guard frame.payload.count >= 1 + 32 else { return }
-            let chunkId = frame.payload.subdata(in: 1..<33)
-            let bytes = frame.payload.subdata(in: 33..<frame.payload.count)
-            try receiver.store.putChunk(id: chunkId, bytes: bytes, receivedAt: now)
-
-        case CargoType.manifest.rawValue:
-            let bytes = frame.payload.subdata(in: 1..<frame.payload.count)
-            let id = AethosIDs.manifestId(canonicalBytes: bytes)
-            try receiver.store.recordReceived(item: InboxItem(id: id, kind: .manifest, payload: bytes, receivedAt: now))
-
-            // Enqueue a receipt back to the sender.
-            let receiptBytes = Data("manifestAck:\(Hex.encode(id))".utf8)
-            let receiptId = AethosIDs.sha256(receiptBytes)
-            try receiver.store.enqueue(item: OutboxItem(id: receiptId, kind: .receipt, payload: receiptBytes, enqueuedAt: now))
-
-        case CargoType.envelope.rawValue:
-            let bytes = frame.payload.subdata(in: 1..<frame.payload.count)
-            let id = AethosIDs.envelopeId(canonicalBytes: bytes)
-            try receiver.store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: now))
-
-            let receiptBytes = Data("envelopeAck:\(Hex.encode(id))".utf8)
-            let receiptId = AethosIDs.sha256(receiptBytes)
-            try receiver.store.enqueue(item: OutboxItem(id: receiptId, kind: .receipt, payload: receiptBytes, enqueuedAt: now))
-
-        case CargoType.receipt.rawValue:
-            let bytes = frame.payload.subdata(in: 1..<frame.payload.count)
-            let id = AethosIDs.sha256(bytes)
-            try receiver.store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: now))
-
-            // Ack simulation: if this is an envelope ack, mark it on the sender.
-            if let s = String(data: bytes, encoding: .utf8), s.hasPrefix("envelopeAck:") {
-                let hex = String(s.dropFirst("envelopeAck:".count))
-                if let envId = Hex.decode(hex) {
-                    try sender.store.markAcked(envelopeId: envId)
+                // Avoid resending metadata once the receiver has it (simulation-only).
+                let idHex = Hex.encode(frame.id)
+                switch CargoCodec.FrameType(rawValue: frame.type) {
+                case .manifest:
+                    if to.receiveState.receivedManifestIds.contains(idHex) { continue }
+                case .envelope:
+                    if to.receiveState.receivedEnvelopeIds.contains(idHex) { continue }
+                case .receipt:
+                    if to.receiveState.receivedReceiptIds.contains(idHex) { continue }
+                default:
+                    break
                 }
+
+                if frame.sizeBytes > remainingBytes { continue }
+
+                try from.link.send(frame)
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+                sentFrames += 1
+
+
+                // Duplicate some frames intentionally.
+                if sentFrames % 3 == 0, frame.sizeBytes <= remainingBytes {
+                    try from.link.send(frame)
+                    remainingBytes -= frame.sizeBytes
+                    remainingItems -= 1
+                    sentFrames += 1
+                    dupFrames += 1
+                }
+
+            case let .chunk(id, bytes):
+                // Multipart: send as many parts as fit in the budget for this session,
+                // advancing a per-sender cursor so we eventually deliver the full chunk.
+                let allFrames = try CargoCodec.encode(.chunk(id: id, bytes: bytes), maxFramePayloadBytes: maxFramePayloadBytes)
+                guard !allFrames.isEmpty else { continue }
+
+                let key = Hex.encode(id)
+                var cursor = Int(from.sendState.nextPartByChunkIdHex[key] ?? 0) % allFrames.count
+                var partsSent = 0
+
+                while remainingItems > 0 && remainingBytes > 0 && partsSent < allFrames.count {
+                    let frame = allFrames[cursor]
+                    if frame.sizeBytes > remainingBytes { break }
+
+                    try from.link.send(frame)
+                    remainingBytes -= frame.sizeBytes
+                    remainingItems -= 1
+                    sentFrames += 1
+                    partsSent += 1
+
+                    if sentFrames % 3 == 0, frame.sizeBytes <= remainingBytes, remainingItems > 0 {
+                        try from.link.send(frame)
+                        remainingBytes -= frame.sizeBytes
+                        remainingItems -= 1
+                        sentFrames += 1
+                        dupFrames += 1
+                    }
+
+                    cursor = (cursor + 1) % allFrames.count
+                }
+
+                from.sendState.nextPartByChunkIdHex[key] = UInt16(cursor)
+            }
+        }
+
+        var receivedFrames = 0
+        var seenChunkPartsThisSession: Set<String> = []
+        while let frame = try to.link.receive() {
+            try handle(frame: frame, receiver: to, sender: from, now: now, seenChunkPartsThisSession: &seenChunkPartsThisSession)
+            receivedFrames += 1
+        }
+
+        return SessionReport(
+            plannedCount: plan.count,
+            sentFrames: sentFrames,
+            receivedFrames: receivedFrames,
+            duplicateFrames: dupFrames
+        )
+    }
+
+    private static func handle(
+        frame: Frame,
+        receiver: SimPeer,
+        sender: SimPeer,
+        now: Date,
+        seenChunkPartsThisSession: inout Set<String>
+    ) throws {
+        let fragment = try CargoCodec.decode(frame)
+        switch fragment {
+        case let .metadata(type, id, bytes):
+            switch CargoCodec.FrameType(rawValue: type) {
+            case .manifest:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .manifest, payload: bytes, receivedAt: now))
+                receiver.receiveState.receivedManifestIds.insert(Hex.encode(id))
+            case .envelope:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: now))
+                receiver.receiveState.receivedEnvelopeIds.insert(Hex.encode(id))
+            case .receipt:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: now))
+                receiver.receiveState.receivedReceiptIds.insert(Hex.encode(id))
+            default:
+                break
             }
 
-        default:
-            return
+        case let .chunkPart(id, partIndex, partCount, bytes):
+            let key = "\(Hex.encode(id)):\(partIndex)"
+            if seenChunkPartsThisSession.contains(key) {
+                return
+            }
+            seenChunkPartsThisSession.insert(key)
+
+            let chunkKey = Hex.encode(id)
+            var partial = receiver.receiveState.partialByChunkIdHex[chunkKey] ?? .init(partCount: partCount, parts: [:])
+            if partial.partCount != partCount {
+                // Keep the first observed partCount.
+                return
+            }
+            if partial.parts[partIndex] == nil {
+                partial.parts[partIndex] = bytes
+            }
+            receiver.receiveState.partialByChunkIdHex[chunkKey] = partial
+
+            if partial.parts.count == Int(partCount) {
+                var full = Data()
+                for i in 0..<partCount {
+                    guard let part = partial.parts[i] else { return }
+                    full.append(part)
+                }
+                try receiver.store.putChunk(id: id, bytes: full, receivedAt: now)
+                receiver.receiveState.partialByChunkIdHex[chunkKey] = nil
+            }
         }
     }
 }

@@ -36,9 +36,13 @@ public enum CargoItem: Equatable, Sendable {
         case let .receipt(bytes):
             return bytes.count
         case let .chunk(_, bytes):
-            return bytes.count
+            // With framing, chunks may be transferred in parts; use a conservative
+            // per-session planning size so routers can make progress with small budgets.
+            return min(bytes.count, Self.defaultChunkPartBudgetBytes)
         }
     }
+
+    public static let defaultChunkPartBudgetBytes: Int = 3000
 }
 
 public struct SessionBudget: Equatable, Sendable {

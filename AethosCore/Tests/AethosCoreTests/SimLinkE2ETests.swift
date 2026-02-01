@@ -43,8 +43,8 @@ func simulatedLinkEventuallyDeliversPayload() throws {
     try senderStore.enqueue(item: OutboxItem(id: manifestId, kind: .manifest, payload: manifestBytes, enqueuedAt: now))
     try senderStore.enqueue(item: OutboxItem(id: AethosIDs.envelopeId(canonicalBytes: envelopeBytes), kind: .envelope, payload: envelopeBytes, enqueuedAt: now))
 
-    // Must be >= Chunking.chunkSize to allow at least one chunk per session.
-    let budget = SessionBudget(maxBytes: 40 * 1024, maxItems: 8)
+    // Small budget to force multipart chunk transfer.
+    let budget = SessionBudget(maxBytes: 6 * 1024, maxItems: 8)
 
     var delivered = false
     for i in 0..<50 {
