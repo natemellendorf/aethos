@@ -19,11 +19,23 @@ public enum AethosIDs {
         sha256(canonicalBytes)
     }
 
+    public static func manifestId(from manifest: ManifestV1) -> Data {
+        manifestId(canonicalBytes: CanonicalEncoderV1.encode(manifest))
+    }
+
     public static func envelopeId(canonicalBytes: Data) -> Data {
         sha256(canonicalBytes)
     }
 
+    public static func envelopeId(from envelope: EnvelopeV1) -> Data {
+        envelopeId(canonicalBytes: CanonicalEncoderV1.encode(envelope))
+    }
+
     public static func receiptId(canonicalBytes: Data) -> Data {
         sha256(canonicalBytes)
+    }
+
+    public static func receiptId(from receipt: ReceiptV1) -> Data {
+        receiptId(canonicalBytes: CanonicalEncoderV1.encode(receipt))
     }
 }
