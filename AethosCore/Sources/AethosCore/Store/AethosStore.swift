@@ -231,6 +231,50 @@ public final class AethosStore {
         return items
     }
 
+    // Planning-only API: read queued outbox items without modifying store state.
+    public func peekQueuedOutbox(limit: Int) throws -> [OutboxItem] {
+        guard limit > 0 else { return [] }
+        let sql = """
+        SELECT id, kind, payload, enqueued_at, expires_at
+        FROM outbox
+        WHERE status = ?
+        ORDER BY enqueued_at ASC, rowid ASC
+        LIMIT ?;
+        """
+
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        try bindInt32(stmt, index: 1, value: OutboxStatus.queued.rawValue)
+        try bindInt32(stmt, index: 2, value: Int32(limit))
+
+        var items: [OutboxItem] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+
+            guard let id = columnData(stmt, index: 0),
+                  let kindText = columnText(stmt, index: 1),
+                  let payload = columnData(stmt, index: 2)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column")
+            }
+
+            let enqueuedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 3)))
+            let expiresAtSeconds = columnNullableInt64(stmt, index: 4)
+            let expiresAt = expiresAtSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+
+            guard let kind = OutboxItem.Kind(rawValue: kindText) else {
+                throw StoreError.sqliteError("Unknown outbox kind: \(kindText)")
+            }
+
+            items.append(OutboxItem(id: id, kind: kind, payload: payload, enqueuedAt: enqueuedAt, expiresAt: expiresAt))
+        }
+
+        return items
+    }
+
     public func markDelivered(itemId: Data) throws {
         try updateOutboxStatus(id: itemId, status: .delivered)
     }
