@@ -11,7 +11,7 @@ public final class Router {
         let enqueuedAt: Date
         var manifestBytes: Data?
         var envelopeBytes: Data?
-        var chunkIds: [Data]
+        var chunkOrder: [Data]
         var nextChunkIndex: Int
     }
 
@@ -52,16 +52,22 @@ public final class Router {
         // Build pending transfers keyed by manifestId.
         var transfers: [Data: PendingTransfer] = [:]
 
+        let nowSec = Int64(now.timeIntervalSince1970.rounded(.down))
+
         // First, manifests define chunk ordering.
         for item in activeOutbox where item.kind == .manifest {
             let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
             let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
+
+            let rotation = chunkRotationOffset(nowSec: nowSec, manifestId: manifestId, count: parsed.chunkIds.count)
+            let chunkOrder = rotate(parsed.chunkIds, by: rotation)
+
             let t = PendingTransfer(
                 manifestId: manifestId,
                 enqueuedAt: item.enqueuedAt,
                 manifestBytes: item.payload,
                 envelopeBytes: nil,
-                chunkIds: parsed.chunkIds,
+                chunkOrder: chunkOrder,
                 nextChunkIndex: 0
             )
             transfers[manifestId] = t
@@ -84,7 +90,7 @@ public final class Router {
                     enqueuedAt: item.enqueuedAt,
                     manifestBytes: nil,
                     envelopeBytes: item.payload,
-                    chunkIds: [],
+                    chunkOrder: [],
                     nextChunkIndex: 0
                 )
             }
@@ -107,19 +113,19 @@ public final class Router {
 
         // Priority 3: chunks, round-robin across transfers.
         // Filter to transfers that have chunkIds.
-        orderedTransfers = orderedTransfers.filter { !$0.chunkIds.isEmpty }
+        orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
         var idx = 0
         while !orderedTransfers.isEmpty {
             if plan.count >= budget.maxItems { break }
 
             if idx >= orderedTransfers.count { idx = 0 }
             var t = orderedTransfers[idx]
-            if t.nextChunkIndex >= t.chunkIds.count {
+            if t.nextChunkIndex >= t.chunkOrder.count {
                 orderedTransfers.remove(at: idx)
                 continue
             }
 
-            let chunkId = t.chunkIds[t.nextChunkIndex]
+            let chunkId = t.chunkOrder[t.nextChunkIndex]
             guard let bytes = try store.getChunk(id: chunkId) else {
                 throw RouterError.missingChunkBytes(id: chunkId)
             }
@@ -134,6 +140,20 @@ public final class Router {
         }
 
         return plan
+    }
+
+    private func chunkRotationOffset(nowSec: Int64, manifestId: Data, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let seed = Int(nowSec) + Int(manifestId.first ?? 0)
+        let m = seed % count
+        return m >= 0 ? m : (m + count)
+    }
+
+    private func rotate(_ items: [Data], by offset: Int) -> [Data] {
+        guard !items.isEmpty else { return [] }
+        let o = offset % items.count
+        if o == 0 { return items }
+        return Array(items[o...]) + Array(items[..<o])
     }
 }
 
