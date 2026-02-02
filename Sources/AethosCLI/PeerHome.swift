@@ -12,6 +12,11 @@ struct PeerHome {
     var transportOutboxDir: URL { transportDir.appendingPathComponent("outbox", isDirectory: true) }
     var transportArchiveDir: URL { transportDir.appendingPathComponent("archive", isDirectory: true) }
 
+    // CLI/FileDrop MVP helpers
+    var transportPartsDir: URL { transportDir.appendingPathComponent("parts", isDirectory: true) }
+    var transportManifestCacheDir: URL { transportPartsDir.appendingPathComponent("manifests", isDirectory: true) }
+    var transportCursorPath: URL { transportDir.appendingPathComponent("send-cursors.json", isDirectory: false) }
+
     init(root: URL) {
         self.root = root
     }
@@ -29,5 +34,8 @@ struct PeerHome {
         try fm.createDirectory(at: transportInboxDir, withIntermediateDirectories: true, attributes: nil)
         try fm.createDirectory(at: transportOutboxDir, withIntermediateDirectories: true, attributes: nil)
         try fm.createDirectory(at: transportArchiveDir, withIntermediateDirectories: true, attributes: nil)
+
+        try fm.createDirectory(at: transportPartsDir, withIntermediateDirectories: true, attributes: nil)
+        try fm.createDirectory(at: transportManifestCacheDir, withIntermediateDirectories: true, attributes: nil)
     }
 }
