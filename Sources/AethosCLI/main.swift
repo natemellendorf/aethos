@@ -99,51 +99,347 @@ struct CLI {
 
     private func cmdSend(home: PeerHome, args: [String]) throws {
         let parsed = try parseKeyValues(args)
-        _ = home
 
-        guard let file = parsed["--file"], !file.isEmpty else {
-            throw CLIError.usage("send requires --file <path>")
-        }
-        guard let to = parsed["--to"], !to.isEmpty else {
-            throw CLIError.usage("send requires --to <wayfarerId-hex>")
+        guard let file = parsed["--file"], !file.isEmpty else { throw CLIError.usage("send requires --file <path>") }
+        guard let toHex = parsed["--to"], !toHex.isEmpty else { throw CLIError.usage("send requires --to <wayfarerId-hex>") }
+        guard let toWayfarerId = Hex.decode(toHex), toWayfarerId.count == 32 else {
+            throw CLIError.usage("--to must be 32-byte hex")
         }
 
-        guard Hex.decode(to) != nil else {
-            throw CLIError.usage("--to must be hex")
-        }
         let fileURL = URL(fileURLWithPath: file)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw CLIError.usage("--file not found: \(file)")
+        let data = try Data(contentsOf: fileURL)
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let now = Date()
+
+        let chunks = Chunking.chunk(data)
+        for c in chunks {
+            try store.putChunk(id: c.id, bytes: c.bytes, receivedAt: now)
         }
 
-        print("send not implemented yet")
+        let manifest = Chunking.buildManifest(for: data)
+        let manifestBytes = CanonicalEncoderV1.encode(manifest)
+        let manifestId = AethosIDs.manifestId(from: manifest)
+
+        let envelope = EnvelopeV1(
+            toWayfarerId: toWayfarerId,
+            manifestId: manifestId,
+            body: Data((fileURL.lastPathComponent).utf8)
+        )
+        let envelopeBytes = CanonicalEncoderV1.encode(envelope)
+        let envelopeId = AethosIDs.envelopeId(from: envelope)
+
+        try store.enqueue(item: OutboxItem(id: manifestId, kind: .manifest, payload: manifestBytes, enqueuedAt: now))
+        try store.enqueue(item: OutboxItem(id: envelopeId, kind: .envelope, payload: envelopeBytes, enqueuedAt: now))
+
+        print("Queued send")
+        print("  file=\(fileURL.path)")
+        print("  bytes=\(data.count)")
+        print("  chunks=\(chunks.count)")
+        print("  manifestId=\(manifestId.hexString)")
+        print("  envelopeId=\(envelopeId.hexString)")
     }
 
     private func cmdIngest(home: PeerHome, args: [String]) throws {
         let parsed = try parseKeyValues(args)
-        _ = home
+        let ingestMax = Int(parsed["--max"] ?? "100")
+        guard let ingestMax, ingestMax > 0 else { throw CLIError.usage("--max must be > 0") }
 
-        guard let input = parsed["--input"], !input.isEmpty else {
-            throw CLIError.usage("ingest requires --input <path>")
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let link = try FileDropLink(inboxDir: home.transportInboxDir, outboxDir: home.transportOutboxDir, archiveDir: home.transportArchiveDir)
+
+        let fm = FileManager.default
+        let beforeBad = countBadFiles(in: home.transportArchiveDir, fileManager: fm)
+
+        var receivedFrames = 0
+        var storedItems = 0
+
+        var partialParts: [String: (partCount: UInt16, parts: [UInt16: URL])] = [:]
+
+        for _ in 0..<ingestMax {
+            guard let frame = try link.receive() else { break }
+            receivedFrames += 1
+
+            let fragment = try CargoCodec.decode(frame)
+            switch fragment {
+            case let .metadata(type, id, bytes):
+                switch CargoCodec.FrameType(rawValue: type) {
+                case .receipt:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: Date()))
+                    storedItems += 1
+                case .envelope:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: Date()))
+                    storedItems += 1
+                case .manifest:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .manifest, payload: bytes, receivedAt: Date()))
+                    storedItems += 1
+
+                    // Cache manifest canonical bytes for later reassembly.
+                    let manifestPath = home.transportManifestCacheDir.appendingPathComponent("\(Hex.encode(id)).bin")
+                    if !fm.fileExists(atPath: manifestPath.path) {
+                        try bytes.write(to: manifestPath, options: [.atomic])
+                    }
+                case .chunk, .none:
+                    break
+                }
+
+            case let .chunkPart(id, partIndex, partCount, bytes):
+                let chunkHex = Hex.encode(id)
+                let chunkDir = home.transportPartsDir.appendingPathComponent("chunk-\(chunkHex)", isDirectory: true)
+                try fm.createDirectory(at: chunkDir, withIntermediateDirectories: true)
+                let partURL = chunkDir.appendingPathComponent("part-\(partIndex)-of-\(partCount).bin")
+
+                if !fm.fileExists(atPath: partURL.path) {
+                    try bytes.write(to: partURL, options: [.atomic])
+                }
+
+                var entry = partialParts[chunkHex] ?? (partCount: partCount, parts: [:])
+                if entry.partCount == partCount {
+                    entry.parts[partIndex] = partURL
+                }
+                partialParts[chunkHex] = entry
+
+                if entry.parts.count == Int(partCount) {
+                    var full = Data()
+                    full.reserveCapacity(entry.parts.values.reduce(0) { $0 + ((try? Data(contentsOf: $1).count) ?? 0) })
+                    for i in 0..<partCount {
+                        guard let url = entry.parts[i], let partData = try? Data(contentsOf: url) else {
+                            full = Data()
+                            break
+                        }
+                        full.append(partData)
+                    }
+
+                    if !full.isEmpty {
+                        try store.putChunk(id: id, bytes: full, receivedAt: Date())
+                        storedItems += 1
+
+                        // Cleanup part files after successful assembly.
+                        try? fm.removeItem(at: chunkDir)
+                        partialParts[chunkHex] = nil
+                    }
+                }
+            }
+
+            // After each frame, try to reassemble any cached manifests that are now satisfiable.
+            storedItems += try tryReassembleCachedManifests(home: home, store: store)
         }
-        let url = URL(fileURLWithPath: input)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw CLIError.usage("--input not found: \(input)")
-        }
-        print("ingest not implemented yet")
+
+        let afterBad = countBadFiles(in: home.transportArchiveDir, fileManager: fm)
+        let badDelta = Swift.max(0, afterBad - beforeBad)
+
+        print("ingest")
+        print("  frames=\(receivedFrames)")
+        print("  stored=\(storedItems)")
+        print("  archivedBad=\(badDelta)")
     }
 
     private func cmdPump(home: PeerHome, args: [String]) throws {
         let parsed = try parseKeyValues(args)
-        _ = home
 
-        if let bytes = parsed["--budget-bytes"], Int(bytes) == nil {
-            throw CLIError.usage("--budget-bytes must be an Int")
+        let maxBytes = Int(parsed["--max-bytes"] ?? "6144")
+        let maxItems = Int(parsed["--max-items"] ?? "64")
+        guard let maxBytes, maxBytes > 0 else { throw CLIError.usage("--max-bytes must be > 0") }
+        guard let maxItems, maxItems > 0 else { throw CLIError.usage("--max-items must be > 0") }
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let router = Router(store: store)
+        let link = try FileDropLink(inboxDir: home.transportInboxDir, outboxDir: home.transportOutboxDir, archiveDir: home.transportArchiveDir)
+
+        let budget = SessionBudget(maxBytes: maxBytes, maxItems: maxItems)
+        let plan = try router.planNextSession(budget: budget, now: Date())
+
+        var cursor = try loadSendCursors(from: home.transportCursorPath)
+
+        var sentFrames = 0
+        var sentBytes = 0
+
+        let maxFramePayloadBytes = 1024
+        var remainingBytes = maxBytes
+        var remainingItems = maxItems
+
+        for item in plan {
+            if remainingBytes <= 0 || remainingItems <= 0 { break }
+
+            let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
+            if frames.isEmpty { continue }
+
+            switch item {
+            case .receipt, .envelope, .manifest:
+                let frame = frames[0]
+                if frame.sizeBytes > remainingBytes { continue }
+                try link.send(frame)
+                sentFrames += 1
+                sentBytes += frame.sizeBytes
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+
+            case let .chunk(id, _):
+                let chunkHex = Hex.encode(id)
+                let start = Int(cursor[chunkHex] ?? 0) % frames.count
+                var idx = start
+                var sentAny = false
+
+                while remainingBytes > 0 && remainingItems > 0 {
+                    let frame = frames[idx]
+                    if frame.sizeBytes > remainingBytes { break }
+                    try link.send(frame)
+                    sentFrames += 1
+                    sentBytes += frame.sizeBytes
+                    remainingBytes -= frame.sizeBytes
+                    remainingItems -= 1
+                    sentAny = true
+
+                    idx = (idx + 1) % frames.count
+                    if idx == start { break }
+                }
+
+                if sentAny {
+                    cursor[chunkHex] = UInt16(idx)
+                }
+            }
         }
-        if let items = parsed["--budget-items"], Int(items) == nil {
-            throw CLIError.usage("--budget-items must be an Int")
+
+        try saveSendCursors(cursor, to: home.transportCursorPath)
+
+        print("pump")
+        print("  plannedItems=\(plan.count)")
+        print("  framesSent=\(sentFrames)")
+        print("  bytesSent=\(sentBytes)")
+    }
+
+    private func countBadFiles(in dir: URL, fileManager: FileManager) -> Int {
+        let entries = (try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        return entries.filter { $0.lastPathComponent.contains(".bad") }.count
+    }
+
+    private func loadSendCursors(from url: URL) throws -> [String: UInt16] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+        let data = try Data(contentsOf: url)
+        let decoded = try JSONDecoder().decode([String: UInt16].self, from: data)
+        return decoded
+    }
+
+    private func saveSendCursors(_ cursors: [String: UInt16], to url: URL) throws {
+        let data = try JSONEncoder().encode(cursors)
+        try data.write(to: url, options: [.atomic])
+    }
+
+    private func tryReassembleCachedManifests(home: PeerHome, store: AethosStore) throws -> Int {
+        let fm = FileManager.default
+        let manifestFiles = (try? fm.contentsOfDirectory(at: home.transportManifestCacheDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        var deliveredCount = 0
+
+        for file in manifestFiles where file.pathExtension == "bin" {
+            let manifestBytes = try Data(contentsOf: file)
+            let (totalSize, chunkIds) = try parseManifestCanonical(manifestBytes)
+            let manifest = ManifestV1(totalSize: totalSize, chunkIds: chunkIds)
+
+            var chunksById: [Data: Data] = [:]
+            chunksById.reserveCapacity(chunkIds.count)
+            var all = true
+            for id in chunkIds {
+                if let bytes = try store.getChunk(id: id) {
+                    chunksById[id] = bytes
+                } else {
+                    all = false
+                    break
+                }
+            }
+            guard all else { continue }
+
+            let rebuilt = try Chunking.reassemble(chunksById: chunksById, manifest: manifest)
+            let outName = "reassembled-\(AethosIDs.manifestId(canonicalBytes: manifestBytes).hexString).bin"
+            let outURL = home.transportArchiveDir.appendingPathComponent(outName, isDirectory: false)
+            if !fm.fileExists(atPath: outURL.path) {
+                try rebuilt.write(to: outURL, options: [.atomic])
+                deliveredCount += 1
+            }
         }
-        print("pump not implemented yet")
+
+        return deliveredCount
+    }
+
+    private func parseManifestCanonical(_ bytes: Data) throws -> (totalSize: Int, chunkIds: [Data]) {
+        var r = CanonicalReader(bytes)
+        _ = r.readUInt8() // version
+        let type = r.readUInt8()
+        guard type == CanonicalEncoderV1.TypeDiscriminator.manifest.rawValue else {
+            throw CLIError.usage("manifest canonical bytes have wrong type")
+        }
+
+        var total: Int = 0
+        var chunkIds: [Data] = []
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { break }
+            guard let raw = r.readData(count: Int(len)) else { break }
+
+            switch fid {
+            case CanonicalEncoderV1.ManifestField.totalSize.rawValue:
+                if raw.count == 8 {
+                    total = Int(CanonicalReader.readUInt64BE(raw))
+                }
+            case CanonicalEncoderV1.ManifestField.chunkIds.rawValue:
+                chunkIds = try parseDataArray(raw)
+            default:
+                break
+            }
+        }
+
+        return (total, chunkIds)
+    }
+
+    private func parseDataArray(_ raw: Data) throws -> [Data] {
+        var r = CanonicalReader(raw)
+        guard let count = r.readUInt32() else { return [] }
+        var out: [Data] = []
+        out.reserveCapacity(Int(count))
+        for _ in 0..<count {
+            guard let len = r.readUInt32() else { break }
+            guard let b = r.readData(count: Int(len)) else { break }
+            out.append(b)
+        }
+        return out
+    }
+
+    private struct CanonicalReader {
+        private let data: Data
+        private var offset: Int = 0
+
+        init(_ data: Data) { self.data = data }
+        var isAtEnd: Bool { offset >= data.count }
+
+        mutating func readUInt8() -> UInt8? {
+            guard offset + 1 <= data.count else { return nil }
+            let v = data[offset]
+            offset += 1
+            return v
+        }
+
+        mutating func readUInt32() -> UInt32? {
+            guard let b0 = readUInt8(), let b1 = readUInt8(), let b2 = readUInt8(), let b3 = readUInt8() else { return nil }
+            return (UInt32(b0) << 24) | (UInt32(b1) << 16) | (UInt32(b2) << 8) | UInt32(b3)
+        }
+
+        mutating func readData(count: Int) -> Data? {
+            guard count >= 0, offset + count <= data.count else { return nil }
+            let slice = data[offset..<offset + count]
+            offset += count
+            return Data(slice)
+        }
+
+        static func readUInt64BE(_ data: Data) -> UInt64 {
+            var v: UInt64 = 0
+            for b in data.prefix(8) {
+                v = (v << 8) | UInt64(b)
+            }
+            return v
+        }
     }
 
     private func parseKeyValues(_ args: [String]) throws -> [String: String] {
@@ -171,12 +467,17 @@ struct CLI {
     Commands:
       init        Initialize peer home (dirs, store, identity)
       status      Show peer home, identity, and paths
-      send        Queue a send (stub)
-      ingest      Ingest incoming frames/files (stub)
-      pump        Run a budgeted pump cycle (stub)
+      send        Queue a file for delivery (file -> chunks + manifest/envelope)
+      ingest      Read frames from inbox and store them
+      pump        Plan + write frames to outbox
 
     Global options:
       --home <path>    Peer home directory (default: ./peer)
+
+    Command options:
+      send   --file <path> --to <wayfarerIdHex>
+      ingest --max <n>
+      pump   --max-bytes <n> --max-items <n>
     """
 }
 
