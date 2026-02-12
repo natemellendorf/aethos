@@ -110,7 +110,11 @@ public final class FileDropLink: Link {
     // MARK: Archiving
 
     private func archiveGood(_ url: URL) throws {
-        let name = url.lastPathComponent
+        var name = url.lastPathComponent
+        // Rename processed inbound files so they don't match the outbound "out-*" pattern.
+        if name.hasPrefix("out-") {
+            name = "in-" + name.dropFirst(4)
+        }
         let dest = archiveDir.appendingPathComponent(name, isDirectory: false)
         try moveItemReplacing(source: url, dest: dest)
     }

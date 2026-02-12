@@ -156,8 +156,6 @@ struct CLI {
         var receivedFrames = 0
         var storedItems = 0
 
-        var partialParts: [String: (partCount: UInt16, parts: [UInt16: URL])] = [:]
-
         for _ in 0..<ingestMax {
             guard let frame = try link.receive() else { break }
             receivedFrames += 1
@@ -195,17 +193,24 @@ struct CLI {
                     try bytes.write(to: partURL, options: [.atomic])
                 }
 
-                var entry = partialParts[chunkHex] ?? (partCount: partCount, parts: [:])
-                if entry.partCount == partCount {
-                    entry.parts[partIndex] = partURL
+                // Scan disk for all existing parts (spans across ingest invocations).
+                let existingFiles = (try? fm.contentsOfDirectory(at: chunkDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+                var diskParts: [UInt16: URL] = [:]
+                for f in existingFiles {
+                    let name = f.deletingPathExtension().lastPathComponent
+                    let comps = name.split(separator: "-")
+                    if comps.count == 4, comps[0] == "part", comps[2] == "of",
+                       let idx = UInt16(comps[1]), let total = UInt16(comps[3]),
+                       total == partCount {
+                        diskParts[idx] = f
+                    }
                 }
-                partialParts[chunkHex] = entry
 
-                if entry.parts.count == Int(partCount) {
+                if diskParts.count == Int(partCount) {
                     var full = Data()
-                    full.reserveCapacity(entry.parts.values.reduce(0) { $0 + ((try? Data(contentsOf: $1).count) ?? 0) })
+                    full.reserveCapacity(diskParts.values.reduce(0) { $0 + ((try? Data(contentsOf: $1).count) ?? 0) })
                     for i in 0..<partCount {
-                        guard let url = entry.parts[i], let partData = try? Data(contentsOf: url) else {
+                        guard let url = diskParts[i], let partData = try? Data(contentsOf: url) else {
                             full = Data()
                             break
                         }
@@ -218,7 +223,6 @@ struct CLI {
 
                         // Cleanup part files after successful assembly.
                         try? fm.removeItem(at: chunkDir)
-                        partialParts[chunkHex] = nil
                     }
                 }
             }
@@ -249,8 +253,10 @@ struct CLI {
         let router = Router(store: store)
         let link = try FileDropLink(inboxDir: home.transportInboxDir, outboxDir: home.transportOutboxDir, archiveDir: home.transportArchiveDir)
 
-        let budget = SessionBudget(maxBytes: maxBytes, maxItems: maxItems)
-        let plan = try router.planNextSession(budget: budget, now: Date())
+        // Use an inflated planning budget so the router includes all chunks in the plan.
+        // The pump's actual send loop enforces the real budget per frame.
+        let planBudget = SessionBudget(maxBytes: maxBytes * 10, maxItems: maxItems * 10)
+        let plan = try router.planNextSession(budget: planBudget, now: Date())
 
         var cursor = try loadSendCursors(from: home.transportCursorPath)
 
@@ -268,7 +274,27 @@ struct CLI {
             if frames.isEmpty { continue }
 
             switch item {
-            case .receipt, .envelope, .manifest:
+            case let .receipt(bytes):
+                let frame = frames[0]
+                if frame.sizeBytes > remainingBytes { continue }
+                try link.send(frame)
+                sentFrames += 1
+                sentBytes += frame.sizeBytes
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+                try store.markDelivered(itemId: AethosIDs.receiptId(canonicalBytes: bytes))
+
+            case let .envelope(bytes):
+                let frame = frames[0]
+                if frame.sizeBytes > remainingBytes { continue }
+                try link.send(frame)
+                sentFrames += 1
+                sentBytes += frame.sizeBytes
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+                try store.markDelivered(itemId: AethosIDs.envelopeId(canonicalBytes: bytes))
+
+            case .manifest:
                 let frame = frames[0]
                 if frame.sizeBytes > remainingBytes { continue }
                 try link.send(frame)
@@ -279,27 +305,15 @@ struct CLI {
 
             case let .chunk(id, _):
                 let chunkHex = Hex.encode(id)
-                let start = Int(cursor[chunkHex] ?? 0) % frames.count
-                var idx = start
-                var sentAny = false
-
-                while remainingBytes > 0 && remainingItems > 0 {
-                    let frame = frames[idx]
-                    if frame.sizeBytes > remainingBytes { break }
-                    try link.send(frame)
-                    sentFrames += 1
-                    sentBytes += frame.sizeBytes
-                    remainingBytes -= frame.sizeBytes
-                    remainingItems -= 1
-                    sentAny = true
-
-                    idx = (idx + 1) % frames.count
-                    if idx == start { break }
-                }
-
-                if sentAny {
-                    cursor[chunkHex] = UInt16(idx)
-                }
+                let idx = Int(cursor[chunkHex] ?? 0) % frames.count
+                let frame = frames[idx]
+                if frame.sizeBytes > remainingBytes { continue }
+                try link.send(frame)
+                sentFrames += 1
+                sentBytes += frame.sizeBytes
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+                cursor[chunkHex] = UInt16((idx + 1) % frames.count)
             }
         }
 
@@ -484,9 +498,9 @@ struct CLI {
 do {
     try CLI(args: CommandLine.arguments).run()
 } catch let CLIError.usage(msg) {
-    fputs("\(msg)\n", stderr)
+    FileHandle.standardError.write(Data("\(msg)\n".utf8))
     exit(2)
 } catch {
-    fputs("Error: \(error)\n", stderr)
+    FileHandle.standardError.write(Data("Error: \(error)\n".utf8))
     exit(1)
 }
