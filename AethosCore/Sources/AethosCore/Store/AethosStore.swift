@@ -287,6 +287,68 @@ public final class AethosStore {
         try updateOutboxStatus(id: envelopeId, status: .acked)
     }
 
+    // Query all outbox items (any status) for a given kind, ordered by enqueue time.
+    public func listOutbox(kind: OutboxItem.Kind, limit: Int) throws -> [(item: OutboxItem, status: String)] {
+        guard limit > 0 else { return [] }
+        let sql = """
+        SELECT id, kind, payload, status, enqueued_at, expires_at
+        FROM outbox
+        WHERE kind = ?
+        ORDER BY enqueued_at ASC
+        LIMIT ?;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        try bindText(stmt, index: 1, text: kind.rawValue)
+        try bindInt32(stmt, index: 2, value: Int32(limit))
+
+        var results: [(item: OutboxItem, status: String)] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+
+            guard let id = columnData(stmt, index: 0),
+                  let kindText = columnText(stmt, index: 1),
+                  let payload = columnData(stmt, index: 2)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column")
+            }
+
+            let statusRaw = sqlite3_column_int(stmt, 3)
+            let statusName: String
+            switch OutboxStatus(rawValue: statusRaw) {
+            case .queued:    statusName = "queued"
+            case .inFlight:  statusName = "sending"
+            case .delivered: statusName = "delivered"
+            case .acked:     statusName = "acked"
+            case .none:      statusName = "unknown"
+            }
+
+            let enqueuedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 4)))
+            let expiresAtSeconds = columnNullableInt64(stmt, index: 5)
+            let expiresAt = expiresAtSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+
+            guard let k = OutboxItem.Kind(rawValue: kindText) else {
+                throw StoreError.sqliteError("Unknown outbox kind: \(kindText)")
+            }
+
+            let item = OutboxItem(id: id, kind: k, payload: payload, enqueuedAt: enqueuedAt, expiresAt: expiresAt)
+            results.append((item: item, status: statusName))
+        }
+        return results
+    }
+
+    // Check whether a chunk exists in the store (without reading bytes).
+    public func hasChunk(id: Data) throws -> Bool {
+        let sql = "SELECT 1 FROM chunks WHERE id = ? LIMIT 1;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindData(stmt, index: 1, data: id)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
     // MARK: Inbox
 
     public func recordReceived(item: InboxItem) throws {

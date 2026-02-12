@@ -26,6 +26,8 @@ struct CLI {
             try cmdStatus(home: home, args: rest)
         case "send":
             try cmdSend(home: home, args: rest)
+        case "transfers":
+            try cmdTransfers(home: home, args: rest)
         case "ingest":
             try cmdIngest(home: home, args: rest)
         case "pump":
@@ -139,6 +141,115 @@ struct CLI {
         print("  chunks=\(chunks.count)")
         print("  manifestId=\(manifestId.hexString)")
         print("  envelopeId=\(envelopeId.hexString)")
+    }
+
+    private func cmdTransfers(home: PeerHome, args: [String]) throws {
+        let jsonFlag = args.contains("--json")
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let fm = FileManager.default
+
+        struct TransferInfo {
+            let manifestId: String
+            let direction: String      // "sending" | "receiving"
+            let state: String          // "queued" | "sending" | "receiving" | "complete"
+            let totalBytes: Int
+            let chunksTotal: Int
+            let chunksAvailable: Int
+            let reassembledFile: String?
+        }
+
+        var transfers: [TransferInfo] = []
+
+        // ── Sending transfers: outbox manifests ──
+        let outboxManifests = try store.listOutbox(kind: .manifest, limit: 1000)
+        for (item, status) in outboxManifests {
+            let manifestId = Hex.encode(item.id)
+            let (totalSize, chunkIds) = try parseManifestCanonical(item.payload)
+            var available = 0
+            for cid in chunkIds {
+                if try store.hasChunk(id: cid) { available += 1 }
+            }
+            transfers.append(TransferInfo(
+                manifestId: manifestId,
+                direction: "sending",
+                state: status,
+                totalBytes: totalSize,
+                chunksTotal: chunkIds.count,
+                chunksAvailable: available,
+                reassembledFile: nil
+            ))
+        }
+
+        // ── Receiving transfers: cached manifests on disk ──
+        let manifestFiles = (try? fm.contentsOfDirectory(at: home.transportManifestCacheDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        for file in manifestFiles where file.pathExtension == "bin" {
+            let manifestBytes = try Data(contentsOf: file)
+            let manifestId = AethosIDs.manifestId(canonicalBytes: manifestBytes).hexString
+            let (totalSize, chunkIds) = try parseManifestCanonical(manifestBytes)
+
+            var available = 0
+            for cid in chunkIds {
+                if try store.hasChunk(id: cid) { available += 1 }
+            }
+
+            let outName = "reassembled-\(manifestId).bin"
+            let outURL = home.transportArchiveDir.appendingPathComponent(outName, isDirectory: false)
+            let reassembled: String? = fm.fileExists(atPath: outURL.path) ? outURL.path : nil
+
+            let state: String
+            if reassembled != nil {
+                state = "complete"
+            } else if available == chunkIds.count {
+                state = "reassembling"
+            } else {
+                state = "receiving"
+            }
+
+            transfers.append(TransferInfo(
+                manifestId: manifestId,
+                direction: "receiving",
+                state: state,
+                totalBytes: totalSize,
+                chunksTotal: chunkIds.count,
+                chunksAvailable: available,
+                reassembledFile: reassembled
+            ))
+        }
+
+        if jsonFlag {
+            var arr: [[String: Any]] = []
+            for t in transfers {
+                var dict: [String: Any] = [
+                    "manifestId": t.manifestId,
+                    "direction": t.direction,
+                    "state": t.state,
+                    "totalBytes": t.totalBytes,
+                    "chunksTotal": t.chunksTotal,
+                    "chunksAvailable": t.chunksAvailable,
+                ]
+                if let rf = t.reassembledFile {
+                    dict["reassembledFile"] = rf
+                }
+                arr.append(dict)
+            }
+            let obj: [String: Any] = ["transfers": arr]
+            let jsonData = try JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+            print(String(data: jsonData, encoding: .utf8) ?? "{}")
+        } else {
+            if transfers.isEmpty {
+                print("No transfers.")
+            } else {
+                for t in transfers {
+                    print("\(t.direction)  \(t.manifestId)")
+                    print("  state=\(t.state)  bytes=\(t.totalBytes)  chunks=\(t.chunksAvailable)/\(t.chunksTotal)")
+                    if let rf = t.reassembledFile {
+                        print("  file=\(rf)")
+                    }
+                }
+            }
+        }
     }
 
     private func cmdIngest(home: PeerHome, args: [String]) throws {
@@ -482,6 +593,7 @@ struct CLI {
       init        Initialize peer home (dirs, store, identity)
       status      Show peer home, identity, and paths
       send        Queue a file for delivery (file -> chunks + manifest/envelope)
+      transfers   List transfers with state and chunk progress
       ingest      Read frames from inbox and store them
       pump        Plan + write frames to outbox
 
@@ -489,9 +601,10 @@ struct CLI {
       --home <path>    Peer home directory (default: ./peer)
 
     Command options:
-      send   --file <path> --to <wayfarerIdHex>
-      ingest --max <n>
-      pump   --max-bytes <n> --max-items <n>
+      send       --file <path> --to <wayfarerIdHex>
+      transfers  --json
+      ingest     --max <n>
+      pump       --max-bytes <n> --max-items <n>
     """
 }
 
