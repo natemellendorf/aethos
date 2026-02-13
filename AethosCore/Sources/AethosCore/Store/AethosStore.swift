@@ -306,6 +306,36 @@ public final class AethosStore {
         try stepDone(stmt)
     }
 
+    public func listInboxByKind(_ kind: InboxItem.Kind) throws -> [InboxItem] {
+        let sql = "SELECT id, kind, payload, received_at, expires_at FROM inbox WHERE kind = ? ORDER BY received_at ASC;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: kind.rawValue)
+
+        var items: [InboxItem] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+
+            guard let id = columnData(stmt, index: 0),
+                  let kindText = columnText(stmt, index: 1),
+                  let payload = columnData(stmt, index: 2)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column in inbox")
+            }
+            let receivedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 3)))
+            let expiresAtSec = columnNullableInt64(stmt, index: 4)
+            let expiresAt = expiresAtSec.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+
+            guard let k = InboxItem.Kind(rawValue: kindText) else {
+                throw StoreError.sqliteError("Unknown inbox kind: \(kindText)")
+            }
+            items.append(InboxItem(id: id, kind: k, payload: payload, receivedAt: receivedAt, expiresAt: expiresAt))
+        }
+        return items
+    }
+
     // MARK: TTL + Eviction
 
     public func evictExpired(now: Date) throws -> EvictionCounts {
@@ -314,6 +344,173 @@ public final class AethosStore {
         let outbox = try deleteExpired(table: "outbox", nowSec: nowSec)
         let inbox = try deleteExpired(table: "inbox", nowSec: nowSec)
         return EvictionCounts(chunks: chunks, outbox: outbox, inbox: inbox)
+    }
+
+    // MARK: Transfers
+
+    public func createTransfer(_ t: Transfer) throws {
+        let sql = """
+        INSERT OR IGNORE INTO transfers (
+            transfer_id, direction, peer_from, peer_to,
+            created_at, updated_at, last_activity_at, status,
+            original_filename, bytes_total, bytes_sent, bytes_received,
+            parts_total, parts_sent, parts_received,
+            manifest_hash, payload_hash, verified, last_error
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        let now = Self.epochSeconds(Date())
+        try bindText(stmt, index: 1, text: t.transferId)
+        try bindText(stmt, index: 2, text: t.direction.rawValue)
+        try bindText(stmt, index: 3, text: t.peerFrom)
+        try bindText(stmt, index: 4, text: t.peerTo)
+        try bindInt64(stmt, index: 5, value: Self.epochSeconds(t.createdAt))
+        try bindInt64(stmt, index: 6, value: Self.epochSeconds(t.updatedAt))
+        try bindInt64(stmt, index: 7, value: Self.epochSeconds(t.lastActivityAt))
+        try bindText(stmt, index: 8, text: t.status.rawValue)
+        try bindNullableText(stmt, index: 9, text: t.originalFilename)
+        try bindInt64(stmt, index: 10, value: t.bytesTotal)
+        try bindInt64(stmt, index: 11, value: t.bytesSent)
+        try bindInt64(stmt, index: 12, value: t.bytesReceived)
+        try bindInt32(stmt, index: 13, value: t.partsTotal)
+        try bindInt32(stmt, index: 14, value: t.partsSent)
+        try bindInt32(stmt, index: 15, value: t.partsReceived)
+        try bindNullableText(stmt, index: 16, text: t.manifestHash)
+        try bindNullableText(stmt, index: 17, text: t.payloadHash)
+        try bindInt32(stmt, index: 18, value: t.verified ? 1 : 0)
+        try bindNullableText(stmt, index: 19, text: t.lastError)
+
+        try stepDone(stmt)
+    }
+
+    public func updateTransfer(_ t: Transfer) throws {
+        let sql = """
+        UPDATE transfers SET
+            status = ?, updated_at = ?, last_activity_at = ?,
+            original_filename = ?, bytes_sent = ?, bytes_received = ?,
+            parts_sent = ?, parts_received = ?,
+            manifest_hash = ?, payload_hash = ?, verified = ?, last_error = ?
+        WHERE transfer_id = ?;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        try bindText(stmt, index: 1, text: t.status.rawValue)
+        try bindInt64(stmt, index: 2, value: Self.epochSeconds(t.updatedAt))
+        try bindInt64(stmt, index: 3, value: Self.epochSeconds(t.lastActivityAt))
+        try bindNullableText(stmt, index: 4, text: t.originalFilename)
+        try bindInt64(stmt, index: 5, value: t.bytesSent)
+        try bindInt64(stmt, index: 6, value: t.bytesReceived)
+        try bindInt32(stmt, index: 7, value: t.partsSent)
+        try bindInt32(stmt, index: 8, value: t.partsReceived)
+        try bindNullableText(stmt, index: 9, text: t.manifestHash)
+        try bindNullableText(stmt, index: 10, text: t.payloadHash)
+        try bindInt32(stmt, index: 11, value: t.verified ? 1 : 0)
+        try bindNullableText(stmt, index: 12, text: t.lastError)
+        try bindText(stmt, index: 13, text: t.transferId)
+
+        try stepDone(stmt)
+    }
+
+    public func getTransfer(id: String) throws -> Transfer? {
+        let sql = "SELECT * FROM transfers WHERE transfer_id = ? LIMIT 1;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: id)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            return try readTransferRow(stmt)
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    public func getTransferByManifestHash(_ hash: String, direction: Transfer.Direction) throws -> Transfer? {
+        let sql = "SELECT * FROM transfers WHERE manifest_hash = ? AND direction = ? LIMIT 1;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: hash)
+        try bindText(stmt, index: 2, text: direction.rawValue)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            return try readTransferRow(stmt)
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    public func listTransfers(direction: Transfer.Direction? = nil) throws -> [Transfer] {
+        let sql: String
+        if let direction {
+            sql = "SELECT * FROM transfers WHERE direction = ? ORDER BY created_at DESC;"
+        } else {
+            sql = "SELECT * FROM transfers ORDER BY created_at DESC;"
+        }
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        if let direction {
+            try bindText(stmt, index: 1, text: direction.rawValue)
+        }
+
+        var transfers: [Transfer] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            transfers.append(try readTransferRow(stmt))
+        }
+        return transfers
+    }
+
+    private func readTransferRow(_ stmt: OpaquePointer) throws -> Transfer {
+        guard let transferId = columnText(stmt, index: 0),
+              let directionStr = columnText(stmt, index: 1),
+              let peerFrom = columnText(stmt, index: 2),
+              let peerTo = columnText(stmt, index: 3),
+              let statusStr = columnText(stmt, index: 7)
+        else {
+            throw StoreError.sqliteError("NULL in required transfer column")
+        }
+
+        guard let direction = Transfer.Direction(rawValue: directionStr) else {
+            throw StoreError.sqliteError("Unknown transfer direction: \(directionStr)")
+        }
+        guard let status = Transfer.Status(rawValue: statusStr) else {
+            throw StoreError.sqliteError("Unknown transfer status: \(statusStr)")
+        }
+
+        return Transfer(
+            transferId: transferId,
+            direction: direction,
+            peerFrom: peerFrom,
+            peerTo: peerTo,
+            createdAt: Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 4))),
+            updatedAt: Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 5))),
+            lastActivityAt: Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 6))),
+            status: status,
+            originalFilename: columnText(stmt, index: 8),
+            bytesTotal: columnInt64(stmt, index: 9),
+            bytesSent: columnInt64(stmt, index: 10),
+            bytesReceived: columnInt64(stmt, index: 11),
+            partsTotal: Int32(columnInt64(stmt, index: 12)),
+            partsSent: Int32(columnInt64(stmt, index: 13)),
+            partsReceived: Int32(columnInt64(stmt, index: 14)),
+            manifestHash: columnText(stmt, index: 15),
+            payloadHash: columnText(stmt, index: 16),
+            verified: columnInt64(stmt, index: 17) != 0,
+            lastError: columnText(stmt, index: 18)
+        )
     }
 
     // MARK: Schema
@@ -351,12 +548,46 @@ public final class AethosStore {
                 expires_at INTEGER
             );
             """)
-            try exec("PRAGMA user_version = 1;")
+            try migrateV1toV2()
+            try exec("PRAGMA user_version = 2;")
         case 1:
+            try migrateV1toV2()
+            try exec("PRAGMA user_version = 2;")
+        case 2:
             return
         default:
             throw StoreError.unsupportedSchemaVersion(version)
         }
+    }
+
+    private func migrateV1toV2() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS transfers (
+            transfer_id TEXT PRIMARY KEY NOT NULL,
+            direction TEXT NOT NULL,
+            peer_from TEXT NOT NULL,
+            peer_to TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_activity_at INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            original_filename TEXT,
+            bytes_total INTEGER NOT NULL DEFAULT 0,
+            bytes_sent INTEGER NOT NULL DEFAULT 0,
+            bytes_received INTEGER NOT NULL DEFAULT 0,
+            parts_total INTEGER NOT NULL DEFAULT 0,
+            parts_sent INTEGER NOT NULL DEFAULT 0,
+            parts_received INTEGER NOT NULL DEFAULT 0,
+            manifest_hash TEXT,
+            payload_hash TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS transfers_status_idx ON transfers(status);
+        CREATE INDEX IF NOT EXISTS transfers_manifest_hash_idx ON transfers(manifest_hash);
+        CREATE INDEX IF NOT EXISTS transfers_direction_idx ON transfers(direction);
+        """)
     }
 
     private func userVersion() throws -> Int {
@@ -436,6 +667,14 @@ public final class AethosStore {
 
     private func bindText(_ stmt: OpaquePointer, index: Int32, text: String) throws {
         guard sqlite3_bind_text(stmt, index, text, -1, SQLITE_TRANSIENT) == SQLITE_OK else { throw sqliteError() }
+    }
+
+    private func bindNullableText(_ stmt: OpaquePointer, index: Int32, text: String?) throws {
+        if let text {
+            try bindText(stmt, index: index, text: text)
+        } else {
+            guard sqlite3_bind_null(stmt, index) == SQLITE_OK else { throw sqliteError() }
+        }
     }
 
     private func bindData(_ stmt: OpaquePointer, index: Int32, data: Data) throws {
