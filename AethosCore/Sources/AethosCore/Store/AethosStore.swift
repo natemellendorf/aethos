@@ -306,6 +306,36 @@ public final class AethosStore {
         try stepDone(stmt)
     }
 
+    public func listInboxByKind(_ kind: InboxItem.Kind) throws -> [InboxItem] {
+        let sql = "SELECT id, kind, payload, received_at, expires_at FROM inbox WHERE kind = ? ORDER BY received_at ASC;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: kind.rawValue)
+
+        var items: [InboxItem] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+
+            guard let id = columnData(stmt, index: 0),
+                  let kindText = columnText(stmt, index: 1),
+                  let payload = columnData(stmt, index: 2)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column in inbox")
+            }
+            let receivedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 3)))
+            let expiresAtSec = columnNullableInt64(stmt, index: 4)
+            let expiresAt = expiresAtSec.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+
+            guard let k = InboxItem.Kind(rawValue: kindText) else {
+                throw StoreError.sqliteError("Unknown inbox kind: \(kindText)")
+            }
+            items.append(InboxItem(id: id, kind: k, payload: payload, receivedAt: receivedAt, expiresAt: expiresAt))
+        }
+        return items
+    }
+
     // MARK: TTL + Eviction
 
     public func evictExpired(now: Date) throws -> EvictionCounts {

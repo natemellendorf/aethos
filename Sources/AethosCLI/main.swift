@@ -262,6 +262,21 @@ struct CLI {
                 case .receipt:
                     try store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: Date()))
                     storedItems += 1
+
+                    // Correlate receipt to outbound transfer on the sender side.
+                    // ReceiptV1 contains manifestId — use it to find the matching outbound transfer.
+                    if let receiptInfo = try? parseReceiptCanonical(bytes) {
+                        let manifestHashHex = Hex.encode(receiptInfo.manifestId)
+                        if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .outbound) {
+                            if transfer.status == .sending || transfer.status == .queued {
+                                transfer.status = .complete
+                                transfer.verified = true
+                                transfer.updatedAt = Date()
+                                transfer.lastActivityAt = Date()
+                                try store.updateTransfer(transfer)
+                            }
+                        }
+                    }
                 case .envelope:
                     try store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: Date()))
                     storedItems += 1
@@ -682,6 +697,20 @@ struct CLI {
                         transfer.lastActivityAt = Date()
                         try store.updateTransfer(transfer)
                     }
+
+                    // Generate and enqueue a receipt so the sender can observe completion.
+                    // Look up the envelope for this manifest from the inbox.
+                    let envelopeId = try findEnvelopeIdForManifest(manifestIdData, store: store)
+                    let receipt = ReceiptV1(
+                        envelopeId: envelopeId ?? Data(),
+                        manifestId: manifestIdData,
+                        receivedAtUnixMs: UInt64(Date().timeIntervalSince1970 * 1000)
+                    )
+                    let receiptBytes = CanonicalEncoderV1.encode(receipt)
+                    let receiptId = AethosIDs.receiptId(from: receipt)
+                    try store.enqueue(item: OutboxItem(
+                        id: receiptId, kind: .receipt, payload: receiptBytes, enqueuedAt: Date()
+                    ))
                 }
             } catch {
                 // Mark inbound transfer as failed on integrity mismatch
@@ -769,6 +798,59 @@ struct CLI {
         }
 
         return ParsedEnvelope(toWayfarerId: toWayfarerId, manifestId: manifestId, body: body)
+    }
+
+    private struct ParsedReceipt {
+        let envelopeId: Data
+        let manifestId: Data
+        let receivedAtUnixMs: UInt64
+    }
+
+    private func parseReceiptCanonical(_ bytes: Data) throws -> ParsedReceipt {
+        var r = CanonicalReader(bytes)
+        _ = r.readUInt8() // version
+        let type = r.readUInt8()
+        guard type == CanonicalEncoderV1.TypeDiscriminator.receipt.rawValue else {
+            throw CLIError.usage("receipt canonical bytes have wrong type")
+        }
+
+        var envelopeId = Data()
+        var manifestId = Data()
+        var receivedAtUnixMs: UInt64 = 0
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { break }
+            guard let raw = r.readData(count: Int(len)) else { break }
+
+            switch fid {
+            case CanonicalEncoderV1.ReceiptField.envelopeId.rawValue:
+                envelopeId = raw
+            case CanonicalEncoderV1.ReceiptField.manifestId.rawValue:
+                manifestId = raw
+            case CanonicalEncoderV1.ReceiptField.receivedAtUnixMs.rawValue:
+                if raw.count == 8 {
+                    receivedAtUnixMs = CanonicalReader.readUInt64BE(raw)
+                }
+            default:
+                break
+            }
+        }
+
+        return ParsedReceipt(envelopeId: envelopeId, manifestId: manifestId, receivedAtUnixMs: receivedAtUnixMs)
+    }
+
+    /// Look up the envelopeId that references a given manifestId from inbox envelope items.
+    private func findEnvelopeIdForManifest(_ manifestId: Data, store: AethosStore) throws -> Data? {
+        let envelopes = try store.listInboxByKind(.envelope)
+        for item in envelopes {
+            if let env = try? parseEnvelopeCanonical(item.payload) {
+                if env.manifestId == manifestId {
+                    return item.id
+                }
+            }
+        }
+        return nil
     }
 
     private func parseDataArray(_ raw: Data) throws -> [Data] {
