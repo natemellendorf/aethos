@@ -126,14 +126,22 @@ struct CLI {
             if storeExists {
                 let store = try AethosStore(path: home.storeSQLitePath)
                 let transfers = try store.listTransfers()
-                obj["transfers_summary"] = [
-                    "total": transfers.count,
-                    "queued": transfers.filter { $0.status == .queued }.count,
-                    "sending": transfers.filter { $0.status == .sending }.count,
-                    "receiving": transfers.filter { $0.status == .receiving }.count,
-                    "complete": transfers.filter { $0.status == .complete }.count,
-                    "failed": transfers.filter { $0.status == .failed }.count,
-                ]
+                var tSummary: [String: Any] = [:]
+                tSummary["total"] = transfers.count
+                tSummary["queued"] = transfers.filter { $0.status == .queued }.count
+                tSummary["sending"] = transfers.filter { $0.status == .sending }.count
+                tSummary["receiving"] = transfers.filter { $0.status == .receiving }.count
+                tSummary["complete"] = transfers.filter { $0.status == .complete }.count
+                tSummary["failed"] = transfers.filter { $0.status == .failed }.count
+                tSummary["evicted"] = transfers.filter { $0.evicted }.count
+                obj["transfers_summary"] = tSummary
+
+                var cSummary: [String: Any] = [:]
+                cSummary["origin"] = transfers.filter { $0.custody == .origin }.count
+                cSummary["relay"] = transfers.filter { $0.custody == .relay }.count
+                cSummary["inbound"] = transfers.filter { $0.custody == .inbound }.count
+                cSummary["relay_cache_bytes"] = (try? store.relayCacheBytes()) ?? Int64(0)
+                obj["custody_summary"] = cSummary
             }
 
             print(jsonString(obj))
@@ -271,6 +279,7 @@ struct CLI {
                             if transfer.status == .sending || transfer.status == .queued {
                                 transfer.status = .complete
                                 transfer.verified = true
+                                transfer.completedAt = Date()
                                 transfer.updatedAt = Date()
                                 transfer.lastActivityAt = Date()
                                 try store.updateTransfer(transfer)
@@ -574,7 +583,10 @@ struct CLI {
                     case .inbound:
                         progress = "parts_received=\(t.partsReceived)/\(t.partsTotal) bytes_received=\(t.bytesReceived)/\(t.bytesTotal)"
                     }
-                    var line = "\(t.transferId)  \(t.direction.rawValue)  \(t.status.rawValue)  \(progress)"
+                    var line = "\(t.transferId)  \(t.direction.rawValue)  \(t.status.rawValue)  custody=\(t.custody.rawValue)  \(progress)"
+                    if t.evicted {
+                        line += "  [evicted]"
+                    }
                     if let f = t.originalFilename {
                         line += "  file=\(f)"
                     }
@@ -601,6 +613,7 @@ struct CLI {
             print("transfer_id: \(t.transferId)")
             print("direction:   \(t.direction.rawValue)")
             print("status:      \(t.status.rawValue)")
+            print("custody:     \(t.custody.rawValue)")
             print("peer_from:   \(t.peerFrom)")
             print("peer_to:     \(t.peerTo)")
             if let f = t.originalFilename {
@@ -615,6 +628,10 @@ struct CLI {
             if let h = t.manifestHash { print("manifest:    \(h)") }
             if let h = t.payloadHash { print("payload:     \(h)") }
             print("verified:    \(t.verified)")
+            print("evicted:     \(t.evicted)")
+            if let ttl = t.ttlSeconds { print("ttl_seconds: \(ttl)") }
+            if let ea = t.expiresAt { print("expires_at:  \(iso8601(ea))") }
+            if let ca = t.completedAt { print("completed_at: \(iso8601(ca))") }
             if let e = t.lastError { print("error:       \(e)") }
             print("created_at:  \(iso8601(t.createdAt))")
             print("updated_at:  \(iso8601(t.updatedAt))")
@@ -692,6 +709,7 @@ struct CLI {
                     if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
                         transfer.status = .complete
                         transfer.verified = true
+                        transfer.completedAt = Date()
                         transfer.payloadHash = AethosIDs.sha256(rebuilt).hexString
                         transfer.updatedAt = Date()
                         transfer.lastActivityAt = Date()
@@ -928,6 +946,7 @@ struct CLI {
             "transfer_id": t.transferId,
             "direction": t.direction.rawValue,
             "status": t.status.rawValue,
+            "custody": t.custody.rawValue,
             "peer_from": t.peerFrom,
             "peer_to": t.peerTo,
             "created_at": iso8601(t.createdAt),
@@ -940,11 +959,15 @@ struct CLI {
             "parts_sent": Int(t.partsSent),
             "parts_received": Int(t.partsReceived),
             "verified": t.verified,
+            "evicted": t.evicted,
         ]
         if let v = t.originalFilename { d["original_filename"] = v }
         if let v = t.manifestHash { d["manifest_hash"] = v }
         if let v = t.payloadHash { d["payload_hash"] = v }
         if let v = t.lastError { d["last_error"] = v }
+        if let v = t.ttlSeconds { d["ttl_seconds"] = v }
+        if let v = t.expiresAt { d["expires_at"] = iso8601(v) }
+        if let v = t.completedAt { d["completed_at"] = iso8601(v) }
         return d
     }
 
