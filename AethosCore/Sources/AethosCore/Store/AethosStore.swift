@@ -143,6 +143,22 @@ public final class AethosStore {
         }
     }
 
+    public func deleteChunks(ids: [Data]) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        var deleted = 0
+        let sql = "DELETE FROM chunks WHERE id = ?;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for id in ids {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            try bindData(stmt, index: 1, data: id)
+            try stepDone(stmt)
+            deleted += Int(sqlite3_changes(db))
+        }
+        return deleted
+    }
+
     // MARK: Outbox
 
     public func enqueue(item: OutboxItem) throws {
@@ -287,6 +303,22 @@ public final class AethosStore {
         try updateOutboxStatus(id: envelopeId, status: .acked)
     }
 
+    public func deleteOutboxByIds(_ ids: [Data]) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        var deleted = 0
+        let sql = "DELETE FROM outbox WHERE id = ?;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for id in ids {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            try bindData(stmt, index: 1, data: id)
+            try stepDone(stmt)
+            deleted += Int(sqlite3_changes(db))
+        }
+        return deleted
+    }
+
     // MARK: Inbox
 
     public func recordReceived(item: InboxItem) throws {
@@ -355,13 +387,13 @@ public final class AethosStore {
             created_at, updated_at, last_activity_at, status,
             original_filename, bytes_total, bytes_sent, bytes_received,
             parts_total, parts_sent, parts_received,
-            manifest_hash, payload_hash, verified, last_error
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+            manifest_hash, payload_hash, verified, last_error,
+            custody, ttl_seconds, expires_at, completed_at, evicted
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
 
-        let now = Self.epochSeconds(Date())
         try bindText(stmt, index: 1, text: t.transferId)
         try bindText(stmt, index: 2, text: t.direction.rawValue)
         try bindText(stmt, index: 3, text: t.peerFrom)
@@ -381,6 +413,11 @@ public final class AethosStore {
         try bindNullableText(stmt, index: 17, text: t.payloadHash)
         try bindInt32(stmt, index: 18, value: t.verified ? 1 : 0)
         try bindNullableText(stmt, index: 19, text: t.lastError)
+        try bindText(stmt, index: 20, text: t.custody.rawValue)
+        try bindNullableInt64(stmt, index: 21, value: t.ttlSeconds)
+        try bindNullableInt64(stmt, index: 22, value: t.expiresAt.map(Self.epochSeconds))
+        try bindNullableInt64(stmt, index: 23, value: t.completedAt.map(Self.epochSeconds))
+        try bindInt32(stmt, index: 24, value: t.evicted ? 1 : 0)
 
         try stepDone(stmt)
     }
@@ -391,7 +428,8 @@ public final class AethosStore {
             status = ?, updated_at = ?, last_activity_at = ?,
             original_filename = ?, bytes_sent = ?, bytes_received = ?,
             parts_sent = ?, parts_received = ?,
-            manifest_hash = ?, payload_hash = ?, verified = ?, last_error = ?
+            manifest_hash = ?, payload_hash = ?, verified = ?, last_error = ?,
+            custody = ?, ttl_seconds = ?, expires_at = ?, completed_at = ?, evicted = ?
         WHERE transfer_id = ?;
         """
         let stmt = try prepare(sql)
@@ -409,7 +447,12 @@ public final class AethosStore {
         try bindNullableText(stmt, index: 10, text: t.payloadHash)
         try bindInt32(stmt, index: 11, value: t.verified ? 1 : 0)
         try bindNullableText(stmt, index: 12, text: t.lastError)
-        try bindText(stmt, index: 13, text: t.transferId)
+        try bindText(stmt, index: 13, text: t.custody.rawValue)
+        try bindNullableInt64(stmt, index: 14, value: t.ttlSeconds)
+        try bindNullableInt64(stmt, index: 15, value: t.expiresAt.map(Self.epochSeconds))
+        try bindNullableInt64(stmt, index: 16, value: t.completedAt.map(Self.epochSeconds))
+        try bindInt32(stmt, index: 17, value: t.evicted ? 1 : 0)
+        try bindText(stmt, index: 18, text: t.transferId)
 
         try stepDone(stmt)
     }
@@ -490,6 +533,16 @@ public final class AethosStore {
             throw StoreError.sqliteError("Unknown transfer status: \(statusStr)")
         }
 
+        // v3 columns (indices 19-23)
+        let custodyStr = columnText(stmt, index: 19) ?? (direction == .outbound ? "origin" : "inbound")
+        let custody = Transfer.Custody(rawValue: custodyStr) ?? (direction == .outbound ? .origin : .inbound)
+        let ttlSeconds = columnNullableInt64(stmt, index: 20)
+        let expiresAtSec = columnNullableInt64(stmt, index: 21)
+        let expiresAt = expiresAtSec.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let completedAtSec = columnNullableInt64(stmt, index: 22)
+        let completedAt = completedAtSec.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let evicted = columnInt64(stmt, index: 23) != 0
+
         return Transfer(
             transferId: transferId,
             direction: direction,
@@ -509,8 +562,154 @@ public final class AethosStore {
             manifestHash: columnText(stmt, index: 15),
             payloadHash: columnText(stmt, index: 16),
             verified: columnInt64(stmt, index: 17) != 0,
-            lastError: columnText(stmt, index: 18)
+            lastError: columnText(stmt, index: 18),
+            custody: custody,
+            ttlSeconds: ttlSeconds,
+            expiresAt: expiresAt,
+            completedAt: completedAt,
+            evicted: evicted
         )
+    }
+
+    // MARK: Custody + Eviction
+
+    /// Total bytes held for relay transfers (not yet evicted or completed).
+    public func relayCacheBytes() throws -> Int64 {
+        let sql = """
+        SELECT COALESCE(SUM(bytes_total), 0) FROM transfers
+        WHERE custody = 'relay' AND evicted = 0 AND status NOT IN ('complete', 'failed', 'canceled');
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw sqliteError() }
+        return sqlite3_column_int64(stmt, 0)
+    }
+
+    /// Evict transfers whose TTL has expired. Marks them evicted but does not
+    /// remove chunk/outbox data (caller should use the returned IDs to clean up).
+    /// Inbound transfers are never TTL-evicted.
+    public func evictExpiredTransfers(now: Date) throws -> [String] {
+        let nowSec = Self.epochSeconds(now)
+        let selectSQL = """
+        SELECT transfer_id FROM transfers
+        WHERE evicted = 0 AND expires_at IS NOT NULL AND expires_at <= ?
+        AND custody != 'inbound';
+        """
+        let selectStmt = try prepare(selectSQL)
+        defer { sqlite3_finalize(selectStmt) }
+        try bindInt64(selectStmt, index: 1, value: nowSec)
+
+        var ids: [String] = []
+        while true {
+            let rc = sqlite3_step(selectStmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            if let tid = columnText(selectStmt, index: 0) {
+                ids.append(tid)
+            }
+        }
+
+        if !ids.isEmpty {
+            try markTransfersEvicted(ids: ids, now: now)
+        }
+        return ids
+    }
+
+    /// Evict relay transfers under cache pressure. Evicts oldest relay transfers
+    /// first until total relay cache bytes <= maxCacheBytes.
+    /// Returns IDs of evicted transfers.
+    public func evictRelayTransfers(maxCacheBytes: Int64, now: Date) throws -> [String] {
+        let currentBytes = try relayCacheBytes()
+        guard currentBytes > maxCacheBytes else { return [] }
+
+        // Select active relay transfers ordered by oldest first.
+        let sql = """
+        SELECT transfer_id, bytes_total FROM transfers
+        WHERE custody = 'relay' AND evicted = 0 AND status NOT IN ('complete', 'failed', 'canceled')
+        ORDER BY created_at ASC;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        var evictIds: [String] = []
+        var remaining = currentBytes
+        while remaining > maxCacheBytes {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            guard let tid = columnText(stmt, index: 0) else { continue }
+            let bytes = sqlite3_column_int64(stmt, 1)
+            evictIds.append(tid)
+            remaining -= bytes
+        }
+
+        if !evictIds.isEmpty {
+            try markTransfersEvicted(ids: evictIds, now: now)
+        }
+        return evictIds
+    }
+
+    /// GC completed outbound (origin) transfers after a grace period.
+    /// Returns IDs of GC'd transfers.
+    public func gcCompletedTransfers(graceSeconds: Int64, now: Date) throws -> [String] {
+        let nowSec = Self.epochSeconds(now)
+        let cutoff = nowSec - graceSeconds
+        let sql = """
+        SELECT transfer_id FROM transfers
+        WHERE custody = 'origin' AND status = 'complete' AND evicted = 0
+        AND completed_at IS NOT NULL AND completed_at <= ?;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: cutoff)
+
+        var ids: [String] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            if let tid = columnText(stmt, index: 0) {
+                ids.append(tid)
+            }
+        }
+
+        if !ids.isEmpty {
+            try markTransfersEvicted(ids: ids, now: now)
+        }
+        return ids
+    }
+
+    /// Get manifest hashes for a list of transfer IDs (for cleanup).
+    public func getManifestHashes(transferIds: [String]) throws -> [String] {
+        guard !transferIds.isEmpty else { return [] }
+        var hashes: [String] = []
+        let sql = "SELECT manifest_hash FROM transfers WHERE transfer_id = ? AND manifest_hash IS NOT NULL;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for tid in transferIds {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            try bindText(stmt, index: 1, text: tid)
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_ROW, let hash = columnText(stmt, index: 0) {
+                hashes.append(hash)
+            }
+        }
+        return hashes
+    }
+
+    private func markTransfersEvicted(ids: [String], now: Date) throws {
+        let nowSec = Self.epochSeconds(now)
+        let sql = "UPDATE transfers SET evicted = 1, status = 'canceled', updated_at = ? WHERE transfer_id = ?;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for tid in ids {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            try bindInt64(stmt, index: 1, value: nowSec)
+            try bindText(stmt, index: 2, text: tid)
+            try stepDone(stmt)
+        }
     }
 
     // MARK: Schema
@@ -549,11 +748,16 @@ public final class AethosStore {
             );
             """)
             try migrateV1toV2()
-            try exec("PRAGMA user_version = 2;")
+            try migrateV2toV3()
+            try exec("PRAGMA user_version = 3;")
         case 1:
             try migrateV1toV2()
-            try exec("PRAGMA user_version = 2;")
+            try migrateV2toV3()
+            try exec("PRAGMA user_version = 3;")
         case 2:
+            try migrateV2toV3()
+            try exec("PRAGMA user_version = 3;")
+        case 3:
             return
         default:
             throw StoreError.unsupportedSchemaVersion(version)
@@ -590,6 +794,24 @@ public final class AethosStore {
         """)
     }
 
+    private func migrateV2toV3() throws {
+        // Add custody, TTL, and eviction columns to the transfers table.
+        // Default custody is 'origin' for existing rows (all existing are outbound-created).
+        try exec("ALTER TABLE transfers ADD COLUMN custody TEXT NOT NULL DEFAULT 'origin';")
+        try exec("ALTER TABLE transfers ADD COLUMN ttl_seconds INTEGER;")
+        try exec("ALTER TABLE transfers ADD COLUMN expires_at INTEGER;")
+        try exec("ALTER TABLE transfers ADD COLUMN completed_at INTEGER;")
+        try exec("ALTER TABLE transfers ADD COLUMN evicted INTEGER NOT NULL DEFAULT 0;")
+
+        // Index for eviction queries.
+        try exec("CREATE INDEX IF NOT EXISTS transfers_custody_idx ON transfers(custody);")
+        try exec("CREATE INDEX IF NOT EXISTS transfers_evicted_idx ON transfers(evicted);")
+        try exec("CREATE INDEX IF NOT EXISTS transfers_expires_at_idx ON transfers(expires_at);")
+
+        // Backfill: set custody based on direction for existing rows.
+        try exec("UPDATE transfers SET custody = 'inbound' WHERE direction = 'inbound' AND custody = 'origin';")
+    }
+
     private func userVersion() throws -> Int {
         let stmt = try prepare("PRAGMA user_version;")
         defer { sqlite3_finalize(stmt) }
@@ -599,7 +821,7 @@ public final class AethosStore {
 
     // MARK: Helpers
 
-    private static func epochSeconds(_ date: Date) -> Int64 {
+    static func epochSeconds(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970.rounded(.down))
     }
 
@@ -712,5 +934,9 @@ public final class AethosStore {
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_step(stmt) == SQLITE_ROW else { throw sqliteError() }
         return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    func __debugUserVersion() throws -> Int {
+        try userVersion()
     }
 }

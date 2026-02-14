@@ -20,6 +20,19 @@ public struct Transfer: Equatable, Sendable {
         case canceled
     }
 
+    /// Custody role this node plays for the transfer.
+    ///
+    /// - `origin`: This node originated the transfer (sender). Retained until
+    ///   receipt is received or TTL expires.
+    /// - `relay`: This node is forwarding the transfer (store-and-forward).
+    ///   Retained until receipt, TTL, or eviction pressure.
+    /// - `inbound`: This node is the final recipient. Data is never evicted.
+    public enum Custody: String, Sendable {
+        case origin
+        case relay
+        case inbound
+    }
+
     public let transferId: String
     public let direction: Direction
     public let peerFrom: String
@@ -48,6 +61,13 @@ public struct Transfer: Equatable, Sendable {
     // Error
     public var lastError: String?
 
+    // Custody + TTL (v3 schema)
+    public var custody: Custody
+    public var ttlSeconds: Int64?
+    public var expiresAt: Date?
+    public var completedAt: Date?
+    public var evicted: Bool
+
     public init(
         transferId: String,
         direction: Direction,
@@ -67,7 +87,12 @@ public struct Transfer: Equatable, Sendable {
         manifestHash: String? = nil,
         payloadHash: String? = nil,
         verified: Bool = false,
-        lastError: String? = nil
+        lastError: String? = nil,
+        custody: Custody? = nil,
+        ttlSeconds: Int64? = nil,
+        expiresAt: Date? = nil,
+        completedAt: Date? = nil,
+        evicted: Bool = false
     ) {
         self.transferId = transferId
         self.direction = direction
@@ -88,6 +113,16 @@ public struct Transfer: Equatable, Sendable {
         self.payloadHash = payloadHash
         self.verified = verified
         self.lastError = lastError
+        // Default custody from direction when not explicitly provided.
+        self.custody = custody ?? (direction == .outbound ? .origin : .inbound)
+        self.ttlSeconds = ttlSeconds
+        if let ttlSeconds, expiresAt == nil {
+            self.expiresAt = createdAt.addingTimeInterval(TimeInterval(ttlSeconds))
+        } else {
+            self.expiresAt = expiresAt
+        }
+        self.completedAt = completedAt
+        self.evicted = evicted
     }
 
     public static func newId() -> String {
