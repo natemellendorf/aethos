@@ -12,6 +12,8 @@ public struct OutboxItem: Equatable, Sendable {
         case envelope
         case manifest
         case receipt
+        case inventory
+        case inventoryRequest = "inventory_request"
     }
 
     public let id: Data
@@ -34,6 +36,8 @@ public struct InboxItem: Equatable, Sendable {
         case envelope
         case manifest
         case receipt
+        case inventory
+        case inventoryRequest = "inventory_request"
     }
 
     public let id: Data
@@ -569,6 +573,74 @@ public final class AethosStore {
             completedAt: completedAt,
             evicted: evicted
         )
+    }
+
+    // MARK: Inventory
+
+    /// Returns manifest_hash hex strings for transfers that are active
+    /// (not evicted, not failed), respecting custody rules.
+    public func listActiveManifestHashes() throws -> [String] {
+        let sql = """
+        SELECT DISTINCT manifest_hash FROM transfers
+        WHERE manifest_hash IS NOT NULL
+        AND evicted = 0
+        AND status NOT IN ('failed', 'canceled')
+        ORDER BY manifest_hash ASC;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        var hashes: [String] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            if let hash = columnText(stmt, index: 0) {
+                hashes.append(hash)
+            }
+        }
+        return hashes
+    }
+
+    /// Returns true if the given manifest_hash hex exists in an active transfer.
+    public func hasManifest(_ hash: String) throws -> Bool {
+        let sql = """
+        SELECT 1 FROM transfers
+        WHERE manifest_hash = ?
+        AND evicted = 0
+        AND status NOT IN ('failed', 'canceled')
+        LIMIT 1;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: hash)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    /// Look up active transfers matching any of the given manifest_hash hex strings.
+    public func lookupTransfersByManifestHashes(_ hashes: [String]) throws -> [Transfer] {
+        guard !hashes.isEmpty else { return [] }
+        var transfers: [Transfer] = []
+        let sql = """
+        SELECT * FROM transfers
+        WHERE manifest_hash = ?
+        AND evicted = 0
+        AND status NOT IN ('failed', 'canceled');
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for hash in hashes {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            try bindText(stmt, index: 1, text: hash)
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE { break }
+                if rc != SQLITE_ROW { throw sqliteError() }
+                transfers.append(try readTransferRow(stmt))
+            }
+        }
+        return transfers
     }
 
     // MARK: Custody + Eviction
