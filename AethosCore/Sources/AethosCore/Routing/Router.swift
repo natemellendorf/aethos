@@ -49,6 +49,20 @@ public final class Router {
             addIfFits(cargo)
         }
 
+        // Priority 2: inventory requests
+        for item in activeOutbox where item.kind == .inventoryRequest {
+            let cargo = CargoItem.inventoryRequest(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
+        // Priority 3: inventory advertisements
+        for item in activeOutbox where item.kind == .inventory {
+            let cargo = CargoItem.inventory(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
         // Build pending transfers keyed by manifestId.
         var transfers: [Data: PendingTransfer] = [:]
 
@@ -96,7 +110,7 @@ public final class Router {
             }
         }
 
-        // Priority 2: metadata (manifest/envelope), stable by enqueue time.
+        // Priority 4: metadata (manifest/envelope), stable by enqueue time.
         var orderedTransfers = transfers.values.sorted { $0.enqueuedAt < $1.enqueuedAt }
         for t in orderedTransfers {
             if let manifestBytes = t.manifestBytes {
@@ -111,7 +125,7 @@ public final class Router {
             }
         }
 
-        // Priority 3: chunks, round-robin across transfers.
+        // Priority 5: chunks, round-robin across transfers.
         // Filter to transfers that have chunkIds.
         orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
         var idx = 0

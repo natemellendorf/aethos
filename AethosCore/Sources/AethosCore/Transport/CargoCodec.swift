@@ -19,6 +19,8 @@ public enum CargoCodec {
         case envelope = 2
         case manifest = 3
         case chunk = 4
+        case inventory = 5
+        case inventoryRequest = 6
     }
 
     public static func encode(_ item: CargoItem, maxFramePayloadBytes: Int) throws -> [Frame] {
@@ -36,6 +38,14 @@ public enum CargoCodec {
         case let .manifest(bytes):
             let id = AethosIDs.manifestId(canonicalBytes: bytes)
             return [Frame(type: FrameType.manifest.rawValue, id: id, partIndex: 0, partCount: 1, payload: bytes)]
+
+        case let .inventory(bytes):
+            let id = AethosIDs.sha256(bytes)
+            return [Frame(type: FrameType.inventory.rawValue, id: id, partIndex: 0, partCount: 1, payload: bytes)]
+
+        case let .inventoryRequest(bytes):
+            let id = AethosIDs.sha256(bytes)
+            return [Frame(type: FrameType.inventoryRequest.rawValue, id: id, partIndex: 0, partCount: 1, payload: bytes)]
 
         case let .chunk(id, bytes):
             if bytes.isEmpty {
@@ -68,7 +78,7 @@ public enum CargoCodec {
         }
 
         switch type {
-        case .receipt, .envelope, .manifest:
+        case .receipt, .envelope, .manifest, .inventory, .inventoryRequest:
             guard frame.partCount == 1, frame.partIndex == 0 else {
                 throw CargoCodecError.metadataMustBeSingleFrame
             }

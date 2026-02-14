@@ -5,6 +5,8 @@ public enum CanonicalEncoderV1 {
         case envelope = 1
         case manifest = 2
         case receipt = 4
+        case inventory = 5
+        case inventoryRequest = 6
     }
 
     public enum EnvelopeField: UInt8 {
@@ -23,6 +25,15 @@ public enum CanonicalEncoderV1 {
         case manifestId = 2
         case receivedAtUnixMs = 3
         case signature = 4
+    }
+
+    public enum InventoryField: UInt8 {
+        case manifests = 1
+        case generatedAtUnixMs = 2
+    }
+
+    public enum InventoryRequestField: UInt8 {
+        case want = 1
     }
 
     public static func encode(_ envelope: EnvelopeV1) -> Data {
@@ -68,6 +79,156 @@ public enum CanonicalEncoderV1 {
         out.appendOptionalField(id: ReceiptField.signature.rawValue, raw: receipt.signature)
         return out
     }
+
+    public static func encode(_ inventory: InventoryV1) -> Data {
+        var out = Data()
+        out.appendUInt8(inventory.version.rawValue)
+        out.appendUInt8(TypeDiscriminator.inventory.rawValue)
+
+        var manifestsRaw = Data()
+        manifestsRaw.appendArrayOfStrings(inventory.manifests)
+        out.appendField(id: InventoryField.manifests.rawValue, raw: manifestsRaw)
+
+        var tsRaw = Data()
+        tsRaw.appendInt64(inventory.generatedAtUnixMs)
+        out.appendField(id: InventoryField.generatedAtUnixMs.rawValue, raw: tsRaw)
+
+        return out
+    }
+
+    public static func encode(_ request: InventoryRequestV1) -> Data {
+        var out = Data()
+        out.appendUInt8(request.version.rawValue)
+        out.appendUInt8(TypeDiscriminator.inventoryRequest.rawValue)
+
+        var wantRaw = Data()
+        wantRaw.appendArrayOfStrings(request.want)
+        out.appendField(id: InventoryRequestField.want.rawValue, raw: wantRaw)
+
+        return out
+    }
+
+    public static func decodeInventory(canonical: Data) throws -> InventoryV1 {
+        var r = CanonicalDecoderReader(canonical)
+        guard let version = r.readUInt8(),
+              let type = r.readUInt8(),
+              type == TypeDiscriminator.inventory.rawValue
+        else {
+            throw CanonicalDecoderError.invalidType
+        }
+        guard let pv = ProtocolVersion(rawValue: version) else {
+            throw CanonicalDecoderError.invalidType
+        }
+
+        var manifests: [String] = []
+        var generatedAtUnixMs: Int64 = 0
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
+            guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+
+            switch fid {
+            case InventoryField.manifests.rawValue:
+                manifests = try parseStringArray(raw)
+            case InventoryField.generatedAtUnixMs.rawValue:
+                if raw.count == 8 { generatedAtUnixMs = readInt64BE(raw) }
+            default:
+                break
+            }
+        }
+
+        return InventoryV1(version: pv, manifests: manifests, generatedAtUnixMs: generatedAtUnixMs)
+    }
+
+    public static func decodeInventoryRequest(canonical: Data) throws -> InventoryRequestV1 {
+        var r = CanonicalDecoderReader(canonical)
+        guard let version = r.readUInt8(),
+              let type = r.readUInt8(),
+              type == TypeDiscriminator.inventoryRequest.rawValue
+        else {
+            throw CanonicalDecoderError.invalidType
+        }
+        guard let pv = ProtocolVersion(rawValue: version) else {
+            throw CanonicalDecoderError.invalidType
+        }
+
+        var want: [String] = []
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
+            guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+
+            switch fid {
+            case InventoryRequestField.want.rawValue:
+                want = try parseStringArray(raw)
+            default:
+                break
+            }
+        }
+
+        return InventoryRequestV1(version: pv, want: want)
+    }
+
+    public enum CanonicalDecoderError: Swift.Error, Equatable {
+        case invalidType
+        case truncated
+    }
+
+    private static func parseStringArray(_ raw: Data) throws -> [String] {
+        var r = CanonicalDecoderReader(raw)
+        guard let count = r.readUInt32() else { return [] }
+        var out: [String] = []
+        out.reserveCapacity(Int(count))
+        for _ in 0..<count {
+            guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
+            guard let bytes = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+            guard let s = String(data: bytes, encoding: .utf8) else { throw CanonicalDecoderError.truncated }
+            out.append(s)
+        }
+        return out
+    }
+
+    private static func readInt64BE(_ data: Data) -> Int64 {
+        var v: Int64 = 0
+        for b in data.prefix(8) {
+            v = (v << 8) | Int64(b)
+        }
+        return v
+    }
+
+    private struct CanonicalDecoderReader {
+        private let data: Data
+        private var offset: Int = 0
+
+        init(_ data: Data) { self.data = data }
+        var isAtEnd: Bool { offset >= data.count }
+
+        mutating func readUInt8() -> UInt8? {
+            guard offset + 1 <= data.count else { return nil }
+            let v = data[offset]
+            offset += 1
+            return v
+        }
+
+        mutating func readUInt32() -> UInt32? {
+            guard offset + 4 <= data.count else { return nil }
+            var v: UInt32 = 0
+            for i in 0..<4 {
+                v = (v << 8) | UInt32(data[offset + i])
+            }
+            offset += 4
+            return v
+        }
+
+        mutating func readData(count: Int) -> Data? {
+            guard count >= 0, offset + count <= data.count else { return nil }
+            let slice = data[offset..<offset + count]
+            offset += count
+            return Data(slice)
+        }
+    }
 }
 
 private extension Data {
@@ -105,5 +266,19 @@ private extension Data {
             appendUInt32(UInt32(item.count))
             append(item)
         }
+    }
+
+    mutating func appendArrayOfStrings(_ items: [String]) {
+        appendUInt32(UInt32(items.count))
+        for item in items {
+            let utf8 = Data(item.utf8)
+            appendUInt32(UInt32(utf8.count))
+            append(utf8)
+        }
+    }
+
+    mutating func appendInt64(_ value: Int64) {
+        var v = value.bigEndian
+        Swift.withUnsafeBytes(of: &v) { append(contentsOf: $0) }
     }
 }

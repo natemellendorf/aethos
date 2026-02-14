@@ -101,7 +101,7 @@ public enum SimSession {
             if remainingItems <= 0 || remainingBytes <= 0 { break }
 
             switch item {
-            case .receipt, .envelope, .manifest:
+            case .receipt, .envelope, .manifest, .inventory, .inventoryRequest:
                 let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
                 guard let frame = frames.first else { continue }
 

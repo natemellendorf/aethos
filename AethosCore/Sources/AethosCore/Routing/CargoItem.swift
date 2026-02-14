@@ -1,13 +1,17 @@
 import Foundation
 
 public enum CargoItem: Equatable, Sendable {
-    case envelope(Data)   // canonical bytes
-    case manifest(Data)   // canonical bytes
+    case envelope(Data)          // canonical bytes
+    case manifest(Data)          // canonical bytes
     case chunk(id: Data, bytes: Data)
-    case receipt(Data)    // canonical bytes
+    case receipt(Data)           // canonical bytes
+    case inventory(Data)         // canonical bytes
+    case inventoryRequest(Data)  // canonical bytes
 
     public enum Priority: UInt8, Comparable, Sendable {
-        case receipt = 3
+        case receipt = 5
+        case inventoryRequest = 4
+        case inventory = 3
         case metadata = 2
         case chunk = 1
 
@@ -20,6 +24,10 @@ public enum CargoItem: Equatable, Sendable {
         switch self {
         case .receipt:
             return .receipt
+        case .inventoryRequest:
+            return .inventoryRequest
+        case .inventory:
+            return .inventory
         case .envelope, .manifest:
             return .metadata
         case .chunk:
@@ -34,6 +42,10 @@ public enum CargoItem: Equatable, Sendable {
         case let .manifest(bytes):
             return bytes.count
         case let .receipt(bytes):
+            return bytes.count
+        case let .inventory(bytes):
+            return bytes.count
+        case let .inventoryRequest(bytes):
             return bytes.count
         case let .chunk(_, bytes):
             // With framing, chunks may be transferred in parts; use a conservative
