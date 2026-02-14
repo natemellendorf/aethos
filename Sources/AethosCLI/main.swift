@@ -676,6 +676,8 @@ struct CLI {
             try cmdInventoryAdvertise(home: home, args: subArgs, json: json)
         case "request":
             try cmdInventoryRequest(home: home, args: subArgs, json: json)
+        case "exchange":
+            try cmdInventoryExchange(home: home, args: subArgs, json: json)
         default:
             throw CLIError.usage("Unknown inventory subcommand: \(sub)")
         }
@@ -779,6 +781,282 @@ struct CLI {
             if !missing.isEmpty {
                 print("  enqueued=true")
             }
+        }
+    }
+
+    // MARK: - inventory exchange
+
+    private func cmdInventoryExchange(home: PeerHome, args: [String], json: Bool) throws {
+        let parsed = try parseKeyValues(args)
+
+        guard let withPeerHex = parsed["--with"], !withPeerHex.isEmpty else {
+            throw CLIError.usage("inventory exchange requires --with <PEER_WAYFARER_ID>")
+        }
+        guard let _ = Hex.decode(withPeerHex), withPeerHex.count == 64 else {
+            throw CLIError.usage("--with must be a 64-char hex wayfarer ID")
+        }
+
+        let limit = Int(parsed["--limit"] ?? "500") ?? 500
+        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
+        guard limit > 0 else { throw CLIError.usage("--limit must be > 0") }
+        guard requestCap > 0 else { throw CLIError.usage("--request-cap must be > 0") }
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let fm = FileManager.default
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+
+        // Track replay dedup within this exchange round
+        var replayedManifests: Set<String> = []
+
+        // === Step 1: Compute advertise set ===
+        let totalAdvertisable = try store.countAdvertisableManifestHashes(now: now)
+        let advertiseHashes = try store.listAdvertisableManifestHashes(limit: limit, now: now)
+        let truncatedAdvertise = totalAdvertisable > advertiseHashes.count
+
+        // === Step 2: Emit InventoryV1 addressed to --with ===
+        let inventory = InventoryV1(manifests: advertiseHashes, generatedAtUnixMs: nowMs)
+        let inventoryCanonical = CanonicalEncoderV1.encode(inventory)
+        let inventoryId = AethosIDs.sha256(inventoryCanonical)
+
+        try store.enqueue(item: OutboxItem(
+            id: inventoryId,
+            kind: .inventory,
+            payload: inventoryCanonical,
+            enqueuedAt: now
+        ))
+
+        // === Step 3: Ingest inbound inventory frames already present in inbox ===
+        let link = try FileDropLink(
+            inboxDir: home.transportInboxDir,
+            outboxDir: home.transportOutboxDir,
+            archiveDir: home.transportArchiveDir
+        )
+
+        // Load identity for inbound transfer creation
+        let identityStore = DefaultIdentityStore(directory: home.identityDir)
+        let identityManager = IdentityManager(store: identityStore)
+        let localIdentity = try identityManager.loadOrCreate()
+        let localWayfarerHex = localIdentity.wayfarerId.hexString
+
+        var chunkToManifestHash = buildChunkToManifestMap(home: home, fm: fm)
+
+        // Ingest all available frames from inbox
+        var keepIngesting = true
+        while keepIngesting {
+            guard let frame = try link.receive() else {
+                keepIngesting = false
+                break
+            }
+
+            let fragment = try CargoCodec.decode(frame)
+            switch fragment {
+            case let .metadata(type, id, bytes):
+                switch CargoCodec.FrameType(rawValue: type) {
+                case .receipt:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: Date()))
+                    if let receiptInfo = try? parseReceiptCanonical(bytes) {
+                        let manifestHashHex = Hex.encode(receiptInfo.manifestId)
+                        if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .outbound) {
+                            if transfer.status == .sending || transfer.status == .queued {
+                                transfer.status = .complete
+                                transfer.verified = true
+                                transfer.completedAt = Date()
+                                transfer.updatedAt = Date()
+                                transfer.lastActivityAt = Date()
+                                try store.updateTransfer(transfer)
+                            }
+                        }
+                    }
+                case .envelope:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: Date()))
+                    if let envelopeInfo = try? parseEnvelopeCanonical(bytes) {
+                        let manifestHashHex = Hex.encode(envelopeInfo.manifestId)
+                        if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
+                            if transfer.originalFilename == nil,
+                               let filename = String(data: envelopeInfo.body, encoding: .utf8), !filename.isEmpty {
+                                transfer.originalFilename = filename
+                                transfer.updatedAt = Date()
+                                try store.updateTransfer(transfer)
+                            }
+                        }
+                    }
+                case .manifest:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .manifest, payload: bytes, receivedAt: Date()))
+                    let manifestPath = home.transportManifestCacheDir.appendingPathComponent("\(Hex.encode(id)).bin")
+                    if !fm.fileExists(atPath: manifestPath.path) {
+                        try bytes.write(to: manifestPath, options: [.atomic])
+                    }
+                    let manifestHashHex = Hex.encode(id)
+                    if try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) == nil {
+                        let (totalSize, chunkIds) = try parseManifestCanonical(bytes)
+                        let transfer = Transfer(
+                            transferId: Transfer.newId(),
+                            direction: .inbound,
+                            peerFrom: "",
+                            peerTo: localWayfarerHex,
+                            createdAt: Date(),
+                            updatedAt: Date(),
+                            lastActivityAt: Date(),
+                            status: .receiving,
+                            bytesTotal: Int64(totalSize),
+                            partsTotal: Int32(chunkIds.count),
+                            manifestHash: manifestHashHex
+                        )
+                        try store.createTransfer(transfer)
+                        for cId in chunkIds {
+                            chunkToManifestHash[cId] = manifestHashHex
+                        }
+                    }
+                case .inventory:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .inventory, payload: bytes, receivedAt: Date()))
+                case .inventoryRequest:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .inventoryRequest, payload: bytes, receivedAt: Date()))
+                    let request = try CanonicalEncoderV1.decodeInventoryRequest(canonical: bytes)
+                    for wantHash in request.want {
+                        if !replayedManifests.contains(wantHash) {
+                            try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
+                            replayedManifests.insert(wantHash)
+                        }
+                    }
+                case .chunk, .none:
+                    break
+                }
+
+            case let .chunkPart(id, partIndex, partCount, bytes):
+                let chunkHex = Hex.encode(id)
+                let chunkDir = home.transportPartsDir.appendingPathComponent("chunk-\(chunkHex)", isDirectory: true)
+                try fm.createDirectory(at: chunkDir, withIntermediateDirectories: true)
+                let partURL = chunkDir.appendingPathComponent("part-\(partIndex)-of-\(partCount).bin")
+                if !fm.fileExists(atPath: partURL.path) {
+                    try bytes.write(to: partURL, options: [.atomic])
+                }
+                let existingFiles = (try? fm.contentsOfDirectory(at: chunkDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+                var diskParts: [UInt16: URL] = [:]
+                for f in existingFiles {
+                    let name = f.deletingPathExtension().lastPathComponent
+                    let comps = name.split(separator: "-")
+                    if comps.count == 4, comps[0] == "part", comps[2] == "of",
+                       let idx = UInt16(comps[1]), let total = UInt16(comps[3]),
+                       total == partCount {
+                        diskParts[idx] = f
+                    }
+                }
+                if diskParts.count == Int(partCount) {
+                    var full = Data()
+                    for i in 0..<partCount {
+                        guard let url = diskParts[i], let partData = try? Data(contentsOf: url) else {
+                            full = Data()
+                            break
+                        }
+                        full.append(partData)
+                    }
+                    if !full.isEmpty {
+                        try store.putChunk(id: id, bytes: full, receivedAt: Date())
+                        if let manifestHashHex = chunkToManifestHash[id] {
+                            if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
+                                transfer.partsReceived += 1
+                                transfer.bytesReceived += Int64(full.count)
+                                transfer.lastActivityAt = Date()
+                                transfer.updatedAt = Date()
+                                try store.updateTransfer(transfer)
+                            }
+                        }
+                        try? fm.removeItem(at: chunkDir)
+                    }
+                }
+            }
+
+            _ = try tryReassembleCachedManifests(home: home, store: store)
+        }
+
+        // === Step 4: Check for peer InventoryV1 in inbox ===
+        var peerInventoryCount = 0
+        var missingOnPeer: [String] = []
+        var truncatedRequest = false
+        var replayEnqueuedCount = 0
+
+        let inboxInventories = try store.listInboxByKind(.inventory)
+        // Find the most recent inventory from peer (last one)
+        var peerManifests: [String] = []
+        for item in inboxInventories {
+            if let decoded = try? CanonicalEncoderV1.decodeInventory(canonical: item.payload) {
+                peerManifests = decoded.manifests
+            }
+        }
+        peerInventoryCount = peerManifests.count
+
+        if !peerManifests.isEmpty {
+            // Compute missing_on_me = peer_inventory - my_inventory (unused for now, just part of protocol)
+            // Compute missing_on_peer = my_inventory - peer_inventory
+            let peerSet = Set(peerManifests)
+            let myHashes = try store.listAdvertisableManifestHashes(limit: 1_000_000, now: now)
+
+            var missingOnPeerAll: [String] = []
+            for hash in myHashes {
+                if !peerSet.contains(hash) {
+                    missingOnPeerAll.append(hash)
+                }
+            }
+
+            // === Step 5: Cap and emit InventoryRequestV1 for missing_on_peer ===
+            if missingOnPeerAll.count > requestCap {
+                truncatedRequest = true
+                missingOnPeer = Array(missingOnPeerAll.prefix(requestCap))
+            } else {
+                missingOnPeer = missingOnPeerAll
+            }
+
+            if !missingOnPeer.isEmpty {
+                let request = InventoryRequestV1(want: missingOnPeer)
+                let requestCanonical = CanonicalEncoderV1.encode(request)
+                let requestId = AethosIDs.sha256(requestCanonical)
+
+                try store.enqueue(item: OutboxItem(
+                    id: requestId,
+                    kind: .inventoryRequest,
+                    payload: requestCanonical,
+                    enqueuedAt: now
+                ))
+            }
+        }
+
+        // === Step 6: Ingest inbound InventoryRequestV1 and trigger replay ===
+        let inboxRequests = try store.listInboxByKind(.inventoryRequest)
+        for item in inboxRequests {
+            if let decoded = try? CanonicalEncoderV1.decodeInventoryRequest(canonical: item.payload) {
+                for wantHash in decoded.want {
+                    if !replayedManifests.contains(wantHash) {
+                        try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
+                        replayedManifests.insert(wantHash)
+                        replayEnqueuedCount += 1
+                    }
+                }
+            }
+        }
+
+        // === Output ===
+        if json {
+            let obj: [String: Any] = [
+                "exchange": [
+                    "advertised_count": advertiseHashes.count,
+                    "peer_inventory_count": peerInventoryCount,
+                    "requested_count": missingOnPeer.count,
+                    "replay_enqueued_count": replayEnqueuedCount,
+                    "truncated_advertise": truncatedAdvertise,
+                    "truncated_request": truncatedRequest,
+                ] as [String: Any]
+            ]
+            print(jsonString(obj))
+        } else {
+            print("inventory exchange")
+            print("  advertised_count=\(advertiseHashes.count)")
+            print("  peer_inventory_count=\(peerInventoryCount)")
+            print("  requested_count=\(missingOnPeer.count)")
+            print("  replay_enqueued_count=\(replayEnqueuedCount)")
+            print("  truncated_advertise=\(truncatedAdvertise)")
+            print("  truncated_request=\(truncatedRequest)")
         }
     }
 
@@ -1296,6 +1574,7 @@ struct CLI {
       transfers show        Show details for a transfer
       inventory advertise   Advertise local manifest inventory to outbox
       inventory request     Read remote inventory from stdin, enqueue pull requests
+      inventory exchange    One inventory exchange round with a peer
 
     Global options:
       --home <path>    Peer home directory (default: ./peer)
@@ -1307,6 +1586,7 @@ struct CLI {
       pump   --max-bytes <n> --max-items <n>
       transfers show <transfer_id>
       inventory request     (reads inventory JSON from stdin)
+      inventory exchange    --with <wayfarerIdHex> [--limit <n>] [--request-cap <n>]
     """
 }
 

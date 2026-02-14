@@ -602,6 +602,53 @@ public final class AethosStore {
         return hashes
     }
 
+    /// Returns manifest hashes suitable for advertising: not evicted, not expired,
+    /// not failed/canceled, up to `limit` results.
+    public func listAdvertisableManifestHashes(limit: Int, now: Date) throws -> [String] {
+        let nowSec = Self.epochSeconds(now)
+        let sql = """
+        SELECT DISTINCT manifest_hash FROM transfers
+        WHERE manifest_hash IS NOT NULL
+        AND evicted = 0
+        AND status NOT IN ('failed', 'canceled')
+        AND (expires_at IS NULL OR expires_at > ?)
+        ORDER BY manifest_hash ASC
+        LIMIT ?;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: nowSec)
+        try bindInt32(stmt, index: 2, value: Int32(min(limit, Int(Int32.max))))
+
+        var hashes: [String] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            if let hash = columnText(stmt, index: 0) {
+                hashes.append(hash)
+            }
+        }
+        return hashes
+    }
+
+    /// Returns the total count of advertisable manifest hashes (for truncation detection).
+    public func countAdvertisableManifestHashes(now: Date) throws -> Int {
+        let nowSec = Self.epochSeconds(now)
+        let sql = """
+        SELECT COUNT(DISTINCT manifest_hash) FROM transfers
+        WHERE manifest_hash IS NOT NULL
+        AND evicted = 0
+        AND status NOT IN ('failed', 'canceled')
+        AND (expires_at IS NULL OR expires_at > ?);
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: nowSec)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw sqliteError() }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
     /// Returns true if the given manifest_hash hex exists in an active transfer.
     public func hasManifest(_ hash: String) throws -> Bool {
         let sql = """
