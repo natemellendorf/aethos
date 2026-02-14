@@ -399,18 +399,19 @@ func partialDeliveryHealingViaExchange() throws {
         peerFrom: "a", peerTo: "b",
         createdAt: now, updatedAt: now, lastActivityAt: now,
         status: .queued,
-        manifestHash: manifestHashHex,
         bytesTotal: Int64(payload.count),
-        partsTotal: Int32(chunks.count)
+        partsTotal: Int32(chunks.count),
+        manifestHash: manifestHashHex
     )
     try storeA.createTransfer(transferA)
 
-    // Step 2: Deliver only a subset of chunks — use a very small budget
-    // to only send manifest + envelope + some chunks
-    let smallBudget = SessionBudget(maxBytes: 4096, maxItems: 6)
-    for i in 0..<3 {
+    // Step 2: Deliver only a subset of chunks using a small maxItems budget.
+    // Keep maxBytes large enough (>=6200) so maxFramePayloadBytes stays consistent
+    // across all sessions (avoids partCount mismatch in SimSession receiver).
+    let partialBudget = SessionBudget(maxBytes: 8192, maxItems: 3)
+    for i in 0..<2 {
         let sessionNow = now.addingTimeInterval(TimeInterval(i))
-        _ = try SimSession.run(from: peerA, to: peerB, budget: smallBudget, now: sessionNow)
+        _ = try SimSession.run(from: peerA, to: peerB, budget: partialBudget, now: sessionNow)
     }
 
     // Step 3: peerB has partial transfer — verify not all chunks arrived
@@ -421,9 +422,6 @@ func partialDeliveryHealingViaExchange() throws {
             break
         }
     }
-    // Should NOT have all chunks yet (partial delivery)
-    // Note: with a very small budget, it's likely some chunks are missing
-    // If by chance they all arrive, the test still validates the healing path
 
     // Step 4: peerB creates inbound transfer record (simulating ingest)
     if try storeB.getTransferByManifestHash(manifestHashHex, direction: .inbound) == nil {
@@ -433,51 +431,26 @@ func partialDeliveryHealingViaExchange() throws {
             peerFrom: "a", peerTo: "b",
             createdAt: now, updatedAt: now, lastActivityAt: now,
             status: .receiving,
-            manifestHash: manifestHashHex,
             bytesTotal: Int64(payload.count),
-            partsTotal: Int32(chunks.count)
+            partsTotal: Int32(chunks.count),
+            manifestHash: manifestHashHex
         )
         try storeB.createTransfer(transferB)
     }
 
-    // Step 4b: Simulate inventory exchange:
-    // peerB advertises what it has
-    let peerBHashes = try storeB.listAdvertisableManifestHashes(limit: 500, now: now)
-
-    // peerA advertises what it has
+    // Step 4b: Simulate inventory exchange
     let peerAHashes = try storeA.listAdvertisableManifestHashes(limit: 500, now: now)
     #expect(peerAHashes.contains(manifestHashHex))
 
-    // peerB computes what peerA has that peerB needs to request for peerA
-    // In this direction: peerA should replay missing chunks that peerB hasn't received
-    let peerBSet = Set(peerBHashes)
-    var missingOnPeer: [String] = []
-    for hash in peerBHashes {
-        if !Set(peerAHashes).contains(hash) {
-            missingOnPeer.append(hash)
-        }
-    }
-
-    // peerA checks inventory request: what hashes does peerB want replayed?
-    // We simulate: peerB sends InventoryRequestV1 asking for the manifest
-    // because peerB's inventory tells peerA what peerB already has.
-    // In reality, the exchange detects peerB has the hash partially
-    // and peerA replays. For this test, we directly trigger replay.
-
-    // Step 5: peerA re-enqueues manifest content for replay
-    // Cache the manifest bytes for peerA
-    let manifestCacheA = dir.appendingPathComponent("manifestsA", isDirectory: true)
-    try FileManager.default.createDirectory(at: manifestCacheA, withIntermediateDirectories: true)
-    try manifestBytes.write(to: manifestCacheA.appendingPathComponent("\(manifestHashHex).bin"), options: [.atomic])
-
-    // Re-enqueue manifest into peerA outbox (replay)
+    // Re-enqueue manifest into peerA outbox (replay — simulating exchange trigger)
     try storeA.enqueue(item: OutboxItem(id: manifestId, kind: .manifest, payload: manifestBytes, enqueuedAt: now))
 
-    // Step 6: peerA sends remaining chunks to peerB via additional sessions
-    let bigBudget = SessionBudget(maxBytes: 1_000_000, maxItems: 1000)
+    // Step 5+6: peerA sends remaining chunks to peerB via additional sessions
+    // Use same maxBytes to keep partCount consistent
+    let fullBudget = SessionBudget(maxBytes: 1_000_000, maxItems: 1000)
     for i in 10..<60 {
         let sessionNow = now.addingTimeInterval(TimeInterval(i))
-        _ = try SimSession.run(from: peerA, to: peerB, budget: bigBudget, now: sessionNow)
+        _ = try SimSession.run(from: peerA, to: peerB, budget: fullBudget, now: sessionNow)
 
         // Check if peerB has all chunks now
         var complete = true
@@ -506,7 +479,7 @@ func partialDeliveryHealingViaExchange() throws {
             try storeB.enqueue(item: OutboxItem(id: receiptId, kind: .receipt, payload: receiptBytes, enqueuedAt: now))
 
             // Send receipt back to peerA
-            _ = try SimSession.run(from: peerB, to: peerA, budget: bigBudget, now: now.addingTimeInterval(100))
+            _ = try SimSession.run(from: peerB, to: peerA, budget: fullBudget, now: now.addingTimeInterval(100))
 
             // Verify receipt arrived at peerA
             let receiptsInA = try storeA.listInboxByKind(.receipt)
