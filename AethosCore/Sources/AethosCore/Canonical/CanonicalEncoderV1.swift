@@ -36,6 +36,16 @@ public enum CanonicalEncoderV1 {
         case want = 1
     }
 
+    /// Key type tag for canonical public identity encoding.
+    public enum KeyTypeTag: UInt8 {
+        case ed25519 = 1
+    }
+
+    public enum PublicIdentityField: UInt8 {
+        case signingPublicKey = 1
+        case exchangePublicKey = 2
+    }
+
     public static func encode(_ envelope: EnvelopeV1) -> Data {
         var out = Data()
         out.appendUInt8(envelope.version.rawValue)
@@ -106,6 +116,50 @@ public enum CanonicalEncoderV1 {
         out.appendField(id: InventoryRequestField.want.rawValue, raw: wantRaw)
 
         return out
+    }
+
+    /// Encode the public portion of an identity into canonical bytes.
+    /// Format: [version:1][keyTypeTag:1][field signingPub][field exchangePub]
+    /// Deterministic and stable for use in verification and wire protocols.
+    public static func encodePublicIdentity(_ identity: IdentityV1) -> Data {
+        var out = Data()
+        out.appendUInt8(ProtocolVersion.v1.rawValue)
+        out.appendUInt8(KeyTypeTag.ed25519.rawValue)
+
+        out.appendField(id: PublicIdentityField.signingPublicKey.rawValue, raw: identity.signingPublicKey)
+        out.appendField(id: PublicIdentityField.exchangePublicKey.rawValue, raw: identity.exchangePublicKey)
+
+        return out
+    }
+
+    /// Decode canonical public identity bytes back into components.
+    public static func decodePublicIdentity(canonical: Data) throws -> (keyTypeTag: UInt8, signingPublicKey: Data, exchangePublicKey: Data) {
+        var r = CanonicalDecoderReader(canonical)
+        guard let _ = r.readUInt8(), // version
+              let keyTypeTag = r.readUInt8()
+        else {
+            throw CanonicalDecoderError.invalidType
+        }
+
+        var signingPub = Data()
+        var exchangePub = Data()
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
+            guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+
+            switch fid {
+            case PublicIdentityField.signingPublicKey.rawValue:
+                signingPub = raw
+            case PublicIdentityField.exchangePublicKey.rawValue:
+                exchangePub = raw
+            default:
+                break
+            }
+        }
+
+        return (keyTypeTag, signingPub, exchangePub)
     }
 
     public static func decodeInventory(canonical: Data) throws -> InventoryV1 {

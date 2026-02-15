@@ -103,21 +103,35 @@ struct CLI {
 
         var wayfarerIdHex: String? = nil
         var shortId: String? = nil
+        var identity: IdentityV1? = nil
         do {
             let identityStore = DefaultIdentityStore(directory: home.identityDir)
             let identityManager = IdentityManager(store: identityStore)
-            let identity = try identityManager.loadOrCreate()
-            wayfarerIdHex = identity.wayfarerId.hexString
-            shortId = identity.shortId
+            identity = try identityManager.loadOrCreate()
+            wayfarerIdHex = identity!.wayfarerId.hexString
+            shortId = identity!.shortId
         } catch {}
 
         if json {
+            var identityDict: [String: Any] = [
+                "wayfarerId": wayfarerIdHex ?? "",
+                "shortId": shortId ?? "",
+                "self_certifying": identity?.isSelfCertifying ?? false,
+            ]
+            if let id = identity {
+                identityDict["publicKey"] = id.signingPublicKeyHex
+                identityDict["exchangePublicKey"] = id.exchangePublicKeyHex
+                identityDict["keyType"] = IdentityV1.keyType
+                identityDict["keyFingerprint"] = id.keyFingerprint
+            }
+
             var obj: [String: Any] = [
                 "peer": [
                     "home": home.root.path,
                     "wayfarerId": wayfarerIdHex ?? "",
                     "shortId": shortId ?? "",
                 ],
+                "identity": identityDict,
                 "store": [
                     "path": home.storeSQLitePath.path,
                     "exists": storeExists,
@@ -165,8 +179,12 @@ struct CLI {
             print("Peer home:\n  \(home.root.path)")
             print("Store:\n  \(home.storeSQLitePath.path) (exists: \(storeExists ? "yes" : "no"))")
             print("Transport dirs:\n  inbox=\(home.transportInboxDir.path)\n  outbox=\(home.transportOutboxDir.path)\n  archive=\(home.transportArchiveDir.path)")
-            if let wid = wayfarerIdHex, let sid = shortId {
+            if let wid = wayfarerIdHex, let sid = shortId, let id = identity {
                 print("Identity:\n  wayfarerId=\(wid)\n  shortId=\(sid)")
+                print("  keyType=\(IdentityV1.keyType)")
+                print("  publicKey=\(id.signingPublicKeyHex)")
+                print("  fingerprint=\(id.keyFingerprint)")
+                print("  selfCertifying=\(id.isSelfCertifying)")
             } else {
                 print("Identity:\n  not initialized (run: aethos init)")
             }
