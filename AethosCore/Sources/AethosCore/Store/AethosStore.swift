@@ -429,7 +429,7 @@ public final class AethosStore {
     public func updateTransfer(_ t: Transfer) throws {
         let sql = """
         UPDATE transfers SET
-            status = ?, updated_at = ?, last_activity_at = ?,
+            peer_to = ?, status = ?, updated_at = ?, last_activity_at = ?,
             original_filename = ?, bytes_sent = ?, bytes_received = ?,
             parts_sent = ?, parts_received = ?,
             manifest_hash = ?, payload_hash = ?, verified = ?, last_error = ?,
@@ -439,24 +439,25 @@ public final class AethosStore {
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
 
-        try bindText(stmt, index: 1, text: t.status.rawValue)
-        try bindInt64(stmt, index: 2, value: Self.epochSeconds(t.updatedAt))
-        try bindInt64(stmt, index: 3, value: Self.epochSeconds(t.lastActivityAt))
-        try bindNullableText(stmt, index: 4, text: t.originalFilename)
-        try bindInt64(stmt, index: 5, value: t.bytesSent)
-        try bindInt64(stmt, index: 6, value: t.bytesReceived)
-        try bindInt32(stmt, index: 7, value: t.partsSent)
-        try bindInt32(stmt, index: 8, value: t.partsReceived)
-        try bindNullableText(stmt, index: 9, text: t.manifestHash)
-        try bindNullableText(stmt, index: 10, text: t.payloadHash)
-        try bindInt32(stmt, index: 11, value: t.verified ? 1 : 0)
-        try bindNullableText(stmt, index: 12, text: t.lastError)
-        try bindText(stmt, index: 13, text: t.custody.rawValue)
-        try bindNullableInt64(stmt, index: 14, value: t.ttlSeconds)
-        try bindNullableInt64(stmt, index: 15, value: t.expiresAt.map(Self.epochSeconds))
-        try bindNullableInt64(stmt, index: 16, value: t.completedAt.map(Self.epochSeconds))
-        try bindInt32(stmt, index: 17, value: t.evicted ? 1 : 0)
-        try bindText(stmt, index: 18, text: t.transferId)
+        try bindText(stmt, index: 1, text: t.peerTo)
+        try bindText(stmt, index: 2, text: t.status.rawValue)
+        try bindInt64(stmt, index: 3, value: Self.epochSeconds(t.updatedAt))
+        try bindInt64(stmt, index: 4, value: Self.epochSeconds(t.lastActivityAt))
+        try bindNullableText(stmt, index: 5, text: t.originalFilename)
+        try bindInt64(stmt, index: 6, value: t.bytesSent)
+        try bindInt64(stmt, index: 7, value: t.bytesReceived)
+        try bindInt32(stmt, index: 8, value: t.partsSent)
+        try bindInt32(stmt, index: 9, value: t.partsReceived)
+        try bindNullableText(stmt, index: 10, text: t.manifestHash)
+        try bindNullableText(stmt, index: 11, text: t.payloadHash)
+        try bindInt32(stmt, index: 12, value: t.verified ? 1 : 0)
+        try bindNullableText(stmt, index: 13, text: t.lastError)
+        try bindText(stmt, index: 14, text: t.custody.rawValue)
+        try bindNullableInt64(stmt, index: 15, value: t.ttlSeconds)
+        try bindNullableInt64(stmt, index: 16, value: t.expiresAt.map(Self.epochSeconds))
+        try bindNullableInt64(stmt, index: 17, value: t.completedAt.map(Self.epochSeconds))
+        try bindInt32(stmt, index: 18, value: t.evicted ? 1 : 0)
+        try bindText(stmt, index: 19, text: t.transferId)
 
         try stepDone(stmt)
     }
@@ -688,6 +689,51 @@ public final class AethosStore {
             }
         }
         return transfers
+    }
+
+    /// Lists relay custody transfers, optionally filtering to active-only
+    /// (not evicted, not expired, not failed/canceled).
+    public func listRelayTransfers(activeOnly: Bool, now: Date) throws -> [Transfer] {
+        let sql: String
+        if activeOnly {
+            let nowSec = Self.epochSeconds(now)
+            sql = """
+            SELECT * FROM transfers
+            WHERE custody = 'relay' AND evicted = 0
+            AND status NOT IN ('failed', 'canceled')
+            AND (expires_at IS NULL OR expires_at > \(nowSec))
+            ORDER BY created_at DESC;
+            """
+        } else {
+            sql = "SELECT * FROM transfers WHERE custody = 'relay' ORDER BY created_at DESC;"
+        }
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        var transfers: [Transfer] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            transfers.append(try readTransferRow(stmt))
+        }
+        return transfers
+    }
+
+    /// Count of relay transfers that are forwardable (not evicted, not expired, not failed/canceled).
+    public func countForwardableRelayTransfers(now: Date) throws -> Int {
+        let nowSec = Self.epochSeconds(now)
+        let sql = """
+        SELECT COUNT(*) FROM transfers
+        WHERE custody = 'relay' AND evicted = 0
+        AND status NOT IN ('failed', 'canceled')
+        AND (expires_at IS NULL OR expires_at > ?);
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: nowSec)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw sqliteError() }
+        return Int(sqlite3_column_int(stmt, 0))
     }
 
     // MARK: Custody + Eviction

@@ -36,7 +36,7 @@ public struct Transfer: Equatable, Sendable {
     public let transferId: String
     public let direction: Direction
     public let peerFrom: String
-    public let peerTo: String
+    public var peerTo: String
     public let createdAt: Date
     public var updatedAt: Date
     public var lastActivityAt: Date
