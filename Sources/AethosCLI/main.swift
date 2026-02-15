@@ -34,6 +34,8 @@ struct CLI {
             try cmdTransfers(home: home, args: rest, json: jsonOutput)
         case "inventory":
             try cmdInventory(home: home, args: rest, json: jsonOutput)
+        case "relay":
+            try cmdRelay(home: home, args: rest, json: jsonOutput)
         case "help", "--help", "-h":
             print(Self.usage)
         default:
@@ -143,6 +145,7 @@ struct CLI {
                 cSummary["relay"] = transfers.filter { $0.custody == .relay }.count
                 cSummary["inbound"] = transfers.filter { $0.custody == .inbound }.count
                 cSummary["relay_cache_bytes"] = (try? store.relayCacheBytes()) ?? Int64(0)
+                cSummary["relay_forwardable_count"] = (try? store.countForwardableRelayTransfers(now: Date())) ?? 0
                 obj["custody_summary"] = cSummary
             }
 
@@ -293,12 +296,25 @@ struct CLI {
                     storedItems += 1
 
                     // Update inbound transfer with envelope metadata (filename)
+                    // and detect relay scenario (destination != local)
                     if let envelopeInfo = try? parseEnvelopeCanonical(bytes) {
                         let manifestHashHex = Hex.encode(envelopeInfo.manifestId)
+                        let destHex = Hex.encode(envelopeInfo.toWayfarerId)
+
                         if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
+                            var changed = false
+                            // Relay detection: if destination is not us, mark as relay
+                            if destHex != localWayfarerHex && transfer.custody != .relay {
+                                transfer.custody = .relay
+                                transfer.peerTo = destHex
+                                changed = true
+                            }
                             if transfer.originalFilename == nil,
                                let filename = String(data: envelopeInfo.body, encoding: .utf8), !filename.isEmpty {
                                 transfer.originalFilename = filename
+                                changed = true
+                            }
+                            if changed {
                                 transfer.updatedAt = Date()
                                 try store.updateTransfer(transfer)
                             }
@@ -318,18 +334,25 @@ struct CLI {
                     let manifestHashHex = Hex.encode(id)
                     if try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) == nil {
                         let (totalSize, chunkIds) = try parseManifestCanonical(bytes)
+
+                        // Check if we already have an envelope for this manifest to detect relay
+                        let relayInfo = try detectRelayFromEnvelopes(
+                            manifestId: id, store: store, localWayfarerHex: localWayfarerHex
+                        )
+
                         let transfer = Transfer(
                             transferId: Transfer.newId(),
                             direction: .inbound,
                             peerFrom: "",
-                            peerTo: localWayfarerHex,
+                            peerTo: relayInfo?.destHex ?? localWayfarerHex,
                             createdAt: Date(),
                             updatedAt: Date(),
                             lastActivityAt: Date(),
                             status: .receiving,
                             bytesTotal: Int64(totalSize),
                             partsTotal: Int32(chunkIds.count),
-                            manifestHash: manifestHashHex
+                            manifestHash: manifestHashHex,
+                            custody: relayInfo != nil ? .relay : nil
                         )
                         try store.createTransfer(transfer)
 
@@ -873,10 +896,21 @@ struct CLI {
                     try store.recordReceived(item: InboxItem(id: id, kind: .envelope, payload: bytes, receivedAt: Date()))
                     if let envelopeInfo = try? parseEnvelopeCanonical(bytes) {
                         let manifestHashHex = Hex.encode(envelopeInfo.manifestId)
+                        let destHex = Hex.encode(envelopeInfo.toWayfarerId)
+
                         if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
+                            var changed = false
+                            if destHex != localWayfarerHex && transfer.custody != .relay {
+                                transfer.custody = .relay
+                                transfer.peerTo = destHex
+                                changed = true
+                            }
                             if transfer.originalFilename == nil,
                                let filename = String(data: envelopeInfo.body, encoding: .utf8), !filename.isEmpty {
                                 transfer.originalFilename = filename
+                                changed = true
+                            }
+                            if changed {
                                 transfer.updatedAt = Date()
                                 try store.updateTransfer(transfer)
                             }
@@ -891,18 +925,24 @@ struct CLI {
                     let manifestHashHex = Hex.encode(id)
                     if try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) == nil {
                         let (totalSize, chunkIds) = try parseManifestCanonical(bytes)
+
+                        let relayInfo = try detectRelayFromEnvelopes(
+                            manifestId: id, store: store, localWayfarerHex: localWayfarerHex
+                        )
+
                         let transfer = Transfer(
                             transferId: Transfer.newId(),
                             direction: .inbound,
                             peerFrom: "",
-                            peerTo: localWayfarerHex,
+                            peerTo: relayInfo?.destHex ?? localWayfarerHex,
                             createdAt: Date(),
                             updatedAt: Date(),
                             lastActivityAt: Date(),
                             status: .receiving,
                             bytesTotal: Int64(totalSize),
                             partsTotal: Int32(chunkIds.count),
-                            manifestHash: manifestHashHex
+                            manifestHash: manifestHashHex,
+                            custody: relayInfo != nil ? .relay : nil
                         )
                         try store.createTransfer(transfer)
                         for cId in chunkIds {
@@ -1060,6 +1100,54 @@ struct CLI {
         }
     }
 
+    // MARK: - relay
+
+    private func cmdRelay(home: PeerHome, args: [String], json: Bool) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("relay requires a subcommand: list")
+        }
+        let subArgs = Array(args.dropFirst())
+
+        switch sub {
+        case "list":
+            try cmdRelayList(home: home, args: subArgs, json: json)
+        default:
+            throw CLIError.usage("Unknown relay subcommand: \(sub)")
+        }
+    }
+
+    private func cmdRelayList(home: PeerHome, args: [String], json: Bool) throws {
+        guard args.isEmpty else {
+            throw CLIError.usage("relay list takes no positional args")
+        }
+
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let now = Date()
+        let transfers = try store.listRelayTransfers(activeOnly: true, now: now)
+
+        if json {
+            let arr = transfers.map { transferToDict($0) }
+            let obj: [String: Any] = [
+                "relay_transfers": arr,
+                "count": transfers.count,
+            ]
+            print(jsonString(obj))
+        } else {
+            if transfers.isEmpty {
+                print("No active relay transfers.")
+            } else {
+                print("Relay transfers (\(transfers.count) active):")
+                for t in transfers {
+                    let progress = "parts_received=\(t.partsReceived)/\(t.partsTotal) bytes_received=\(t.bytesReceived)/\(t.bytesTotal)"
+                    var line = "  \(t.transferId)  \(t.status.rawValue)  peer_to=\(t.peerTo)  \(progress)"
+                    if let h = t.manifestHash { line += "  manifest=\(h)" }
+                    if let f = t.originalFilename { line += "  file=\(f)" }
+                    print(line)
+                }
+            }
+        }
+    }
+
     // MARK: - Pull replay
 
     /// Re-enqueue manifest, envelope, and chunks for a given manifest hash.
@@ -1142,6 +1230,32 @@ struct CLI {
         }
     }
 
+    // MARK: - Relay detection
+
+    private struct RelayDetection {
+        let destHex: String
+    }
+
+    /// Check inbox envelopes for one that references the given manifestId.
+    /// If found and its toWayfarerId differs from our local wayfarer, return the destination.
+    private func detectRelayFromEnvelopes(
+        manifestId: Data, store: AethosStore, localWayfarerHex: String
+    ) throws -> RelayDetection? {
+        let envelopes = try store.listInboxByKind(.envelope)
+        for item in envelopes {
+            if let env = try? parseEnvelopeCanonical(item.payload) {
+                if env.manifestId == manifestId {
+                    let destHex = Hex.encode(env.toWayfarerId)
+                    if destHex != localWayfarerHex {
+                        return RelayDetection(destHex: destHex)
+                    }
+                    return nil
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Helpers
 
     private func buildChunkToManifestMap(home: PeerHome, fm: FileManager) -> [Data: String] {
@@ -1185,6 +1299,15 @@ struct CLI {
             let manifestBytes = try Data(contentsOf: file)
             let (totalSize, chunkIds) = try parseManifestCanonical(manifestBytes)
             let manifest = ManifestV1(totalSize: totalSize, chunkIds: chunkIds)
+
+            // Skip reassembly for relay custody transfers — relay nodes never
+            // write the final payload to disk.
+            let manifestIdDataPre = AethosIDs.manifestId(canonicalBytes: manifestBytes)
+            let manifestHashHexPre = manifestIdDataPre.hexString
+            if let transfer = try store.getTransferByManifestHash(manifestHashHexPre, direction: .inbound),
+               transfer.custody == .relay {
+                continue
+            }
 
             var chunksById: [Data: Data] = [:]
             chunksById.reserveCapacity(chunkIds.count)
@@ -1575,10 +1698,11 @@ struct CLI {
       inventory advertise   Advertise local manifest inventory to outbox
       inventory request     Read remote inventory from stdin, enqueue pull requests
       inventory exchange    One inventory exchange round with a peer
+      relay list            List active relay custody transfers
 
     Global options:
       --home <path>    Peer home directory (default: ./peer)
-      --json           Output in JSON format (status, transfers, inventory)
+      --json           Output in JSON format (status, transfers, inventory, relay)
 
     Command options:
       send   --file <path> --to <wayfarerIdHex>
