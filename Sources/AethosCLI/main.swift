@@ -34,6 +34,8 @@ struct CLI {
             try cmdTransfers(home: home, args: rest, json: jsonOutput)
         case "inventory":
             try cmdInventory(home: home, args: rest, json: jsonOutput)
+        case "peers":
+            try cmdPeers(home: home, args: rest, json: jsonOutput)
         case "relay":
             try cmdRelay(home: home, args: rest, json: jsonOutput)
         case "help", "--help", "-h":
@@ -147,6 +149,15 @@ struct CLI {
                 cSummary["relay_cache_bytes"] = (try? store.relayCacheBytes()) ?? Int64(0)
                 cSummary["relay_forwardable_count"] = (try? store.countForwardableRelayTransfers(now: Date())) ?? 0
                 obj["custody_summary"] = cSummary
+
+                // Peers summary
+                let nowEpoch = AethosStore.epochSeconds(Date())
+                let (totalPeers, stalePeers) = try store.countPeers(staleAfterSeconds: 86400, now: nowEpoch)
+                obj["peers_summary"] = [
+                    "total": totalPeers,
+                    "stale": stalePeers,
+                    "recently_seen": totalPeers - stalePeers,
+                ] as [String: Any]
             }
 
             print(jsonString(obj))
@@ -438,6 +449,15 @@ struct CLI {
             storedItems += try tryReassembleCachedManifests(home: home, store: store)
         }
 
+        // Observe peers from inbound transfers that have a known peerFrom
+        let inboundTransfers = try store.listTransfers(direction: .inbound)
+        let nowEpoch = AethosStore.epochSeconds(Date())
+        for t in inboundTransfers {
+            if !t.peerFrom.isEmpty && t.peerFrom.count == 64 {
+                try store.upsertPeerSeen(wayfarerId: t.peerFrom, now: nowEpoch)
+            }
+        }
+
         let afterBad = countBadFiles(in: home.transportArchiveDir, fileManager: fm)
         let badDelta = Swift.max(0, afterBad - beforeBad)
 
@@ -701,6 +721,8 @@ struct CLI {
             try cmdInventoryRequest(home: home, args: subArgs, json: json)
         case "exchange":
             try cmdInventoryExchange(home: home, args: subArgs, json: json)
+        case "gossip":
+            try cmdInventoryGossip(home: home, args: subArgs, json: json)
         default:
             throw CLIError.usage("Unknown inventory subcommand: \(sub)")
         }
@@ -809,23 +831,30 @@ struct CLI {
 
     // MARK: - inventory exchange
 
-    private func cmdInventoryExchange(home: PeerHome, args: [String], json: Bool) throws {
-        let parsed = try parseKeyValues(args)
+    /// Result of a single inventory exchange round with one peer.
+    private struct ExchangeResult {
+        var advertisedCount: Int = 0
+        var advertisedTruncated: Bool = false
+        var peerAdvertisedCount: Int = 0
+        var missingOnPeerCount: Int = 0
+        var requestedCount: Int = 0
+        var requestedTruncated: Bool = false
+        var replayedManifests: Int = 0
+        var replayedChunks: Int = 0
+        var receiptsReceived: Int = 0
+        var status: String = "ok"
+        var error: String? = nil
+    }
 
-        guard let withPeerHex = parsed["--with"], !withPeerHex.isEmpty else {
-            throw CLIError.usage("inventory exchange requires --with <PEER_WAYFARER_ID>")
-        }
-        guard let _ = Hex.decode(withPeerHex), withPeerHex.count == 64 else {
-            throw CLIError.usage("--with must be a 64-char hex wayfarer ID")
-        }
-
-        let limit = Int(parsed["--limit"] ?? "500") ?? 500
-        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
-        guard limit > 0 else { throw CLIError.usage("--limit must be > 0") }
-        guard requestCap > 0 else { throw CLIError.usage("--request-cap must be > 0") }
-
-        try home.createDirectories()
-        let store = try AethosStore(path: home.storeSQLitePath)
+    /// Shared exchange logic used by both `inventory exchange` and `inventory gossip`.
+    private func performExchange(
+        home: PeerHome,
+        store: AethosStore,
+        peerWayfarerHex: String,
+        limit: Int,
+        requestCap: Int
+    ) throws -> ExchangeResult {
+        var result = ExchangeResult()
         let fm = FileManager.default
         let now = Date()
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
@@ -836,9 +865,10 @@ struct CLI {
         // === Step 1: Compute advertise set ===
         let totalAdvertisable = try store.countAdvertisableManifestHashes(now: now)
         let advertiseHashes = try store.listAdvertisableManifestHashes(limit: limit, now: now)
-        let truncatedAdvertise = totalAdvertisable > advertiseHashes.count
+        result.advertisedCount = advertiseHashes.count
+        result.advertisedTruncated = totalAdvertisable > advertiseHashes.count
 
-        // === Step 2: Emit InventoryV1 addressed to --with ===
+        // === Step 2: Emit InventoryV1 ===
         let inventory = InventoryV1(manifests: advertiseHashes, generatedAtUnixMs: nowMs)
         let inventoryCanonical = CanonicalEncoderV1.encode(inventory)
         let inventoryId = AethosIDs.sha256(inventoryCanonical)
@@ -850,7 +880,7 @@ struct CLI {
             enqueuedAt: now
         ))
 
-        // === Step 3: Ingest inbound inventory frames already present in inbox ===
+        // === Step 3: Ingest inbound frames already present in inbox ===
         let link = try FileDropLink(
             inboxDir: home.transportInboxDir,
             outboxDir: home.transportOutboxDir,
@@ -879,6 +909,7 @@ struct CLI {
                 switch CargoCodec.FrameType(rawValue: type) {
                 case .receipt:
                     try store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: Date()))
+                    result.receiptsReceived += 1
                     if let receiptInfo = try? parseReceiptCanonical(bytes) {
                         let manifestHashHex = Hex.encode(receiptInfo.manifestId)
                         if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .outbound) {
@@ -933,7 +964,7 @@ struct CLI {
                         let transfer = Transfer(
                             transferId: Transfer.newId(),
                             direction: .inbound,
-                            peerFrom: "",
+                            peerFrom: peerWayfarerHex,
                             peerTo: relayInfo?.destHex ?? localWayfarerHex,
                             createdAt: Date(),
                             updatedAt: Date(),
@@ -958,6 +989,7 @@ struct CLI {
                         if !replayedManifests.contains(wantHash) {
                             try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
                             replayedManifests.insert(wantHash)
+                            result.replayedManifests += 1
                         }
                     }
                 case .chunk, .none:
@@ -994,6 +1026,7 @@ struct CLI {
                     }
                     if !full.isEmpty {
                         try store.putChunk(id: id, bytes: full, receivedAt: Date())
+                        result.replayedChunks += 1
                         if let manifestHashHex = chunkToManifestHash[id] {
                             if var transfer = try store.getTransferByManifestHash(manifestHashHex, direction: .inbound) {
                                 transfer.partsReceived += 1
@@ -1012,24 +1045,16 @@ struct CLI {
         }
 
         // === Step 4: Check for peer InventoryV1 in inbox ===
-        var peerInventoryCount = 0
-        var missingOnPeer: [String] = []
-        var truncatedRequest = false
-        var replayEnqueuedCount = 0
-
         let inboxInventories = try store.listInboxByKind(.inventory)
-        // Find the most recent inventory from peer (last one)
         var peerManifests: [String] = []
         for item in inboxInventories {
             if let decoded = try? CanonicalEncoderV1.decodeInventory(canonical: item.payload) {
                 peerManifests = decoded.manifests
             }
         }
-        peerInventoryCount = peerManifests.count
+        result.peerAdvertisedCount = peerManifests.count
 
         if !peerManifests.isEmpty {
-            // Compute missing_on_me = peer_inventory - my_inventory (unused for now, just part of protocol)
-            // Compute missing_on_peer = my_inventory - peer_inventory
             let peerSet = Set(peerManifests)
             let myHashes = try store.listAdvertisableManifestHashes(limit: 1_000_000, now: now)
 
@@ -1039,17 +1064,20 @@ struct CLI {
                     missingOnPeerAll.append(hash)
                 }
             }
+            result.missingOnPeerCount = missingOnPeerAll.count
 
             // === Step 5: Cap and emit InventoryRequestV1 for missing_on_peer ===
+            let requested: [String]
             if missingOnPeerAll.count > requestCap {
-                truncatedRequest = true
-                missingOnPeer = Array(missingOnPeerAll.prefix(requestCap))
+                result.requestedTruncated = true
+                requested = Array(missingOnPeerAll.prefix(requestCap))
             } else {
-                missingOnPeer = missingOnPeerAll
+                requested = missingOnPeerAll
             }
+            result.requestedCount = requested.count
 
-            if !missingOnPeer.isEmpty {
-                let request = InventoryRequestV1(want: missingOnPeer)
+            if !requested.isEmpty {
+                let request = InventoryRequestV1(want: requested)
                 let requestCanonical = CanonicalEncoderV1.encode(request)
                 let requestId = AethosIDs.sha256(requestCanonical)
 
@@ -1070,33 +1098,277 @@ struct CLI {
                     if !replayedManifests.contains(wantHash) {
                         try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
                         replayedManifests.insert(wantHash)
-                        replayEnqueuedCount += 1
+                        result.replayedManifests += 1
                     }
                 }
             }
         }
 
-        // === Output ===
+        return result
+    }
+
+    private func cmdInventoryExchange(home: PeerHome, args: [String], json: Bool) throws {
+        let parsed = try parseKeyValues(args)
+
+        guard let withPeerHex = parsed["--with"], !withPeerHex.isEmpty else {
+            throw CLIError.usage("inventory exchange requires --with <PEER_WAYFARER_ID>")
+        }
+        guard let _ = Hex.decode(withPeerHex), withPeerHex.count == 64 else {
+            throw CLIError.usage("--with must be a 64-char hex wayfarer ID")
+        }
+
+        let limit = Int(parsed["--limit"] ?? "500") ?? 500
+        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
+        guard limit > 0 else { throw CLIError.usage("--limit must be > 0") }
+        guard requestCap > 0 else { throw CLIError.usage("--request-cap must be > 0") }
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+
+        // Record peer observation
+        let nowEpoch = AethosStore.epochSeconds(Date())
+        try store.upsertPeerSeen(wayfarerId: withPeerHex, now: nowEpoch)
+
+        let result = try performExchange(
+            home: home, store: store,
+            peerWayfarerHex: withPeerHex,
+            limit: limit, requestCap: requestCap
+        )
+
+        // Mark exchange completed
+        if result.status == "ok" {
+            try store.markPeerExchanged(wayfarerId: withPeerHex, now: AethosStore.epochSeconds(Date()))
+        }
+
         if json {
             let obj: [String: Any] = [
                 "exchange": [
-                    "advertised_count": advertiseHashes.count,
-                    "peer_inventory_count": peerInventoryCount,
-                    "requested_count": missingOnPeer.count,
-                    "replay_enqueued_count": replayEnqueuedCount,
-                    "truncated_advertise": truncatedAdvertise,
-                    "truncated_request": truncatedRequest,
+                    "advertised_count": result.advertisedCount,
+                    "advertised_truncated": result.advertisedTruncated,
+                    "peer_advertised_count": result.peerAdvertisedCount,
+                    "missing_on_peer_count": result.missingOnPeerCount,
+                    "requested_count": result.requestedCount,
+                    "requested_truncated": result.requestedTruncated,
+                    "replayed_manifests": result.replayedManifests,
+                    "replayed_chunks": result.replayedChunks,
+                    "receipts_received": result.receiptsReceived,
                 ] as [String: Any]
             ]
             print(jsonString(obj))
         } else {
             print("inventory exchange")
-            print("  advertised_count=\(advertiseHashes.count)")
-            print("  peer_inventory_count=\(peerInventoryCount)")
-            print("  requested_count=\(missingOnPeer.count)")
-            print("  replay_enqueued_count=\(replayEnqueuedCount)")
-            print("  truncated_advertise=\(truncatedAdvertise)")
-            print("  truncated_request=\(truncatedRequest)")
+            print("  advertised_count=\(result.advertisedCount)")
+            print("  advertised_truncated=\(result.advertisedTruncated)")
+            print("  peer_advertised_count=\(result.peerAdvertisedCount)")
+            print("  missing_on_peer_count=\(result.missingOnPeerCount)")
+            print("  requested_count=\(result.requestedCount)")
+            print("  requested_truncated=\(result.requestedTruncated)")
+            print("  replayed_manifests=\(result.replayedManifests)")
+            print("  replayed_chunks=\(result.replayedChunks)")
+            print("  receipts_received=\(result.receiptsReceived)")
+        }
+    }
+
+    // MARK: - inventory gossip
+
+    private func cmdInventoryGossip(home: PeerHome, args: [String], json: Bool) throws {
+        let parsed = try parseKeyValues(args)
+
+        let limitPeers = Int(parsed["--limit-peers"] ?? "10") ?? 10
+        let peerLimit = Int(parsed["--peer-limit"] ?? "500") ?? 500
+        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
+        let staleAfter = Int64(parsed["--stale-after"] ?? "86400") ?? 86400
+        let maxRounds = Int(parsed["--max-rounds"] ?? "\(limitPeers)") ?? limitPeers
+        let includeStale = parsed["--include-stale"] != nil
+
+        guard limitPeers > 0 else { throw CLIError.usage("--limit-peers must be > 0") }
+        guard peerLimit > 0 else { throw CLIError.usage("--peer-limit must be > 0") }
+        guard requestCap > 0 else { throw CLIError.usage("--request-cap must be > 0") }
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let nowEpoch = AethosStore.epochSeconds(Date())
+
+        // Select peers from store: prioritize those never exchanged or least recently exchanged
+        let peers = try store.listPeers(
+            limit: limitPeers,
+            sort: .lastExchangeAsc,
+            includeStale: includeStale,
+            staleAfterSeconds: staleAfter,
+            now: nowEpoch
+        )
+
+        // Load identity to exclude self
+        let identityStore = DefaultIdentityStore(directory: home.identityDir)
+        let identityManager = IdentityManager(store: identityStore)
+        let localIdentity = try identityManager.loadOrCreate()
+        let localWayfarerHex = localIdentity.wayfarerId.hexString
+
+        // Filter out self
+        let selectedPeers = peers.filter { $0.wayfarerId != localWayfarerHex }
+
+        // Count all peers for summary
+        let (totalPeers, _) = try store.countPeers(
+            staleAfterSeconds: staleAfter,
+            now: nowEpoch
+        )
+
+        var results: [[String: Any]] = []
+        var exchangedOk = 0
+        var exchangedFailed = 0
+        var rounds = 0
+
+        for peer in selectedPeers {
+            if rounds >= maxRounds { break }
+            rounds += 1
+
+            var peerResult: [String: Any] = [
+                "peer": [
+                    "wayfarer_id": peer.wayfarerId,
+                    "short_id": peer.shortId,
+                ] as [String: Any],
+                "selected": true,
+            ]
+
+            do {
+                let exchangeResult = try performExchange(
+                    home: home, store: store,
+                    peerWayfarerHex: peer.wayfarerId,
+                    limit: peerLimit, requestCap: requestCap
+                )
+
+                // Mark peer exchanged on success
+                try store.markPeerExchanged(wayfarerId: peer.wayfarerId, now: AethosStore.epochSeconds(Date()))
+                exchangedOk += 1
+
+                peerResult["exchange"] = [
+                    "advertised_count": exchangeResult.advertisedCount,
+                    "advertised_truncated": exchangeResult.advertisedTruncated,
+                    "peer_advertised_count": exchangeResult.peerAdvertisedCount,
+                    "missing_on_peer_count": exchangeResult.missingOnPeerCount,
+                    "requested_count": exchangeResult.requestedCount,
+                    "requested_truncated": exchangeResult.requestedTruncated,
+                    "replayed_manifests": exchangeResult.replayedManifests,
+                    "replayed_chunks": exchangeResult.replayedChunks,
+                    "receipts_received": exchangeResult.receiptsReceived,
+                ] as [String: Any]
+                peerResult["status"] = "ok"
+            } catch {
+                exchangedFailed += 1
+                peerResult["status"] = "error"
+                peerResult["error"] = String(describing: error)
+            }
+
+            results.append(peerResult)
+        }
+
+        if json {
+            let obj: [String: Any] = [
+                "gossip": [
+                    "now": nowEpoch,
+                    "limit_peers": limitPeers,
+                    "peer_limit": peerLimit,
+                    "request_cap": requestCap,
+                    "stale_after_seconds": staleAfter,
+                ] as [String: Any],
+                "results": results,
+                "summary": [
+                    "peers_considered": totalPeers,
+                    "peers_selected": selectedPeers.count,
+                    "peers_exchanged_ok": exchangedOk,
+                    "peers_failed": exchangedFailed,
+                ] as [String: Any],
+            ]
+            print(jsonString(obj))
+        } else {
+            print("inventory gossip")
+            print("  peers_considered=\(totalPeers)")
+            print("  peers_selected=\(selectedPeers.count)")
+            print("  peers_exchanged_ok=\(exchangedOk)")
+            print("  peers_failed=\(exchangedFailed)")
+            for r in results {
+                if let peer = r["peer"] as? [String: Any],
+                   let shortId = peer["short_id"] as? String {
+                    let status = r["status"] as? String ?? "unknown"
+                    print("  peer=\(shortId) status=\(status)")
+                }
+            }
+        }
+    }
+
+    // MARK: - peers
+
+    private func cmdPeers(home: PeerHome, args: [String], json: Bool) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("peers requires a subcommand: list")
+        }
+        let subArgs = Array(args.dropFirst())
+
+        switch sub {
+        case "list":
+            try cmdPeersList(home: home, args: subArgs, json: json)
+        default:
+            throw CLIError.usage("Unknown peers subcommand: \(sub)")
+        }
+    }
+
+    private func cmdPeersList(home: PeerHome, args: [String], json: Bool) throws {
+        let parsed = try parseKeyValues(args)
+
+        let limit = Int(parsed["--limit"] ?? "100") ?? 100
+        let staleAfter = Int64(parsed["--stale-after"] ?? "86400") ?? 86400
+        let includeStale = parsed["--include-stale"] != nil
+
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let nowEpoch = AethosStore.epochSeconds(Date())
+
+        let peers = try store.listPeers(
+            limit: limit,
+            sort: .lastSeenDesc,
+            includeStale: includeStale,
+            staleAfterSeconds: staleAfter,
+            now: nowEpoch
+        )
+
+        let (total, stale) = try store.countPeers(
+            staleAfterSeconds: staleAfter,
+            now: nowEpoch
+        )
+
+        if json {
+            let arr: [[String: Any]] = peers.map { p in
+                var d: [String: Any] = [
+                    "wayfarer_id": p.wayfarerId,
+                    "short_id": p.shortId,
+                    "first_seen_at": p.firstSeenAt,
+                    "last_seen_at": p.lastSeenAt,
+                ]
+                if let lea = p.lastExchangeAt {
+                    d["last_exchange_at"] = lea
+                }
+                return d
+            }
+            let obj: [String: Any] = [
+                "peers": arr,
+                "summary": [
+                    "total": total,
+                    "stale": stale,
+                ] as [String: Any],
+            ]
+            print(jsonString(obj))
+        } else {
+            if peers.isEmpty {
+                print("No peers observed.")
+            } else {
+                for p in peers {
+                    var line = "\(p.shortId)  last_seen=\(p.lastSeenAt)"
+                    if let lea = p.lastExchangeAt {
+                        line += "  last_exchange=\(lea)"
+                    }
+                    line += "  first_seen=\(p.firstSeenAt)"
+                    print(line)
+                }
+            }
         }
     }
 
@@ -1548,17 +1820,25 @@ struct CLI {
 
     // MARK: - Arg parsing
 
+    /// Boolean flags that take no value argument.
+    private static let booleanFlags: Set<String> = ["--include-stale", "--json"]
+
     private func parseKeyValues(_ args: [String]) throws -> [String: String] {
         var out: [String: String] = [:]
         var i = 0
         while i < args.count {
             let k = args[i]
             if k.hasPrefix("--") {
-                guard i + 1 < args.count else {
-                    throw CLIError.usage("Missing value for \(k)")
+                if Self.booleanFlags.contains(k) {
+                    out[k] = "true"
+                    i += 1
+                } else {
+                    guard i + 1 < args.count else {
+                        throw CLIError.usage("Missing value for \(k)")
+                    }
+                    out[k] = args[i + 1]
+                    i += 2
                 }
-                out[k] = args[i + 1]
-                i += 2
             } else {
                 throw CLIError.usage("Unexpected arg: \(k)")
             }
@@ -1698,11 +1978,13 @@ struct CLI {
       inventory advertise   Advertise local manifest inventory to outbox
       inventory request     Read remote inventory from stdin, enqueue pull requests
       inventory exchange    One inventory exchange round with a peer
+      inventory gossip      Gossip inventory across known peers
+      peers list            List known peers
       relay list            List active relay custody transfers
 
     Global options:
       --home <path>    Peer home directory (default: ./peer)
-      --json           Output in JSON format (status, transfers, inventory, relay)
+      --json           Output in JSON format (status, transfers, inventory, relay, peers)
 
     Command options:
       send   --file <path> --to <wayfarerIdHex>
@@ -1711,6 +1993,9 @@ struct CLI {
       transfers show <transfer_id>
       inventory request     (reads inventory JSON from stdin)
       inventory exchange    --with <wayfarerIdHex> [--limit <n>] [--request-cap <n>]
+      inventory gossip      [--limit-peers <n>] [--peer-limit <n>] [--request-cap <n>]
+                            [--stale-after <s>] [--max-rounds <n>] [--include-stale]
+      peers list            [--limit <n>] [--stale-after <s>] [--include-stale]
     """
 }
 

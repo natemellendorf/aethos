@@ -914,15 +914,21 @@ public final class AethosStore {
             """)
             try migrateV1toV2()
             try migrateV2toV3()
-            try exec("PRAGMA user_version = 3;")
+            try migrateV3toV4()
+            try exec("PRAGMA user_version = 4;")
         case 1:
             try migrateV1toV2()
             try migrateV2toV3()
-            try exec("PRAGMA user_version = 3;")
+            try migrateV3toV4()
+            try exec("PRAGMA user_version = 4;")
         case 2:
             try migrateV2toV3()
-            try exec("PRAGMA user_version = 3;")
+            try migrateV3toV4()
+            try exec("PRAGMA user_version = 4;")
         case 3:
+            try migrateV3toV4()
+            try exec("PRAGMA user_version = 4;")
+        case 4:
             return
         default:
             throw StoreError.unsupportedSchemaVersion(version)
@@ -977,6 +983,139 @@ public final class AethosStore {
         try exec("UPDATE transfers SET custody = 'inbound' WHERE direction = 'inbound' AND custody = 'origin';")
     }
 
+    private func migrateV3toV4() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS peers (
+            wayfarer_id TEXT PRIMARY KEY NOT NULL,
+            first_seen_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            last_exchange_at INTEGER,
+            notes TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_peers_last_seen_at ON peers(last_seen_at);
+        CREATE INDEX IF NOT EXISTS idx_peers_last_exchange_at ON peers(last_exchange_at);
+        """)
+    }
+
+    // MARK: Peers
+
+    /// Sort order for listing peers.
+    public enum PeerSort: Sendable {
+        case lastSeenDesc
+        case lastExchangeAsc
+    }
+
+    /// Insert a new peer or update last_seen_at for an existing peer.
+    public func upsertPeerSeen(wayfarerId: String, now: Int64) throws {
+        let sql = """
+        INSERT INTO peers (wayfarer_id, first_seen_at, last_seen_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(wayfarer_id) DO UPDATE SET last_seen_at = excluded.last_seen_at;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: wayfarerId)
+        try bindInt64(stmt, index: 2, value: now)
+        try bindInt64(stmt, index: 3, value: now)
+        try stepDone(stmt)
+    }
+
+    /// List peers with optional staleness filtering and sorting.
+    ///
+    /// - Parameters:
+    ///   - limit: Maximum number of peers to return.
+    ///   - sort: Sort order.
+    ///   - includeStale: If false, excludes peers whose last_seen_at < now - staleAfterSeconds.
+    ///   - staleAfterSeconds: Threshold for staleness (default: 86400 = 24 hours).
+    ///   - now: Current epoch seconds.
+    public func listPeers(
+        limit: Int,
+        sort: PeerSort = .lastSeenDesc,
+        includeStale: Bool = true,
+        staleAfterSeconds: Int64 = 86400,
+        now: Int64
+    ) throws -> [Peer] {
+        let orderClause: String
+        switch sort {
+        case .lastSeenDesc:
+            orderClause = "ORDER BY last_seen_at DESC"
+        case .lastExchangeAsc:
+            orderClause = "ORDER BY COALESCE(last_exchange_at, 0) ASC, last_seen_at DESC"
+        }
+
+        let whereClause: String
+        if includeStale {
+            whereClause = ""
+        } else {
+            let cutoff = now - staleAfterSeconds
+            whereClause = "WHERE last_seen_at >= \(cutoff)"
+        }
+
+        let sql = """
+        SELECT wayfarer_id, first_seen_at, last_seen_at, last_exchange_at, notes
+        FROM peers
+        \(whereClause)
+        \(orderClause)
+        LIMIT ?;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt32(stmt, index: 1, value: Int32(min(limit, Int(Int32.max))))
+
+        var peers: [Peer] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            peers.append(readPeerRow(stmt))
+        }
+        return peers
+    }
+
+    /// Mark a peer's last_exchange_at timestamp after a successful exchange.
+    public func markPeerExchanged(wayfarerId: String, now: Int64) throws {
+        let sql = "UPDATE peers SET last_exchange_at = ? WHERE wayfarer_id = ?;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: now)
+        try bindText(stmt, index: 2, text: wayfarerId)
+        try stepDone(stmt)
+    }
+
+    /// Count peers, with optional staleness filtering.
+    public func countPeers(includeStale: Bool = true, staleAfterSeconds: Int64 = 86400, now: Int64) throws -> (total: Int, stale: Int) {
+        let totalSQL = "SELECT COUNT(*) FROM peers;"
+        let totalStmt = try prepare(totalSQL)
+        defer { sqlite3_finalize(totalStmt) }
+        guard sqlite3_step(totalStmt) == SQLITE_ROW else { throw sqliteError() }
+        let total = Int(sqlite3_column_int(totalStmt, 0))
+
+        let cutoff = now - staleAfterSeconds
+        let staleSQL = "SELECT COUNT(*) FROM peers WHERE last_seen_at < ?;"
+        let staleStmt = try prepare(staleSQL)
+        defer { sqlite3_finalize(staleStmt) }
+        try bindInt64(staleStmt, index: 1, value: cutoff)
+        guard sqlite3_step(staleStmt) == SQLITE_ROW else { throw sqliteError() }
+        let stale = Int(sqlite3_column_int(staleStmt, 0))
+
+        return (total, stale)
+    }
+
+    private func readPeerRow(_ stmt: OpaquePointer) -> Peer {
+        let wayfarerId = columnText(stmt, index: 0) ?? ""
+        let firstSeenAt = columnInt64(stmt, index: 1)
+        let lastSeenAt = columnInt64(stmt, index: 2)
+        let lastExchangeAt = columnNullableInt64(stmt, index: 3)
+        let notes = columnText(stmt, index: 4)
+        return Peer(
+            wayfarerId: wayfarerId,
+            firstSeenAt: firstSeenAt,
+            lastSeenAt: lastSeenAt,
+            lastExchangeAt: lastExchangeAt,
+            notes: notes
+        )
+    }
+
     private func userVersion() throws -> Int {
         let stmt = try prepare("PRAGMA user_version;")
         defer { sqlite3_finalize(stmt) }
@@ -986,7 +1125,7 @@ public final class AethosStore {
 
     // MARK: Helpers
 
-    static func epochSeconds(_ date: Date) -> Int64 {
+    public static func epochSeconds(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970.rounded(.down))
     }
 
