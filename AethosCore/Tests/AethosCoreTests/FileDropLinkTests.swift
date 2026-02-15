@@ -51,7 +51,14 @@ func fileDropRoundTripAndArchive() throws {
     // File should be in archive now.
     let archived = try fm.contentsOfDirectory(at: archive, includingPropertiesForKeys: nil)
     #expect(archived.count == 1)
-    #expect(archived[0].lastPathComponent == inboxFile.lastPathComponent)
+    // FileDropLink renames processed out-* files to in-* on archive.
+    let expectedArchivedName: String
+    if inboxFile.lastPathComponent.hasPrefix("out-") {
+        expectedArchivedName = "in-" + inboxFile.lastPathComponent.dropFirst(4)
+    } else {
+        expectedArchivedName = inboxFile.lastPathComponent
+    }
+    #expect(archived[0].lastPathComponent == expectedArchivedName)
     #expect((try? fm.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil).count) == 0)
 }
 
