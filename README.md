@@ -69,11 +69,35 @@ Repeated sessions converge naturally without coordination.
 
 ---
 
+### Self-Certifying Identity
+
+Every Aethos node has a **self-certifying identity**: the Wayfarer ID is derived deterministically from the node's public key.
+
+- **Derivation**: `wayfarerId = SHA-256(Ed25519 signing public key)` (64-char hex)
+- **Verification**: Any peer can verify a claimed Wayfarer ID by re-deriving it from the presented public key
+- **Key type**: Ed25519 (Curve25519.Signing) for compact 32-byte keys and fast signatures
+- **Exchange key**: Curve25519 key agreement (X25519) for sealed payload key delivery
+
+This means:
+- Identity cannot be spoofed without the corresponding private key
+- No central authority is needed to assign or verify identities
+- Peers can authenticate each other without prior coordination
+
+**Storage layout** (under peer home `identity/` directory):
+- `identity-v2.json` — metadata (key type, public keys hex, creation timestamp)
+- `private.key` — raw private key bytes (0600 permissions)
+- `public.key` — raw public key bytes
+- `identity-v1.json` — backward-compatible key snapshot
+
+**Identity rotation**: To rotate identity, delete the identity directory and re-run `aethos init`. This generates a new keypair and a new Wayfarer ID. Peers will see the new identity as a different node. A future bead will add explicit rotation with continuity proofs.
+
+---
+
 ### Crypto-First Design
 
 Security is part of the protocol itself:
 
-- Ed25519 identities
+- Ed25519 self-certifying identities
 - Signed receipts
 - Sealed key exchange (Curve25519)
 - Authenticated payload encryption (ChaCha20-Poly1305)
