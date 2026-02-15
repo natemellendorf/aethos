@@ -361,6 +361,11 @@ public final class HttpFrameServer: @unchecked Sendable {
             return
         }
 
+        if method == "GET" && path == "/message" {
+            handleGetFrames(fd: fd, onlyType: CargoCodec.FrameType.message)
+            return
+        }
+
         if method == "POST" && (path == "/frame" || path == "/frames") {
             // Some HTTP clients (including some URLSession configurations) may use
             // `Expect: 100-continue` and will not send the body until we acknowledge.
@@ -424,6 +429,36 @@ public final class HttpFrameServer: @unchecked Sendable {
             return
         }
 
+        if method == "POST" && path == "/message" {
+            if let expect = headers["expect"], expect.lowercased().contains("100-continue") {
+                _ = sendAll(fd: fd, data: Data("HTTP/1.1 100 Continue\r\n\r\n".utf8))
+            }
+
+            let body: Data
+            if let te = headers["transfer-encoding"], te.lowercased().contains("chunked") {
+                guard let b = readChunkedBody(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else if let lenStr = headers["content-length"], let len = Int(lenStr), len >= 0 {
+                guard let b = readFixedBody(fd: fd, already: buf, length: len, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else {
+                guard let b = readToEOF(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            }
+
+            handlePostMessage(fd: fd, body: body)
+            return
+        }
+
         _ = sendResponse(fd: fd, status: 404, headers: defaultHeaders(), body: Data())
     }
 
@@ -479,6 +514,39 @@ public final class HttpFrameServer: @unchecked Sendable {
             }
             let id = AethosIDs.sha256(body)
             let f = Frame(type: CargoCodec.FrameType.inventoryRequest.rawValue, id: id, partIndex: 0, partCount: 1, payload: body)
+            frameBytes = f.encode()
+        }
+
+        let name = uniqueName(prefix: "in-", ext: "bin")
+        let url = inboxDir.appendingPathComponent(name, isDirectory: false)
+        do {
+            try frameBytes.write(to: url, options: [.atomic])
+        } catch {
+            _ = sendResponse(fd: fd, status: 500, headers: defaultHeaders(), body: Data())
+            return
+        }
+
+        _ = sendResponse(fd: fd, status: 201, headers: defaultHeaders(), body: Data())
+    }
+
+    private func handlePostMessage(fd: Int32, body: Data) {
+        // Accept either:
+        // - an encoded Frame of type message
+        // - canonical MessageV1 bytes (wrapped into a Frame for storage)
+        let frameBytes: Data
+        if let f = try? Frame.decode(body) {
+            guard CargoCodec.FrameType(rawValue: f.type) == .message else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            frameBytes = body
+        } else {
+            guard (try? CanonicalEncoderV1.decodeMessage(canonical: body)) != nil else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            let id = AethosIDs.messageId(canonicalBytes: body)
+            let f = Frame(type: CargoCodec.FrameType.message.rawValue, id: id, partIndex: 0, partCount: 1, payload: body)
             frameBytes = f.encode()
         }
 

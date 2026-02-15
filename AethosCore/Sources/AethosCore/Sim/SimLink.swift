@@ -101,7 +101,7 @@ public enum SimSession {
             if remainingItems <= 0 || remainingBytes <= 0 { break }
 
             switch item {
-            case .receipt, .envelope, .manifest, .inventory, .inventoryRequest:
+            case .receipt, .envelope, .manifest, .inventory, .inventoryRequest, .message:
                 let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
                 guard let frame = frames.first else { continue }
 
@@ -205,6 +205,12 @@ public enum SimSession {
             case .receipt:
                 try receiver.store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: now))
                 receiver.receiveState.receivedReceiptIds.insert(Hex.encode(id))
+            case .inventory:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .inventory, payload: bytes, receivedAt: now))
+            case .inventoryRequest:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .inventoryRequest, payload: bytes, receivedAt: now))
+            case .message:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: now))
             default:
                 break
             }

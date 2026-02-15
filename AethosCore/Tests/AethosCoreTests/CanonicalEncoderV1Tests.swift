@@ -65,3 +65,14 @@ func canonicalReceiptV1Vector() {
     let idHex = Hex.encode(AethosIDs.receiptId(from: receipt))
     #expect(idHex == "04277ea9b89b277a8bddaa03e3400a38bd15676894d3f0f22e86a121d9c0f788")
 }
+
+@Test
+func canonicalMessageV1Vector() {
+    let m = MessageV1(createdAtUnixMs: 123_456_789, body: Data("hi".utf8))
+    let canonical = CanonicalEncoderV1.encode(m)
+    let canonicalHex = Hex.encode(canonical)
+    #expect(canonicalHex == "0103010000000800000000075bcd1502000000026869")
+
+    let idHex = Hex.encode(AethosIDs.messageId(from: m))
+    #expect(idHex == "5fc0adcca009e5ba458ad63c3e659392e4cef9c52424f033a6139f1c4f690fcd")
+}

@@ -53,6 +53,8 @@ struct CLI {
                 try cmdHttp(home: home, args: rest, json: jsonMode)
             case "remote":
                 try cmdRemote(home: home, args: rest, json: jsonMode)
+            case "messages":
+                try cmdMessages(home: home, args: rest, json: jsonMode)
             case "help", "--help", "-h":
                 print(Self.usage)
             default:
@@ -71,7 +73,7 @@ struct CLI {
     private func contractV1CommandName(command: String, args: [String]) -> String {
         // Prefer full command path for contract v1 error reporting.
         // Example: `http exchange` -> `http.exchange`.
-        let supportsSub: Set<String> = ["transfers", "inventory", "peers", "relay", "http", "remote"]
+        let supportsSub: Set<String> = ["transfers", "inventory", "peers", "relay", "http", "remote", "messages"]
         guard supportsSub.contains(command) else { return command }
         guard let sub = args.first, !sub.hasPrefix("-") else { return command }
         return "\(command).\(sub)"
@@ -485,6 +487,10 @@ struct CLI {
                         try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
                     }
 
+                case .message:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
+                    storedItems += 1
+
                 case .chunk, .none:
                     break
                 }
@@ -658,6 +664,16 @@ struct CLI {
                 sentBytes += frame.sizeBytes
                 remainingBytes -= frame.sizeBytes
                 remainingItems -= 1
+
+            case .message:
+                let frame = frames[0]
+                if frame.sizeBytes > remainingBytes { continue }
+                try link.send(frame)
+                sentFrames += 1
+                sentBytes += frame.sizeBytes
+                remainingBytes -= frame.sizeBytes
+                remainingItems -= 1
+                // No outbox state transition; messages are durable records, not delivery-tracked like receipts.
 
             case let .chunk(id, _):
                 let chunkHex = Hex.encode(id)
@@ -1111,6 +1127,9 @@ struct CLI {
                             result.replayedManifests += 1
                         }
                     }
+
+                case .message:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
                 case .chunk, .none:
                     break
                 }
@@ -1529,6 +1548,116 @@ struct CLI {
             try cmdRelayList(home: home, args: subArgs, json: json)
         default:
             throw CLIError.usage("Unknown relay subcommand: \(sub)")
+        }
+    }
+
+    // MARK: - messages
+
+    private func cmdMessages(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("messages requires a subcommand: list | show")
+        }
+        let subArgs = Array(args.dropFirst())
+        switch sub {
+        case "list":
+            try cmdMessagesList(home: home, args: subArgs, json: json)
+        case "show":
+            try cmdMessagesShow(home: home, args: subArgs, json: json)
+        default:
+            throw CLIError.usage("Unknown messages subcommand: \(sub)")
+        }
+    }
+
+    private func cmdMessagesList(home: PeerHome, args: [String], json: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        let limit = Int(parsed["--limit"] ?? "50")
+        guard let limit, limit > 0 else {
+            throw CLIError.usage("messages list: --limit must be > 0")
+        }
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let rows = try store.listMessages(limit: limit)
+
+        if json != .none {
+            let messages: [[String: Any]] = rows.map { row in
+                [
+                    "message_id": row.messageId.hexString,
+                    "kind": row.kind,
+                    "direction": row.direction.rawValue,
+                    "peer_from": row.peerFrom ?? NSNull(),
+                    "peer_to": row.peerTo ?? NSNull(),
+                    "created_at": iso8601(row.createdAt),
+                ]
+            }
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.messagesList(messages)))
+            } else {
+                print(jsonString(["messages": messages]))
+            }
+        } else {
+            if rows.isEmpty {
+                print("No messages.")
+                return
+            }
+            for r in rows {
+                print("\(r.messageId.hexString)  \(r.direction.rawValue)  kind=\(r.kind)  created_at=\(iso8601(r.createdAt))")
+            }
+        }
+    }
+
+    private func cmdMessagesShow(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let hex = args.first, !hex.isEmpty else {
+            throw CLIError.usage("messages show requires <message_id_hex>")
+        }
+        guard let id = Hex.decode(hex) else {
+            throw CLIError.usage("messages show: invalid hex id")
+        }
+        let store = try AethosStore(path: home.storeSQLitePath)
+        guard let row = try store.getMessage(id: id) else {
+            throw CLIError.usage("Message not found: \(hex)")
+        }
+
+        let decodedBody: String
+        if row.kind == "message.v1" {
+            if let m = try? CanonicalEncoderV1.decodeMessage(canonical: row.canonical),
+               let s = String(data: m.body, encoding: .utf8) {
+                decodedBody = s
+            } else {
+                decodedBody = ""
+            }
+        } else {
+            decodedBody = ""
+        }
+
+        let messageObj: [String: Any] = [
+            "message_id": row.messageId.hexString,
+            "kind": row.kind,
+            "direction": row.direction.rawValue,
+            "peer_from": row.peerFrom ?? NSNull(),
+            "peer_to": row.peerTo ?? NSNull(),
+            "created_at": iso8601(row.createdAt),
+            "canonical_hex": row.canonical.hexString,
+            "body_utf8": decodedBody.isEmpty ? NSNull() : decodedBody,
+        ]
+
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.messagesShow(messageObj)))
+            } else {
+                print(jsonString(["message": messageObj]))
+            }
+        } else {
+            print("message_id:  \(row.messageId.hexString)")
+            print("kind:        \(row.kind)")
+            print("direction:   \(row.direction.rawValue)")
+            print("peer_from:   \(row.peerFrom ?? "")")
+            print("peer_to:     \(row.peerTo ?? "")")
+            print("created_at:  \(iso8601(row.createdAt))")
+            print("canonical:   \(row.canonical.hexString)")
+            if decodedBody.isEmpty {
+                print("body_utf8:   ")
+            } else {
+                print("body_utf8:   \(decodedBody)")
+            }
         }
     }
 
@@ -2342,6 +2471,8 @@ struct CLI {
       http exchange         Inventory exchange over HTTP
       remote push           Push planned frames to a remote peer
       remote exchange       Inventory exchange over HTTP (alias)
+      messages list         List stored protocol messages
+      messages show         Show a stored protocol message
       transfers list        List all transfers
       transfers show        Show details for a transfer
       inventory advertise   Advertise local manifest inventory to outbox
@@ -2372,6 +2503,8 @@ struct CLI {
       inventory gossip      [--limit-peers <n>] [--peer-limit <n>] [--request-cap <n>]
                             [--stale-after <s>] [--max-rounds <n>] [--include-stale]
       peers list            [--limit <n>] [--stale-after <s>] [--include-stale]
+      messages list         [--limit <n>]
+      messages show <message_id_hex>
     """
 }
 

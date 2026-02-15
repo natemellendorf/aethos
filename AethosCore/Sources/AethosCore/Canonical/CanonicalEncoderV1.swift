@@ -4,9 +4,15 @@ public enum CanonicalEncoderV1 {
     public enum TypeDiscriminator: UInt8 {
         case envelope = 1
         case manifest = 2
+        case message = 3
         case receipt = 4
         case inventory = 5
         case inventoryRequest = 6
+    }
+
+    public enum MessageField: UInt8 {
+        case createdAtUnixMs = 1
+        case body = 2
     }
 
     public enum EnvelopeField: UInt8 {
@@ -87,6 +93,19 @@ public enum CanonicalEncoderV1 {
         out.appendField(id: ReceiptField.receivedAtUnixMs.rawValue, raw: tsRaw)
 
         out.appendOptionalField(id: ReceiptField.signature.rawValue, raw: receipt.signature)
+        return out
+    }
+
+    public static func encode(_ message: MessageV1) -> Data {
+        var out = Data()
+        out.appendUInt8(message.version.rawValue)
+        out.appendUInt8(TypeDiscriminator.message.rawValue)
+
+        var tsRaw = Data()
+        tsRaw.appendInt64(message.createdAtUnixMs)
+        out.appendField(id: MessageField.createdAtUnixMs.rawValue, raw: tsRaw)
+
+        out.appendField(id: MessageField.body.rawValue, raw: message.body)
         return out
     }
 
@@ -223,6 +242,39 @@ public enum CanonicalEncoderV1 {
         }
 
         return InventoryRequestV1(version: pv, want: want)
+    }
+
+    public static func decodeMessage(canonical: Data) throws -> MessageV1 {
+        var r = CanonicalDecoderReader(canonical)
+        guard let version = r.readUInt8(),
+              let type = r.readUInt8(),
+              type == TypeDiscriminator.message.rawValue
+        else {
+            throw CanonicalDecoderError.invalidType
+        }
+        guard let pv = ProtocolVersion(rawValue: version) else {
+            throw CanonicalDecoderError.invalidType
+        }
+
+        var createdAtUnixMs: Int64 = 0
+        var body = Data()
+
+        while !r.isAtEnd {
+            guard let fid = r.readUInt8() else { break }
+            guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
+            guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+
+            switch fid {
+            case MessageField.createdAtUnixMs.rawValue:
+                if raw.count == 8 { createdAtUnixMs = readInt64BE(raw) }
+            case MessageField.body.rawValue:
+                body = raw
+            default:
+                break
+            }
+        }
+
+        return MessageV1(version: pv, createdAtUnixMs: createdAtUnixMs, body: body)
     }
 
     public enum CanonicalDecoderError: Swift.Error, Equatable {

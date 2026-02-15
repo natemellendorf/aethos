@@ -201,6 +201,19 @@ public enum CLIContractV1 {
         return out
     }
 
+    public static func messagesList(_ messages: [[String: Any]]) -> [String: Any] {
+        var out = base(command: "messages.list")
+        out["messages"] = messages
+        out["count"] = messages.count
+        return out
+    }
+
+    public static func messagesShow(_ message: [String: Any]) -> [String: Any] {
+        var out = base(command: "messages.show")
+        out["message"] = message
+        return out
+    }
+
     private static func identityDict(_ identity: IdentityV1?) -> [String: Any] {
         [
             "wayfarer_id": identity?.wayfarerId.hexString ?? "",

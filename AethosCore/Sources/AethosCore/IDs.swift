@@ -42,4 +42,12 @@ public enum AethosIDs {
     public static func receiptId(from receipt: ReceiptV1) -> Data {
         receiptId(canonicalBytes: CanonicalEncoderV1.encode(receipt))
     }
+
+    public static func messageId(canonicalBytes: Data) -> Data {
+        sha256(canonicalBytes)
+    }
+
+    public static func messageId(from message: MessageV1) -> Data {
+        messageId(canonicalBytes: CanonicalEncoderV1.encode(message))
+    }
 }

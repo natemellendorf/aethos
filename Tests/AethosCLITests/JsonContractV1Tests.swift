@@ -178,3 +178,31 @@ func errorJsonContractV1_snapshot() throws {
         CLIJSON.serializeJSON(obj, indent: 0)
     }
 }
+
+@Test
+func messagesListJsonContractV1_snapshot() throws {
+    let obj = CLIContractV1.messagesList([])
+    let h = SnapshotHarness()
+    try h.assertSnapshot(name: "messages.list.json.contract.v1") {
+        CLIJSON.serializeJSON(obj, indent: 0)
+    }
+}
+
+@Test
+func messagesShowJsonContractV1_snapshot() throws {
+    let msg: [String: Any] = [
+        "message_id": String(repeating: "0", count: 64),
+        "kind": "message.v1",
+        "direction": "inbound",
+        "peer_from": NSNull(),
+        "peer_to": NSNull(),
+        "created_at": "1970-01-01T00:00:00Z",
+        "canonical_hex": "",
+        "body_utf8": NSNull(),
+    ]
+    let obj = CLIContractV1.messagesShow(msg)
+    let h = SnapshotHarness()
+    try h.assertSnapshot(name: "messages.show.json.contract.v1") {
+        CLIJSON.serializeJSON(obj, indent: 0)
+    }
+}

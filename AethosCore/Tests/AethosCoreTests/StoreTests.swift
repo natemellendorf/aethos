@@ -101,3 +101,38 @@ func evictionRemovesExpiredRows() throws {
     #expect(try store.__debugRowCount(table: "outbox") == 1)
     #expect(try store.__debugRowCount(table: "inbox") == 1)
 }
+
+@Test
+func messageInsertIsIdempotentAndListWorks() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    let msg = MessageV1(createdAtUnixMs: 123_456_789, body: Data("hello".utf8))
+    let canonical = CanonicalEncoderV1.encode(msg)
+    let id = AethosIDs.messageId(canonicalBytes: canonical)
+
+    let row = AethosStore.MessageRow(
+        messageId: id,
+        kind: "message.v1",
+        direction: .outbound,
+        peerFrom: String(repeating: "a", count: 64),
+        peerTo: String(repeating: "b", count: 64),
+        createdAt: now,
+        canonical: canonical
+    )
+
+    try store.recordMessage(row)
+    try store.recordMessage(row)
+
+    let rows = try store.listMessages(limit: 10)
+    #expect(rows.count == 1)
+    #expect(rows[0] == row)
+
+    let got = try store.getMessage(id: id)
+    #expect(got == row)
+}

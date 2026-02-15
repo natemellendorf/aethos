@@ -63,6 +63,13 @@ public final class Router {
             addIfFits(cargo)
         }
 
+        // Priority 3b: messages (same class as inventory; keep ahead of metadata/chunks)
+        for item in activeOutbox where item.kind == .message {
+            let cargo = CargoItem.message(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
         // Build pending transfers keyed by manifestId.
         var transfers: [Data: PendingTransfer] = [:]
 
