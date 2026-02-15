@@ -38,6 +38,10 @@ struct CLI {
             try cmdPeers(home: home, args: rest, json: jsonOutput)
         case "relay":
             try cmdRelay(home: home, args: rest, json: jsonOutput)
+        case "serve":
+            try cmdServe(home: home, args: rest)
+        case "http":
+            try cmdHttp(home: home, args: rest, json: jsonOutput)
         case "help", "--help", "-h":
             print(Self.usage)
         default:
@@ -1836,6 +1840,176 @@ struct CLI {
         }
     }
 
+    // MARK: - HTTP transport
+
+    private func cmdServe(home: PeerHome, args: [String]) throws {
+        let parsed = try parseKeyValues(args)
+        guard let bind = parsed["--bind"], !bind.isEmpty else {
+            throw CLIError.usage("serve requires --bind <host:port>")
+        }
+
+        let (host, port) = try parseBind(bind)
+        try home.createDirectories()
+
+        let identityStore = DefaultIdentityStore(directory: home.identityDir)
+        let identityManager = IdentityManager(store: identityStore)
+        let identity = try identityManager.loadOrCreate()
+
+        let server = try HttpFrameServer(
+            bindHost: host,
+            port: port,
+            inboxDir: home.transportInboxDir,
+            outboxDir: home.transportOutboxDir,
+            archiveDir: home.transportArchiveDir,
+            localWayfarerIdHex: identity.wayfarerId.hexString
+        )
+
+        try server.start()
+        print("serve")
+        print("  bind=\(host):\(port)")
+        print("  wayfarerId=\(identity.wayfarerId.hexString)")
+        print("  inbox=\(home.transportInboxDir.path)")
+        print("  outbox=\(home.transportOutboxDir.path)")
+        print("  archive=\(home.transportArchiveDir.path)")
+        RunLoop.current.run()
+    }
+
+    private func cmdHttp(home: PeerHome, args: [String], json: Bool) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("http requires a subcommand: exchange")
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "exchange":
+            try cmdHttpExchange(home: home, args: rest, json: json)
+        default:
+            throw CLIError.usage("Unknown http subcommand: \(sub)")
+        }
+    }
+
+    private func cmdHttpExchange(home: PeerHome, args: [String], json: Bool) throws {
+        let parsed = try parseKeyValues(args)
+        guard let urlStr = parsed["--url"], let base = URL(string: urlStr) else {
+            throw CLIError.usage("http exchange requires --url <http(s)://host:port>")
+        }
+        let rounds = Int(parsed["--rounds"] ?? "5") ?? 5
+        guard rounds > 0 else { throw CLIError.usage("--rounds must be > 0") }
+
+        let limit = Int(parsed["--limit"] ?? "500") ?? 500
+        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+
+        let identityStore = DefaultIdentityStore(directory: home.identityDir)
+        let identityManager = IdentityManager(store: identityStore)
+        let identity = try identityManager.loadOrCreate()
+        let localHex = identity.wayfarerId.hexString
+
+        let expectedRemote: String? = parsed["--peer"]
+        let http = try HttpLink(baseURL: base, localWayfarerIdHex: localHex, expectedRemoteWayfarerIdHex: expectedRemote)
+
+        var remoteHex: String? = nil
+        var totalPulled = 0
+        var totalSent = 0
+
+        for _ in 0..<rounds {
+            let pulled = try httpPullIntoInbox(home: home, http: http)
+            totalPulled += pulled.frames.count
+            if remoteHex == nil {
+                remoteHex = pulled.remoteWayfarerIdHex
+            }
+
+            guard let remote = remoteHex ?? expectedRemote else {
+                // Try to discover remote identity without consuming a frame.
+                let (_, r) = try http.receiveWithRemoteInfo()
+                remoteHex = r
+                if remoteHex == nil {
+                    throw CLIError.usage("Remote did not provide X-Aethos-From-WayfarerId; start remote with 'aethos serve'")
+                }
+                continue
+            }
+
+            // Run one exchange round using the same logic as inventory gossip/exchange.
+            _ = try performExchange(home: home, store: store, peerWayfarerHex: remote, limit: limit, requestCap: requestCap)
+
+            // Send planned frames over HTTP.
+            let sent = try httpPumpAndSend(home: home, store: store, http: http)
+            totalSent += sent
+        }
+
+        if json {
+            let obj: [String: Any] = [
+                "http_exchange": [
+                    "rounds": rounds,
+                    "remote_wayfarer_id": remoteHex ?? "",
+                    "frames_pulled": totalPulled,
+                    "frames_sent": totalSent,
+                ] as [String: Any]
+            ]
+            print(jsonString(obj))
+        } else {
+            print("http exchange")
+            print("  rounds=\(rounds)")
+            print("  remote_wayfarer_id=\(remoteHex ?? "")")
+            print("  frames_pulled=\(totalPulled)")
+            print("  frames_sent=\(totalSent)")
+        }
+    }
+
+    private func httpPullIntoInbox(home: PeerHome, http: HttpLink) throws -> (frames: [Frame], remoteWayfarerIdHex: String?) {
+        var frames: [Frame] = []
+        var remoteHex: String? = nil
+        let fm = FileManager.default
+
+        for _ in 0..<2_000 {
+            let (f, remote) = try http.receiveWithRemoteInfo()
+            if remoteHex == nil { remoteHex = remote }
+            guard let f else { break }
+            frames.append(f)
+
+            let name = "http-in-\(UUID().uuidString).bin"
+            let url = home.transportInboxDir.appendingPathComponent(name, isDirectory: false)
+            try f.encode().write(to: url, options: [.atomic])
+        }
+
+        // Ensure inbox dir exists.
+        if !fm.fileExists(atPath: home.transportInboxDir.path) {
+            try fm.createDirectory(at: home.transportInboxDir, withIntermediateDirectories: true)
+        }
+
+        return (frames, remoteHex)
+    }
+
+    private func httpPumpAndSend(home: PeerHome, store: AethosStore, http: HttpLink) throws -> Int {
+        let router = Router(store: store)
+        let plan = try router.planNextSession(budget: SessionBudget(maxBytes: 64 * 1024, maxItems: 256), now: Date())
+
+        var framesSent = 0
+        var remainingBytes = 64 * 1024
+        let maxFramePayloadBytes = 1024
+
+        for item in plan {
+            let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
+            for f in frames {
+                if f.sizeBytes > remainingBytes { return framesSent }
+                try http.send(f)
+                remainingBytes -= f.sizeBytes
+                framesSent += 1
+            }
+        }
+        return framesSent
+    }
+
+    private func parseBind(_ bind: String) throws -> (String, UInt16) {
+        // host:port
+        let comps = bind.split(separator: ":")
+        guard comps.count == 2, let p = UInt16(comps[1]) else {
+            throw CLIError.usage("--bind must be in host:port form")
+        }
+        return (String(comps[0]), p)
+    }
+
     // MARK: - Arg parsing
 
     /// Boolean flags that take no value argument.
@@ -1991,6 +2165,8 @@ struct CLI {
       send                  Queue a file for delivery (file -> chunks + manifest/envelope)
       ingest                Read frames from inbox and store them
       pump                  Plan + write frames to outbox
+      serve                 Run HTTP frame server (POST/GET /frames)
+      http exchange         Inventory exchange over HTTP
       transfers list        List all transfers
       transfers show        Show details for a transfer
       inventory advertise   Advertise local manifest inventory to outbox
@@ -2008,6 +2184,9 @@ struct CLI {
       send   --file <path> --to <wayfarerIdHex>
       ingest --max <n>
       pump   --max-bytes <n> --max-items <n>
+      serve  --bind <host:port>
+      http exchange --url <http(s)://host:port> [--peer <wayfarerIdHex>] [--rounds <n>]
+                   [--limit <n>] [--request-cap <n>]
       transfers show <transfer_id>
       inventory request     (reads inventory JSON from stdin)
       inventory exchange    --with <wayfarerIdHex> [--limit <n>] [--request-cap <n>]
