@@ -1,0 +1,20 @@
+{
+  "command": "inventory.exchange",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "exchange": {
+    "advertised_count": 0,
+    "advertised_truncated": false,
+    "missing_on_peer_count": 0,
+    "peer_advertised_count": 0,
+    "receipts_received": 0,
+    "replayed_chunks": 0,
+    "replayed_manifests": 0,
+    "requested_count": 0,
+    "requested_truncated": false
+  },
+  "ok": true,
+  "peer_wayfarer_id": ""
+}
