@@ -37,10 +37,12 @@ mkdir -p "$TA_AR" "$TB_AR"
 PAYLOAD="$WORK/payload.bin"
 dd if=/dev/urandom of="$PAYLOAD" bs=1024 count=200 status=none
 
-TO_HEX="$(python3 - <<'PY'
-print('aa'*32)
-PY
-)"
+TO_HEX="$($AE status --home "$PEER_B" --json-v1 2>/dev/null | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("identity", {}).get("wayfarer_id", ""))')"
+
+if [[ -z "$TO_HEX" ]]; then
+  echo "Failed to read peerB wayfarerId" >&2
+  exit 1
+fi
 
 echo "Queueing send from peerA..."
 SEND_OUT="$WORK/send.out"

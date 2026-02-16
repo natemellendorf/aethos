@@ -377,11 +377,12 @@ func routerPrioritizesInventoryAboveChunks() throws {
 
     let plan = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 100), now: now)
 
-    // Expected priority order: receipt, inventoryRequest, inventory, metadata, chunks
+    // Expected priority order: receipt, inventoryRequest, inventory, message, metadata, chunks
     // Find indices of each type
     var receiptIdx: Int?
     var inventoryRequestIdx: Int?
     var inventoryIdx: Int?
+    var messageIdx: Int?
     var metadataIdx: Int?
     var chunkIdx: Int?
 
@@ -393,6 +394,8 @@ func routerPrioritizesInventoryAboveChunks() throws {
             if inventoryRequestIdx == nil { inventoryRequestIdx = i }
         case .inventory:
             if inventoryIdx == nil { inventoryIdx = i }
+        case .message:
+            if messageIdx == nil { messageIdx = i }
         case .metadata:
             if metadataIdx == nil { metadataIdx = i }
         case .chunk:
@@ -408,9 +411,13 @@ func routerPrioritizesInventoryAboveChunks() throws {
     if let iri = inventoryRequestIdx, let ii = inventoryIdx {
         #expect(iri < ii)
     }
-    // Inventory before metadata
-    if let ii = inventoryIdx, let mi = metadataIdx {
-        #expect(ii < mi)
+    // Inventory before messages
+    if let ii = inventoryIdx, let msi = messageIdx {
+        #expect(ii < msi)
+    }
+    // Messages before metadata
+    if let msi = messageIdx, let mi = metadataIdx {
+        #expect(msi < mi)
     }
     // Metadata before chunks
     if let mi = metadataIdx, let ci = chunkIdx {

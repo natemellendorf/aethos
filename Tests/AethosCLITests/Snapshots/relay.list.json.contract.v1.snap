@@ -1,0 +1,10 @@
+{
+  "command": "relay.list",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "count": 0,
+  "ok": true,
+  "relay_transfers": []
+}

@@ -6,16 +6,16 @@ public final class SimDuplexLink {
 
     public init() {}
 
-    public func endpointA() -> Link { Endpoint(queueOut: { [weak self] frame in self?.aToB.append(frame) }, queueIn: { [weak self] in
+    public func endpointA() -> FrameTransport { Endpoint(queueOut: { [weak self] frame in self?.aToB.append(frame) }, queueIn: { [weak self] in
         guard let self else { return nil }
         return self.bToA.isEmpty ? nil : self.bToA.removeFirst()
     }) }
-    public func endpointB() -> Link { Endpoint(queueOut: { [weak self] frame in self?.bToA.append(frame) }, queueIn: { [weak self] in
+    public func endpointB() -> FrameTransport { Endpoint(queueOut: { [weak self] frame in self?.bToA.append(frame) }, queueIn: { [weak self] in
         guard let self else { return nil }
         return self.aToB.isEmpty ? nil : self.aToB.removeFirst()
     }) }
 
-    private struct Endpoint: Link {
+    private struct Endpoint: FrameTransport {
         let queueOut: (Frame) -> Void
         let queueIn: () -> Frame?
 
@@ -33,13 +33,13 @@ public struct SimPeer {
     public let name: String
     public let store: AethosStore
     public let router: Router
-    public let link: Link
+    public let link: FrameTransport
 
     // Simulation-only state for multipart chunk delivery.
     fileprivate let sendState = ChunkSendState()
     fileprivate let receiveState = ChunkReceiveState()
 
-    public init(name: String, store: AethosStore, link: Link) {
+    public init(name: String, store: AethosStore, link: FrameTransport) {
         self.name = name
         self.store = store
         self.router = Router(store: store)
@@ -101,7 +101,7 @@ public enum SimSession {
             if remainingItems <= 0 || remainingBytes <= 0 { break }
 
             switch item {
-            case .receipt, .envelope, .manifest, .inventory, .inventoryRequest:
+            case .receipt, .envelope, .manifest, .inventory, .inventoryRequest, .message:
                 let frames = try CargoCodec.encode(item, maxFramePayloadBytes: maxFramePayloadBytes)
                 guard let frame = frames.first else { continue }
 
@@ -205,6 +205,12 @@ public enum SimSession {
             case .receipt:
                 try receiver.store.recordReceived(item: InboxItem(id: id, kind: .receipt, payload: bytes, receivedAt: now))
                 receiver.receiveState.receivedReceiptIds.insert(Hex.encode(id))
+            case .inventory:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .inventory, payload: bytes, receivedAt: now))
+            case .inventoryRequest:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .inventoryRequest, payload: bytes, receivedAt: now))
+            case .message:
+                try receiver.store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: now))
             default:
                 break
             }

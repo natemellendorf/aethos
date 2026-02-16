@@ -1,0 +1,10 @@
+{
+  "command": "messages.list",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "count": 0,
+  "messages": [],
+  "ok": true
+}

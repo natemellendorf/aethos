@@ -1,0 +1,22 @@
+{
+  "command": "inventory.gossip",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "gossip": {
+    "limit_peers": 10,
+    "now_epoch_seconds": 0,
+    "peer_limit": 500,
+    "request_cap": 200,
+    "stale_after_seconds": 86400
+  },
+  "ok": true,
+  "results": [],
+  "summary": {
+    "peers_considered": 0,
+    "peers_exchanged_ok": 0,
+    "peers_failed": 0,
+    "peers_selected": 0
+  }
+}

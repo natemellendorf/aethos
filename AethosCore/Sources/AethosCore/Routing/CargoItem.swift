@@ -7,13 +7,15 @@ public enum CargoItem: Equatable, Sendable {
     case receipt(Data)           // canonical bytes
     case inventory(Data)         // canonical bytes
     case inventoryRequest(Data)  // canonical bytes
+    case message(Data)           // canonical bytes
 
     public enum Priority: UInt8, Comparable, Sendable {
         case receipt = 5
         case inventoryRequest = 4
         case inventory = 3
-        case metadata = 2
-        case chunk = 1
+        case message = 2
+        case metadata = 1
+        case chunk = 0
 
         public static func < (lhs: Self, rhs: Self) -> Bool {
             lhs.rawValue < rhs.rawValue
@@ -28,6 +30,8 @@ public enum CargoItem: Equatable, Sendable {
             return .inventoryRequest
         case .inventory:
             return .inventory
+        case .message:
+            return .message
         case .envelope, .manifest:
             return .metadata
         case .chunk:
@@ -46,6 +50,8 @@ public enum CargoItem: Equatable, Sendable {
         case let .inventory(bytes):
             return bytes.count
         case let .inventoryRequest(bytes):
+            return bytes.count
+        case let .message(bytes):
             return bytes.count
         case let .chunk(_, bytes):
             // With framing, chunks may be transferred in parts; use a conservative

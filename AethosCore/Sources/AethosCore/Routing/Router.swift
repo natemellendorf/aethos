@@ -63,17 +63,24 @@ public final class Router {
             addIfFits(cargo)
         }
 
+        // Priority 3b: messages (same class as inventory; keep ahead of metadata/chunks)
+        for item in activeOutbox where item.kind == .message {
+            let cargo = CargoItem.message(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
         // Build pending transfers keyed by manifestId.
         var transfers: [Data: PendingTransfer] = [:]
 
-        let nowSec = Int64(now.timeIntervalSince1970.rounded(.down))
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
 
         // First, manifests define chunk ordering.
         for item in activeOutbox where item.kind == .manifest {
             let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
             let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
 
-            let rotation = chunkRotationOffset(nowSec: nowSec, manifestId: manifestId, count: parsed.chunkIds.count)
+            let rotation = chunkRotationOffset(nowMs: nowMs, manifestId: manifestId, count: parsed.chunkIds.count)
             let chunkOrder = rotate(parsed.chunkIds, by: rotation)
 
             let t = PendingTransfer(
@@ -156,9 +163,9 @@ public final class Router {
         return plan
     }
 
-    private func chunkRotationOffset(nowSec: Int64, manifestId: Data, count: Int) -> Int {
+    private func chunkRotationOffset(nowMs: Int64, manifestId: Data, count: Int) -> Int {
         guard count > 0 else { return 0 }
-        let seed = Int(nowSec) + Int(manifestId.first ?? 0)
+        let seed = Int((nowMs % Int64(Int.max)) + Int64(manifestId.first ?? 0))
         let m = seed % count
         return m >= 0 ? m : (m + count)
     }

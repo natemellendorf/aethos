@@ -1,0 +1,18 @@
+{
+  "command": "messages.show",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "message": {
+    "body_utf8": null,
+    "canonical_hex": "",
+    "created_at": "1970-01-01T00:00:00Z",
+    "direction": "inbound",
+    "kind": "message.v1",
+    "message_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "peer_from": null,
+    "peer_to": null
+  },
+  "ok": true
+}

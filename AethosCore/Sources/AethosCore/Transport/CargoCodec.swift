@@ -11,6 +11,7 @@ public enum CargoCodec {
         case unknownFrameType(UInt8)
         case invalidParts
         case metadataMustBeSingleFrame
+        case metadataIdMismatch
     }
 
     // Stable frame type codes.
@@ -21,6 +22,7 @@ public enum CargoCodec {
         case chunk = 4
         case inventory = 5
         case inventoryRequest = 6
+        case message = 7
     }
 
     public static func encode(_ item: CargoItem, maxFramePayloadBytes: Int) throws -> [Frame] {
@@ -46,6 +48,10 @@ public enum CargoCodec {
         case let .inventoryRequest(bytes):
             let id = AethosIDs.sha256(bytes)
             return [Frame(type: FrameType.inventoryRequest.rawValue, id: id, partIndex: 0, partCount: 1, payload: bytes)]
+
+        case let .message(bytes):
+            let id = AethosIDs.messageId(canonicalBytes: bytes)
+            return [Frame(type: FrameType.message.rawValue, id: id, partIndex: 0, partCount: 1, payload: bytes)]
 
         case let .chunk(id, bytes):
             if bytes.isEmpty {
@@ -78,9 +84,31 @@ public enum CargoCodec {
         }
 
         switch type {
-        case .receipt, .envelope, .manifest, .inventory, .inventoryRequest:
+        case .receipt, .envelope, .manifest, .inventory, .inventoryRequest, .message:
             guard frame.partCount == 1, frame.partIndex == 0 else {
                 throw CargoCodecError.metadataMustBeSingleFrame
+            }
+
+            let expectedId: Data
+            switch type {
+            case .receipt:
+                expectedId = AethosIDs.receiptId(canonicalBytes: frame.payload)
+            case .envelope:
+                expectedId = AethosIDs.envelopeId(canonicalBytes: frame.payload)
+            case .manifest:
+                expectedId = AethosIDs.manifestId(canonicalBytes: frame.payload)
+            case .inventory:
+                expectedId = AethosIDs.sha256(frame.payload)
+            case .inventoryRequest:
+                expectedId = AethosIDs.sha256(frame.payload)
+            case .message:
+                expectedId = AethosIDs.messageId(canonicalBytes: frame.payload)
+            case .chunk:
+                expectedId = frame.id // unreachable
+            }
+
+            guard frame.id == expectedId else {
+                throw CargoCodecError.metadataIdMismatch
             }
             return .metadata(type: frame.type, id: frame.id, bytes: frame.payload)
 

@@ -1,0 +1,14 @@
+{
+  "command": "inventory.advertise",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "inventory": {
+    "count": 0,
+    "enqueued": true,
+    "generated_at_unix_ms": 0,
+    "manifests": []
+  },
+  "ok": true
+}

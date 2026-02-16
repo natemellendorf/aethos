@@ -29,7 +29,8 @@ func httpFrameRoundTrip() throws {
     #expect((try? Frame.decode(storedBytes)) == frameA)
 
     // Seed server outbox and receive it via HTTP.
-    let frameB = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: Data(repeating: 0x02, count: 32), partIndex: 0, partCount: 1, payload: Data([0x9]))
+    let receiptCanonical = CanonicalEncoderV1.encode(ReceiptV1(envelopeId: Data(repeating: 0x02, count: 32), manifestId: Data(repeating: 0x03, count: 32), receivedAtUnixMs: 9))
+    let frameB = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.receiptId(canonicalBytes: receiptCanonical), partIndex: 0, partCount: 1, payload: receiptCanonical)
     let outFile = outbox.appendingPathComponent("0001.bin")
     try frameB.encode().write(to: outFile, options: [.atomic])
 
@@ -54,7 +55,7 @@ func httpRejectsInvalidFrame() throws {
     let running = try startServer(inbox: inbox, outbox: outbox, archive: archive, wayfarerHex: String(repeating: "aa", count: 32))
     defer { try? running.server.stop() }
 
-    let url = URL(string: "http://127.0.0.1:\(running.port)/frames")!
+    let url = URL(string: "http://127.0.0.1:\(running.port)/frame")!
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     req.httpBody = Data("not-a-frame".utf8)
@@ -63,6 +64,57 @@ func httpRejectsInvalidFrame() throws {
 
     let status = try httpStatus(req)
     #expect(status == 400)
+}
+
+@Test
+func httpServerSupportsInventoryAndInventoryRequestEndpoints() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? fm.removeItem(at: root) }
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let inbox = root.appendingPathComponent("inbox", isDirectory: true)
+    let outbox = root.appendingPathComponent("outbox", isDirectory: true)
+    let archive = root.appendingPathComponent("archive", isDirectory: true)
+
+    let running = try startServer(inbox: inbox, outbox: outbox, archive: archive, wayfarerHex: String(repeating: "aa", count: 32))
+    defer { try? running.server.stop() }
+
+    // Seed a non-inventory frame and an inventory frame in outbox.
+    let inv = InventoryV1(manifests: [String(repeating: "11", count: 32)], generatedAtUnixMs: 1)
+    let invBytes = CanonicalEncoderV1.encode(inv)
+    let invFrame = Frame(type: CargoCodec.FrameType.inventory.rawValue, id: AethosIDs.sha256(invBytes), partIndex: 0, partCount: 1, payload: invBytes)
+    try invFrame.encode().write(to: outbox.appendingPathComponent("000-inv.bin"), options: [.atomic])
+
+    let receiptCanonical = CanonicalEncoderV1.encode(ReceiptV1(envelopeId: Data(repeating: 0x02, count: 32), manifestId: Data(repeating: 0x03, count: 32), receivedAtUnixMs: 9))
+    let receiptFrame = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.receiptId(canonicalBytes: receiptCanonical), partIndex: 0, partCount: 1, payload: receiptCanonical)
+    try receiptFrame.encode().write(to: outbox.appendingPathComponent("001-receipt.bin"), options: [.atomic])
+
+    // GET /inventory returns an inventory frame.
+    let invURL = URL(string: "http://127.0.0.1:\(running.port)/inventory")!
+    let invResp = try httpGET(invURL)
+    #expect(invResp.status == 200)
+    #expect(invResp.body != nil)
+    let gotInvFrame = try Frame.decode(invResp.body!)
+    #expect(CargoCodec.FrameType(rawValue: gotInvFrame.type) == .inventory)
+
+    // POST /inventory-request accepts canonical bytes and stores a framed request.
+    let wantHash = String(repeating: "22", count: 32)
+    let reqCanonical = CanonicalEncoderV1.encode(InventoryRequestV1(want: [wantHash]))
+    let reqURL = URL(string: "http://127.0.0.1:\(running.port)/inventory-request")!
+    var post = URLRequest(url: reqURL)
+    post.httpMethod = "POST"
+    post.httpBody = reqCanonical
+    post.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+    post.setValue("\(reqCanonical.count)", forHTTPHeaderField: "Content-Length")
+    let postStatus = try httpStatus(post)
+    #expect(postStatus == 201)
+
+    let inboxFiles = try waitForFileCount(in: inbox, count: 1)
+    let stored = try Data(contentsOf: inboxFiles[0])
+    let storedFrame = try Frame.decode(stored)
+    #expect(CargoCodec.FrameType(rawValue: storedFrame.type) == .inventoryRequest)
+    #expect((try? CanonicalEncoderV1.decodeInventoryRequest(canonical: storedFrame.payload)) != nil)
 }
 
 @Test
@@ -251,6 +303,24 @@ private func httpStatus(_ req: URLRequest) throws -> Int {
     return box.status
 }
 
+private func httpGET(_ url: URL) throws -> (status: Int, body: Data?) {
+    let sema = DispatchSemaphore(value: 0)
+
+    final class Box: @unchecked Sendable {
+        var status: Int = -1
+        var body: Data?
+    }
+    let box = Box()
+
+    URLSession.shared.dataTask(with: url) { data, resp, _ in
+        box.status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        box.body = data
+        sema.signal()
+    }.resume()
+    _ = sema.wait(timeout: .now() + 5)
+    return (box.status, box.body)
+}
+
 private func pumpStoreToOutbox(store: AethosStore, outboxDir: URL, maxBytes: Int) throws {
     let router = Router(store: store)
     let plan = try router.planNextSession(budget: SessionBudget(maxBytes: maxBytes, maxItems: 256), now: Date())
@@ -286,7 +356,10 @@ private func ingestAll(link: HttpLink, store: AethosStore) throws {
                 try store.recordReceived(item: InboxItem(id: id, kind: .inventory, payload: bytes, receivedAt: Date()))
             case .inventoryRequest:
                 try store.recordReceived(item: InboxItem(id: id, kind: .inventoryRequest, payload: bytes, receivedAt: Date()))
+            case .message:
+                try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
             case .chunk, .none:
+                // This helper only ingests metadata + chunks.
                 break
             }
         case let .chunkPart(id, partIndex, partCount, bytes):

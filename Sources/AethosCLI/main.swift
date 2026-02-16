@@ -1,12 +1,25 @@
 import AethosCore
+import AethosCLILib
 import Foundation
 
 enum CLIError: Swift.Error {
     case usage(String)
 }
 
+struct CLIHumanError: LocalizedError, CustomStringConvertible {
+    let message: String
+    var errorDescription: String? { message }
+    var description: String { message }
+}
+
 struct CLI {
     let args: [String]
+
+    private enum JSONMode {
+        case none
+        case legacy
+        case contractV1
+    }
 
     func run() throws {
         var argv = args
@@ -18,42 +31,68 @@ struct CLI {
         }
         argv = Array(argv.dropFirst())
 
-        let (home, rest, jsonOutput) = try parseGlobalArgs(from: argv)
-        switch command {
-        case "init":
-            try cmdInit(home: home, args: rest)
-        case "status":
-            try cmdStatus(home: home, args: rest, json: jsonOutput)
-        case "send":
-            try cmdSend(home: home, args: rest)
-        case "ingest":
-            try cmdIngest(home: home, args: rest)
-        case "pump":
-            try cmdPump(home: home, args: rest)
-        case "transfers":
-            try cmdTransfers(home: home, args: rest, json: jsonOutput)
-        case "inventory":
-            try cmdInventory(home: home, args: rest, json: jsonOutput)
-        case "peers":
-            try cmdPeers(home: home, args: rest, json: jsonOutput)
-        case "relay":
-            try cmdRelay(home: home, args: rest, json: jsonOutput)
-        case "serve":
-            try cmdServe(home: home, args: rest)
-        case "http":
-            try cmdHttp(home: home, args: rest, json: jsonOutput)
-        case "help", "--help", "-h":
-            print(Self.usage)
-        default:
-            throw CLIError.usage("Unknown command: \(command)\n\n\(Self.usage)")
+        let (home, rest, jsonMode) = try parseGlobalArgs(from: argv)
+        let contractCommandName = contractV1CommandName(command: command, args: rest)
+        do {
+            switch command {
+            case "init":
+                try cmdInit(home: home, args: rest)
+            case "status":
+                try cmdStatus(home: home, args: rest, json: jsonMode)
+            case "send":
+                try cmdSend(home: home, args: rest)
+            case "ingest":
+                try cmdIngest(home: home, args: rest)
+            case "pump":
+                try cmdPump(home: home, args: rest)
+            case "transfers":
+                try cmdTransfers(home: home, args: rest, json: jsonMode)
+            case "inventory":
+                try cmdInventory(home: home, args: rest, json: jsonMode)
+            case "peers":
+                try cmdPeers(home: home, args: rest, json: jsonMode)
+            case "relay":
+                try cmdRelay(home: home, args: rest, json: jsonMode)
+            case "serve":
+                try cmdServe(home: home, args: rest)
+            case "http":
+                try cmdHttp(home: home, args: rest, json: jsonMode)
+            case "quic":
+                try cmdQuic(home: home, args: rest, json: jsonMode)
+            case "remote":
+                try cmdRemote(home: home, args: rest, json: jsonMode)
+            case "messages":
+                try cmdMessages(home: home, args: rest, json: jsonMode)
+            case "help", "--help", "-h":
+                print(Self.usage)
+            default:
+                throw CLIError.usage("Unknown command: \(command)\n\n\(Self.usage)")
+            }
+        } catch {
+            if jsonMode == .contractV1 {
+                let err = CLIContractV1.error(command: contractCommandName, type: "error", message: String(describing: error))
+                FileHandle.standardError.write(Data("\(CLIJSON.serializeJSON(err, indent: 0))\n".utf8))
+                exit(1)
+            }
+            throw error
         }
     }
 
-    private func parseGlobalArgs(from args: [String]) throws -> (PeerHome, [String], Bool) {
+    private func contractV1CommandName(command: String, args: [String]) -> String {
+        // Prefer full command path for contract v1 error reporting.
+        // Example: `http exchange` -> `http.exchange`.
+        let supportsSub: Set<String> = ["transfers", "inventory", "peers", "relay", "http", "quic", "remote", "messages"]
+        guard supportsSub.contains(command) else { return command }
+        guard let sub = args.first, !sub.hasPrefix("-") else { return command }
+        return "\(command).\(sub)"
+    }
+
+    private func parseGlobalArgs(from args: [String]) throws -> (PeerHome, [String], JSONMode) {
         var rest: [String] = []
         var i = 0
         var homeURL: URL? = nil
-        var jsonOutput = false
+        var jsonLegacy = false
+        var jsonV1 = false
 
         while i < args.count {
             let a = args[i]
@@ -64,7 +103,12 @@ struct CLI {
                 continue
             }
             if a == "--json" {
-                jsonOutput = true
+                jsonLegacy = true
+                i += 1
+                continue
+            }
+            if a == "--json-v1" {
+                jsonV1 = true
                 i += 1
                 continue
             }
@@ -72,7 +116,16 @@ struct CLI {
             i += 1
         }
 
-        return (PeerHome(root: homeURL ?? PeerHome.defaultRootURL()), rest, jsonOutput)
+        let mode: JSONMode
+        if jsonV1 {
+            mode = .contractV1
+        } else if jsonLegacy {
+            mode = .legacy
+        } else {
+            mode = .none
+        }
+
+        return (PeerHome(root: homeURL ?? PeerHome.defaultRootURL()), rest, mode)
     }
 
     // MARK: - init
@@ -97,7 +150,7 @@ struct CLI {
 
     // MARK: - status
 
-    private func cmdStatus(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdStatus(home: PeerHome, args: [String], json: JSONMode) throws {
         guard args.isEmpty else {
             throw CLIError.usage("status takes no positional args")
         }
@@ -116,7 +169,41 @@ struct CLI {
             shortId = identity!.shortId
         } catch {}
 
-        if json {
+        if json != .none {
+            if json == .contractV1 {
+                if !storeExists {
+                    print(jsonString(CLIContractV1.status(storeExists: storeExists, identity: identity)))
+                    return
+                }
+
+                let store = try AethosStore(path: home.storeSQLitePath)
+                let transfers = try store.listTransfers()
+                let transfersSummary: [String: Any] = [
+                    "total": transfers.count,
+                    "queued": transfers.filter { $0.status == .queued }.count,
+                    "sending": transfers.filter { $0.status == .sending }.count,
+                    "receiving": transfers.filter { $0.status == .receiving }.count,
+                    "complete": transfers.filter { $0.status == .complete }.count,
+                    "failed": transfers.filter { $0.status == .failed }.count,
+                    "evicted": transfers.filter { $0.evicted }.count,
+                ]
+
+                let nowEpoch = AethosStore.epochSeconds(Date())
+                let (totalPeers, stalePeers) = try store.countPeers(staleAfterSeconds: 86400, now: nowEpoch)
+                let peersSummary: [String: Any] = [
+                    "total": totalPeers,
+                    "stale": stalePeers,
+                    "recently_seen": totalPeers - stalePeers,
+                ]
+
+                print(jsonString(CLIContractV1.status(
+                    storeExists: storeExists,
+                    identity: identity,
+                    transfersSummary: transfersSummary,
+                    peersSummary: peersSummary
+                )))
+                return
+            }
             var identityDict: [String: Any] = [
                 "wayfarerId": wayfarerIdHex ?? "",
                 "shortId": shortId ?? "",
@@ -408,6 +495,10 @@ struct CLI {
                         try replayManifestContent(manifestHash: wantHash, store: store, home: home, fm: fm)
                     }
 
+                case .message:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
+                    storedItems += 1
+
                 case .chunk, .none:
                     break
                 }
@@ -506,7 +597,7 @@ struct CLI {
 
         // Use an inflated planning budget so the router includes all chunks in the plan.
         // The pump's actual send loop enforces the real budget per frame.
-        let planBudget = SessionBudget(maxBytes: maxBytes * 10, maxItems: maxItems * 10)
+        let planBudget = SessionBudget(maxBytes: maxBytes * 100, maxItems: maxItems * 10)
         let plan = try router.planNextSession(budget: planBudget, now: Date())
 
         var cursor = try loadSendCursors(from: home.transportCursorPath)
@@ -582,21 +673,43 @@ struct CLI {
                 remainingBytes -= frame.sizeBytes
                 remainingItems -= 1
 
-            case let .chunk(id, _):
-                let chunkHex = Hex.encode(id)
-                let idx = Int(cursor[chunkHex] ?? 0) % frames.count
-                let frame = frames[idx]
+            case .message:
+                let frame = frames[0]
                 if frame.sizeBytes > remainingBytes { continue }
                 try link.send(frame)
                 sentFrames += 1
                 sentBytes += frame.sizeBytes
                 remainingBytes -= frame.sizeBytes
                 remainingItems -= 1
-                cursor[chunkHex] = UInt16((idx + 1) % frames.count)
+                // No outbox state transition; messages are durable records, not delivery-tracked like receipts.
+
+            case let .chunk(id, _):
+                let chunkHex = Hex.encode(id)
+                var idx = Int(cursor[chunkHex] ?? 0)
+                if idx >= frames.count { idx = 0 }
+                var sentChunkFrame = false
+                var sentSizeBytes = 0
+                for _ in 0..<frames.count {
+                    let frame = frames[idx]
+                    if frame.sizeBytes <= remainingBytes {
+                        try link.send(frame)
+                        sentFrames += 1
+                        sentBytes += frame.sizeBytes
+                        remainingBytes -= frame.sizeBytes
+                        remainingItems -= 1
+                        sentChunkFrame = true
+                        sentSizeBytes = frame.sizeBytes
+                        idx = (idx + 1) % frames.count
+                        break
+                    }
+                    idx = (idx + 1) % frames.count
+                }
+                guard sentChunkFrame else { continue }
+                cursor[chunkHex] = UInt16(idx)
 
                 // Track bytes sent per manifest
-                if let mHex = chunkToManifestHash[chunkHex] {
-                    manifestBytesDelta[mHex, default: 0] += frame.sizeBytes
+                if let mHex = chunkToManifestHash[chunkHex], sentChunkFrame {
+                    manifestBytesDelta[mHex, default: 0] += sentSizeBytes
                 }
             }
         }
@@ -637,7 +750,7 @@ struct CLI {
 
     // MARK: - transfers
 
-    private func cmdTransfers(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdTransfers(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let sub = args.first else {
             throw CLIError.usage("transfers requires a subcommand: list | show")
         }
@@ -653,14 +766,18 @@ struct CLI {
         }
     }
 
-    private func cmdTransfersList(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdTransfersList(home: PeerHome, args: [String], json: JSONMode) throws {
         let store = try AethosStore(path: home.storeSQLitePath)
         let transfers = try store.listTransfers()
 
-        if json {
-            let arr = transfers.map { transferToDict($0) }
-            let obj: [String: Any] = ["transfers": arr]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.transfersList(transfers)))
+            } else {
+                let arr = transfers.map { transferToDict($0) }
+                let obj: [String: Any] = ["transfers": arr]
+                print(jsonString(obj))
+            }
         } else {
             if transfers.isEmpty {
                 print("No transfers.")
@@ -686,7 +803,7 @@ struct CLI {
         }
     }
 
-    private func cmdTransfersShow(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdTransfersShow(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let transferId = args.first, !transferId.isEmpty else {
             throw CLIError.usage("transfers show requires <transfer_id>")
         }
@@ -696,9 +813,13 @@ struct CLI {
             throw CLIError.usage("Transfer not found: \(transferId)")
         }
 
-        if json {
-            let obj: [String: Any] = ["transfer": transferToDict(t)]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.transfersShow(t)))
+            } else {
+                let obj: [String: Any] = ["transfer": transferToDict(t)]
+                print(jsonString(obj))
+            }
         } else {
             print("transfer_id: \(t.transferId)")
             print("direction:   \(t.direction.rawValue)")
@@ -730,7 +851,7 @@ struct CLI {
 
     // MARK: - inventory
 
-    private func cmdInventory(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdInventory(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let sub = args.first else {
             throw CLIError.usage("inventory requires a subcommand: advertise | request")
         }
@@ -750,7 +871,7 @@ struct CLI {
         }
     }
 
-    private func cmdInventoryAdvertise(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdInventoryAdvertise(home: PeerHome, args: [String], json: JSONMode) throws {
         try home.createDirectories()
         let store = try AethosStore(path: home.storeSQLitePath)
 
@@ -769,13 +890,17 @@ struct CLI {
             enqueuedAt: now
         ))
 
-        if json {
-            let obj: [String: Any] = [
-                "manifests": hashes,
-                "count": hashes.count,
-                "generatedAtUnixMs": nowMs,
-            ]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.inventoryAdvertise(manifests: hashes, generatedAtUnixMs: nowMs, enqueued: true)))
+            } else {
+                let obj: [String: Any] = [
+                    "manifests": hashes,
+                    "count": hashes.count,
+                    "generatedAtUnixMs": nowMs,
+                ]
+                print(jsonString(obj))
+            }
         } else {
             print("inventory advertise")
             print("  manifests=\(hashes.count)")
@@ -786,7 +911,7 @@ struct CLI {
         }
     }
 
-    private func cmdInventoryRequest(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdInventoryRequest(home: PeerHome, args: [String], json: JSONMode) throws {
         try home.createDirectories()
         let store = try AethosStore(path: home.storeSQLitePath)
 
@@ -831,13 +956,21 @@ struct CLI {
             ))
         }
 
-        if json {
-            let obj: [String: Any] = [
-                "remote_count": remoteManifests.count,
-                "missing_count": missing.count,
-                "want": missing,
-            ]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.inventoryRequest(
+                    remoteCount: remoteManifests.count,
+                    want: missing,
+                    enqueued: !missing.isEmpty
+                )))
+            } else {
+                let obj: [String: Any] = [
+                    "remote_count": remoteManifests.count,
+                    "missing_count": missing.count,
+                    "want": missing,
+                ]
+                print(jsonString(obj))
+            }
         } else {
             print("inventory request")
             print("  remote=\(remoteManifests.count)")
@@ -1014,6 +1147,9 @@ struct CLI {
                             result.replayedManifests += 1
                         }
                     }
+
+                case .message:
+                    try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
                 case .chunk, .none:
                     break
                 }
@@ -1129,7 +1265,7 @@ struct CLI {
         return result
     }
 
-    private func cmdInventoryExchange(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdInventoryExchange(home: PeerHome, args: [String], json: JSONMode) throws {
         let parsed = try parseKeyValues(args)
 
         guard let withPeerHex = parsed["--with"], !withPeerHex.isEmpty else {
@@ -1162,21 +1298,23 @@ struct CLI {
             try store.markPeerExchanged(wayfarerId: withPeerHex, now: AethosStore.epochSeconds(Date()))
         }
 
-        if json {
-            let obj: [String: Any] = [
-                "exchange": [
-                    "advertised_count": result.advertisedCount,
-                    "advertised_truncated": result.advertisedTruncated,
-                    "peer_advertised_count": result.peerAdvertisedCount,
-                    "missing_on_peer_count": result.missingOnPeerCount,
-                    "requested_count": result.requestedCount,
-                    "requested_truncated": result.requestedTruncated,
-                    "replayed_manifests": result.replayedManifests,
-                    "replayed_chunks": result.replayedChunks,
-                    "receipts_received": result.receiptsReceived,
-                ] as [String: Any]
+        if json != .none {
+            let exchange: [String: Any] = [
+                "advertised_count": result.advertisedCount,
+                "advertised_truncated": result.advertisedTruncated,
+                "peer_advertised_count": result.peerAdvertisedCount,
+                "missing_on_peer_count": result.missingOnPeerCount,
+                "requested_count": result.requestedCount,
+                "requested_truncated": result.requestedTruncated,
+                "replayed_manifests": result.replayedManifests,
+                "replayed_chunks": result.replayedChunks,
+                "receipts_received": result.receiptsReceived,
             ]
-            print(jsonString(obj))
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.inventoryExchange(peerWayfarerId: withPeerHex, exchange: exchange)))
+            } else {
+                print(jsonString(["exchange": exchange]))
+            }
         } else {
             print("inventory exchange")
             print("  advertised_count=\(result.advertisedCount)")
@@ -1193,7 +1331,7 @@ struct CLI {
 
     // MARK: - inventory gossip
 
-    private func cmdInventoryGossip(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdInventoryGossip(home: PeerHome, args: [String], json: JSONMode) throws {
         let parsed = try parseKeyValues(args)
 
         let limitPeers = Int(parsed["--limit-peers"] ?? "10") ?? 10
@@ -1284,24 +1422,37 @@ struct CLI {
             results.append(peerResult)
         }
 
-        if json {
-            let obj: [String: Any] = [
-                "gossip": [
-                    "now": nowEpoch,
-                    "limit_peers": limitPeers,
-                    "peer_limit": peerLimit,
-                    "request_cap": requestCap,
-                    "stale_after_seconds": staleAfter,
-                ] as [String: Any],
-                "results": results,
-                "summary": [
-                    "peers_considered": totalPeers,
-                    "peers_selected": selectedPeers.count,
-                    "peers_exchanged_ok": exchangedOk,
-                    "peers_failed": exchangedFailed,
-                ] as [String: Any],
+        if json != .none {
+            let summary: [String: Any] = [
+                "peers_considered": totalPeers,
+                "peers_selected": selectedPeers.count,
+                "peers_exchanged_ok": exchangedOk,
+                "peers_failed": exchangedFailed,
             ]
-            print(jsonString(obj))
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.inventoryGossip(
+                    nowEpochSeconds: nowEpoch,
+                    limitPeers: limitPeers,
+                    peerLimit: peerLimit,
+                    requestCap: requestCap,
+                    staleAfterSeconds: staleAfter,
+                    results: results,
+                    summary: summary
+                )))
+            } else {
+                let obj: [String: Any] = [
+                    "gossip": [
+                        "now": nowEpoch,
+                        "limit_peers": limitPeers,
+                        "peer_limit": peerLimit,
+                        "request_cap": requestCap,
+                        "stale_after_seconds": staleAfter,
+                    ] as [String: Any],
+                    "results": results,
+                    "summary": summary,
+                ]
+                print(jsonString(obj))
+            }
         } else {
             print("inventory gossip")
             print("  peers_considered=\(totalPeers)")
@@ -1320,7 +1471,7 @@ struct CLI {
 
     // MARK: - peers
 
-    private func cmdPeers(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdPeers(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let sub = args.first else {
             throw CLIError.usage("peers requires a subcommand: list")
         }
@@ -1334,7 +1485,7 @@ struct CLI {
         }
     }
 
-    private func cmdPeersList(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdPeersList(home: PeerHome, args: [String], json: JSONMode) throws {
         let parsed = try parseKeyValues(args)
 
         let limit = Int(parsed["--limit"] ?? "100") ?? 100
@@ -1357,27 +1508,37 @@ struct CLI {
             now: nowEpoch
         )
 
-        if json {
-            let arr: [[String: Any]] = peers.map { p in
-                var d: [String: Any] = [
-                    "wayfarer_id": p.wayfarerId,
-                    "short_id": p.shortId,
-                    "first_seen_at": p.firstSeenAt,
-                    "last_seen_at": p.lastSeenAt,
-                ]
-                if let lea = p.lastExchangeAt {
-                    d["last_exchange_at"] = lea
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.peersList(
+                    peers: peers,
+                    summaryTotal: total,
+                    summaryStale: stale,
+                    nowEpochSeconds: nowEpoch,
+                    staleAfterSeconds: staleAfter
+                )))
+            } else {
+                let arr: [[String: Any]] = peers.map { p in
+                    var d: [String: Any] = [
+                        "wayfarer_id": p.wayfarerId,
+                        "short_id": p.shortId,
+                        "first_seen_at": p.firstSeenAt,
+                        "last_seen_at": p.lastSeenAt,
+                    ]
+                    if let lea = p.lastExchangeAt {
+                        d["last_exchange_at"] = lea
+                    }
+                    return d
                 }
-                return d
+                let obj: [String: Any] = [
+                    "peers": arr,
+                    "summary": [
+                        "total": total,
+                        "stale": stale,
+                    ] as [String: Any],
+                ]
+                print(jsonString(obj))
             }
-            let obj: [String: Any] = [
-                "peers": arr,
-                "summary": [
-                    "total": total,
-                    "stale": stale,
-                ] as [String: Any],
-            ]
-            print(jsonString(obj))
         } else {
             if peers.isEmpty {
                 print("No peers observed.")
@@ -1396,7 +1557,7 @@ struct CLI {
 
     // MARK: - relay
 
-    private func cmdRelay(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdRelay(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let sub = args.first else {
             throw CLIError.usage("relay requires a subcommand: list")
         }
@@ -1410,7 +1571,117 @@ struct CLI {
         }
     }
 
-    private func cmdRelayList(home: PeerHome, args: [String], json: Bool) throws {
+    // MARK: - messages
+
+    private func cmdMessages(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("messages requires a subcommand: list | show")
+        }
+        let subArgs = Array(args.dropFirst())
+        switch sub {
+        case "list":
+            try cmdMessagesList(home: home, args: subArgs, json: json)
+        case "show":
+            try cmdMessagesShow(home: home, args: subArgs, json: json)
+        default:
+            throw CLIError.usage("Unknown messages subcommand: \(sub)")
+        }
+    }
+
+    private func cmdMessagesList(home: PeerHome, args: [String], json: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        let limit = Int(parsed["--limit"] ?? "50")
+        guard let limit, limit > 0 else {
+            throw CLIError.usage("messages list: --limit must be > 0")
+        }
+        let store = try AethosStore(path: home.storeSQLitePath)
+        let rows = try store.listMessages(limit: limit)
+
+        if json != .none {
+            let messages: [[String: Any]] = rows.map { row in
+                [
+                    "message_id": row.messageId.hexString,
+                    "kind": row.kind,
+                    "direction": row.direction.rawValue,
+                    "peer_from": row.peerFrom ?? NSNull(),
+                    "peer_to": row.peerTo ?? NSNull(),
+                    "created_at": iso8601(row.createdAt),
+                ]
+            }
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.messagesList(messages)))
+            } else {
+                print(jsonString(["messages": messages]))
+            }
+        } else {
+            if rows.isEmpty {
+                print("No messages.")
+                return
+            }
+            for r in rows {
+                print("\(r.messageId.hexString)  \(r.direction.rawValue)  kind=\(r.kind)  created_at=\(iso8601(r.createdAt))")
+            }
+        }
+    }
+
+    private func cmdMessagesShow(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let hex = args.first, !hex.isEmpty else {
+            throw CLIError.usage("messages show requires <message_id_hex>")
+        }
+        guard let id = Hex.decode(hex) else {
+            throw CLIError.usage("messages show: invalid hex id")
+        }
+        let store = try AethosStore(path: home.storeSQLitePath)
+        guard let row = try store.getMessage(id: id) else {
+            throw CLIError.usage("Message not found: \(hex)")
+        }
+
+        let decodedBody: String
+        if row.kind == "message.v1" {
+            if let m = try? CanonicalEncoderV1.decodeMessage(canonical: row.canonical),
+               let s = String(data: m.body, encoding: .utf8) {
+                decodedBody = s
+            } else {
+                decodedBody = ""
+            }
+        } else {
+            decodedBody = ""
+        }
+
+        let messageObj: [String: Any] = [
+            "message_id": row.messageId.hexString,
+            "kind": row.kind,
+            "direction": row.direction.rawValue,
+            "peer_from": row.peerFrom ?? NSNull(),
+            "peer_to": row.peerTo ?? NSNull(),
+            "created_at": iso8601(row.createdAt),
+            "canonical_hex": row.canonical.hexString,
+            "body_utf8": decodedBody.isEmpty ? NSNull() : decodedBody,
+        ]
+
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.messagesShow(messageObj)))
+            } else {
+                print(jsonString(["message": messageObj]))
+            }
+        } else {
+            print("message_id:  \(row.messageId.hexString)")
+            print("kind:        \(row.kind)")
+            print("direction:   \(row.direction.rawValue)")
+            print("peer_from:   \(row.peerFrom ?? "")")
+            print("peer_to:     \(row.peerTo ?? "")")
+            print("created_at:  \(iso8601(row.createdAt))")
+            print("canonical:   \(row.canonical.hexString)")
+            if decodedBody.isEmpty {
+                print("body_utf8:   ")
+            } else {
+                print("body_utf8:   \(decodedBody)")
+            }
+        }
+    }
+
+    private func cmdRelayList(home: PeerHome, args: [String], json: JSONMode) throws {
         guard args.isEmpty else {
             throw CLIError.usage("relay list takes no positional args")
         }
@@ -1419,13 +1690,17 @@ struct CLI {
         let now = Date()
         let transfers = try store.listRelayTransfers(activeOnly: true, now: now)
 
-        if json {
-            let arr = transfers.map { transferToDict($0) }
-            let obj: [String: Any] = [
-                "relay_transfers": arr,
-                "count": transfers.count,
-            ]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.relayList(transfers)))
+            } else {
+                let arr = transfers.map { transferToDict($0) }
+                let obj: [String: Any] = [
+                    "relay_transfers": arr,
+                    "count": transfers.count,
+                ]
+                print(jsonString(obj))
+            }
         } else {
             if transfers.isEmpty {
                 print("No active relay transfers.")
@@ -1865,6 +2140,7 @@ struct CLI {
         )
 
         try server.start()
+        FileHandle.standardError.write(Data("warning: serving over HTTP (no TLS); identity is verified at protocol layer\n".utf8))
         print("serve")
         print("  bind=\(host):\(port)")
         print("  wayfarerId=\(identity.wayfarerId.hexString)")
@@ -1874,7 +2150,7 @@ struct CLI {
         RunLoop.current.run()
     }
 
-    private func cmdHttp(home: PeerHome, args: [String], json: Bool) throws {
+    private func cmdHttp(home: PeerHome, args: [String], json: JSONMode) throws {
         guard let sub = args.first else {
             throw CLIError.usage("http requires a subcommand: exchange")
         }
@@ -1887,7 +2163,151 @@ struct CLI {
         }
     }
 
-    private func cmdHttpExchange(home: PeerHome, args: [String], json: Bool) throws {
+    // MARK: - QUIC transport (experimental)
+
+    private func cmdQuic(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("quic requires a subcommand: serve | exchange")
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "serve":
+            try cmdQuicServe(home: home, args: rest, json: json)
+        case "exchange":
+            try cmdQuicExchange(home: home, args: rest, json: json)
+        default:
+            throw CLIError.usage("Unknown quic subcommand: \(sub)")
+        }
+    }
+
+    private func cmdQuicServe(home: PeerHome, args: [String], json _: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let bind = parsed["--bind"], !bind.isEmpty else {
+            throw CLIError.usage("quic serve requires --bind <host:port>")
+        }
+        _ = try parseBind(bind)
+        _ = home
+        throw CLIHumanError(message: "not implemented")
+    }
+
+    private func cmdQuicExchange(home: PeerHome, args: [String], json _: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let with = parsed["--with"], !with.isEmpty else {
+            throw CLIError.usage("quic exchange requires --with <host:port>")
+        }
+        _ = with
+        _ = home
+        throw CLIHumanError(message: "not implemented")
+    }
+
+    // MARK: - remote transport
+
+    private func cmdRemote(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("remote requires a subcommand: push | exchange")
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "push":
+            try cmdRemotePush(home: home, args: rest, json: json)
+        case "exchange":
+            try cmdRemoteExchange(home: home, args: rest, json: json)
+        default:
+            throw CLIError.usage("Unknown remote subcommand: \(sub)")
+        }
+    }
+
+    private func cmdRemotePush(home: PeerHome, args: [String], json: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let urlStr = parsed["--to"], let base = URL(string: urlStr) else {
+            throw CLIError.usage("remote push requires --to <http(s)://host:port>")
+        }
+        if base.scheme == "http" {
+            FileHandle.standardError.write(Data("warning: using HTTP (no TLS); identity is verified at protocol layer\n".utf8))
+        }
+
+        let limit = Int(parsed["--limit"] ?? "500") ?? 500
+        let requestCap = Int(parsed["--request-cap"] ?? "200") ?? 200
+
+        try home.createDirectories()
+        let store = try AethosStore(path: home.storeSQLitePath)
+
+        let identityStore = DefaultIdentityStore(directory: home.identityDir)
+        let identityManager = IdentityManager(store: identityStore)
+        let identity = try identityManager.loadOrCreate()
+        let localHex = identity.wayfarerId.hexString
+
+        let http = try HttpLink(baseURL: base, localWayfarerIdHex: localHex, expectedRemoteWayfarerIdHex: nil)
+
+        // Ensure we advertise current inventory for the remote to diff against.
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let advertiseHashes = try store.listAdvertisableManifestHashes(limit: limit, now: now)
+        let inventory = InventoryV1(manifests: advertiseHashes, generatedAtUnixMs: nowMs)
+        let inventoryCanonical = CanonicalEncoderV1.encode(inventory)
+        let inventoryId = AethosIDs.sha256(inventoryCanonical)
+        try store.enqueue(item: OutboxItem(id: inventoryId, kind: .inventory, payload: inventoryCanonical, enqueuedAt: now))
+
+        let sent = try httpPumpAndSend(home: home, store: store, http: http)
+
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.remotePush(
+                    to: base.absoluteString,
+                    advertisedCount: advertiseHashes.count,
+                    framesSent: sent,
+                    requestCap: requestCap
+                )))
+            } else {
+                print(jsonString([
+                    "remote_push": [
+                        "advertised_count": advertiseHashes.count,
+                        "frames_sent": sent,
+                        "request_cap": requestCap,
+                    ] as [String: Any]
+                ]))
+            }
+        } else {
+            print("remote push")
+            print("  to=\(base.absoluteString)")
+            print("  advertised_count=\(advertiseHashes.count)")
+            print("  frames_sent=\(sent)")
+        }
+    }
+
+    private func cmdRemoteExchange(home: PeerHome, args: [String], json: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let urlStr = parsed["--with"], let base = URL(string: urlStr) else {
+            throw CLIError.usage("remote exchange requires --with <http(s)://host:port>")
+        }
+        if base.scheme == "http" {
+            FileHandle.standardError.write(Data("warning: using HTTP (no TLS); identity is verified at protocol layer\n".utf8))
+        }
+
+        // Delegate to existing implementation for now.
+        var forwarded: [String] = []
+        forwarded.append("--url")
+        forwarded.append(urlStr)
+        if let peer = parsed["--peer"], !peer.isEmpty {
+            forwarded.append("--peer")
+            forwarded.append(peer)
+        }
+        if let rounds = parsed["--rounds"], !rounds.isEmpty {
+            forwarded.append("--rounds")
+            forwarded.append(rounds)
+        }
+        if let limit = parsed["--limit"], !limit.isEmpty {
+            forwarded.append("--limit")
+            forwarded.append(limit)
+        }
+        if let cap = parsed["--request-cap"], !cap.isEmpty {
+            forwarded.append("--request-cap")
+            forwarded.append(cap)
+        }
+        try cmdHttpExchange(home: home, args: forwarded, json: json)
+    }
+
+    private func cmdHttpExchange(home: PeerHome, args: [String], json: JSONMode) throws {
         let parsed = try parseKeyValues(args)
         guard let urlStr = parsed["--url"], let base = URL(string: urlStr) else {
             throw CLIError.usage("http exchange requires --url <http(s)://host:port>")
@@ -1938,16 +2358,28 @@ struct CLI {
             totalSent += sent
         }
 
-        if json {
-            let obj: [String: Any] = [
-                "http_exchange": [
-                    "rounds": rounds,
-                    "remote_wayfarer_id": remoteHex ?? "",
-                    "frames_pulled": totalPulled,
-                    "frames_sent": totalSent,
-                ] as [String: Any]
-            ]
-            print(jsonString(obj))
+        if json != .none {
+            if json == .contractV1 {
+                print(jsonString(CLIContractV1.httpExchange(
+                    url: base.absoluteString,
+                    rounds: rounds,
+                    remoteWayfarerId: remoteHex ?? "",
+                    framesPulled: totalPulled,
+                    framesSent: totalSent,
+                    limit: limit,
+                    requestCap: requestCap
+                )))
+            } else {
+                let obj: [String: Any] = [
+                    "http_exchange": [
+                        "rounds": rounds,
+                        "remote_wayfarer_id": remoteHex ?? "",
+                        "frames_pulled": totalPulled,
+                        "frames_sent": totalSent,
+                    ] as [String: Any]
+                ]
+                print(jsonString(obj))
+            }
         } else {
             print("http exchange")
             print("  rounds=\(rounds)")
@@ -2013,7 +2445,7 @@ struct CLI {
     // MARK: - Arg parsing
 
     /// Boolean flags that take no value argument.
-    private static let booleanFlags: Set<String> = ["--include-stale", "--json"]
+    private static let booleanFlags: Set<String> = ["--include-stale", "--json", "--json-v1"]
 
     private func parseKeyValues(_ args: [String]) throws -> [String: String] {
         var out: [String: String] = [:]
@@ -2077,80 +2509,7 @@ struct CLI {
     }
 
     private func jsonString(_ obj: [String: Any]) -> String {
-        // Manual JSON serialization for stable, sorted output
-        return serializeJSON(obj, indent: 0)
-    }
-
-    private func serializeJSON(_ value: Any, indent: Int) -> String {
-        let pad = String(repeating: "  ", count: indent)
-        let innerPad = String(repeating: "  ", count: indent + 1)
-
-        if let dict = value as? [String: Any] {
-            if dict.isEmpty { return "{}" }
-            let keys = dict.keys.sorted()
-            var lines: [String] = []
-            for key in keys {
-                let val = serializeJSON(dict[key]!, indent: indent + 1)
-                lines.append("\(innerPad)\(escapeJSONString(key)): \(val)")
-            }
-            return "{\n\(lines.joined(separator: ",\n"))\n\(pad)}"
-        }
-
-        if let arr = value as? [[String: Any]] {
-            if arr.isEmpty { return "[]" }
-            var items: [String] = []
-            for item in arr {
-                items.append("\(innerPad)\(serializeJSON(item, indent: indent + 1))")
-            }
-            return "[\n\(items.joined(separator: ",\n"))\n\(pad)]"
-        }
-
-        if let arr = value as? [Any] {
-            if arr.isEmpty { return "[]" }
-            var items: [String] = []
-            for item in arr {
-                items.append("\(innerPad)\(serializeJSON(item, indent: indent + 1))")
-            }
-            return "[\n\(items.joined(separator: ",\n"))\n\(pad)]"
-        }
-
-        if let s = value as? String {
-            return escapeJSONString(s)
-        }
-
-        if let b = value as? Bool {
-            return b ? "true" : "false"
-        }
-
-        if let n = value as? Int64 {
-            return "\(n)"
-        }
-
-        if let n = value as? Int32 {
-            return "\(n)"
-        }
-
-        if let n = value as? Int {
-            return "\(n)"
-        }
-
-        return "null"
-    }
-
-    private func escapeJSONString(_ s: String) -> String {
-        var out = "\""
-        for c in s {
-            switch c {
-            case "\"": out += "\\\""
-            case "\\": out += "\\\\"
-            case "\n": out += "\\n"
-            case "\r": out += "\\r"
-            case "\t": out += "\\t"
-            default: out.append(c)
-            }
-        }
-        out += "\""
-        return out
+        return CLIJSON.serializeJSON(obj, indent: 0)
     }
 
     // MARK: - Usage
@@ -2165,8 +2524,14 @@ struct CLI {
       send                  Queue a file for delivery (file -> chunks + manifest/envelope)
       ingest                Read frames from inbox and store them
       pump                  Plan + write frames to outbox
-      serve                 Run HTTP frame server (POST/GET /frames)
+      serve                 Run HTTP frame server (POST/GET /frame)
       http exchange         Inventory exchange over HTTP
+      quic serve            (Experimental) Run QUIC frame server (not implemented)
+      quic exchange         (Experimental) Inventory exchange over QUIC (not implemented)
+      remote push           Push planned frames to a remote peer
+      remote exchange       Inventory exchange over HTTP (alias)
+      messages list         List stored protocol messages
+      messages show         Show a stored protocol message
       transfers list        List all transfers
       transfers show        Show details for a transfer
       inventory advertise   Advertise local manifest inventory to outbox
@@ -2179,6 +2544,7 @@ struct CLI {
     Global options:
       --home <path>    Peer home directory (default: ./peer)
       --json           Output in JSON format (status, transfers, inventory, relay, peers)
+      --json-v1        Output stable JSON Contract v1
 
     Command options:
       send   --file <path> --to <wayfarerIdHex>
@@ -2187,12 +2553,19 @@ struct CLI {
       serve  --bind <host:port>
       http exchange --url <http(s)://host:port> [--peer <wayfarerIdHex>] [--rounds <n>]
                    [--limit <n>] [--request-cap <n>]
+      quic serve --bind <host:port>
+      quic exchange --with <host:port>
+      remote push --to <http(s)://host:port> [--limit <n>] [--request-cap <n>]
+      remote exchange --with <http(s)://host:port> [--peer <wayfarerIdHex>] [--rounds <n>]
+                     [--limit <n>] [--request-cap <n>]
       transfers show <transfer_id>
       inventory request     (reads inventory JSON from stdin)
       inventory exchange    --with <wayfarerIdHex> [--limit <n>] [--request-cap <n>]
       inventory gossip      [--limit-peers <n>] [--peer-limit <n>] [--request-cap <n>]
-                            [--stale-after <s>] [--max-rounds <n>] [--include-stale]
+                             [--stale-after <s>] [--max-rounds <n>] [--include-stale]
       peers list            [--limit <n>] [--stale-after <s>] [--include-stale]
+      messages list         [--limit <n>]
+      messages show <message_id_hex>
     """
 }
 

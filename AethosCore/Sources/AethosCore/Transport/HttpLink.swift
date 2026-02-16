@@ -15,19 +15,20 @@ import Glibc
 
 /// HTTP-based Link for transporting encoded Frames between remote peers.
 ///
-/// - send: POST /frames with body = Frame.encode() bytes
-/// - receive: GET /frames; 200 returns one frame, 204 when none
+/// Endpoints:
+/// - Preferred: POST /frame (body = Frame.encode() bytes)
+/// - Preferred: GET /frame (200 returns one frame, 204 when none)
+/// - Back-compat: POST/GET /frames
 ///
-/// Identity model (optional but supported):
-/// - Client sends `X-Aethos-From-WayfarerId` and `X-Aethos-To-WayfarerId` headers when configured.
-/// - Server echoes `X-Aethos-From-WayfarerId` so clients can verify the remote identity.
-public final class HttpLink: Link {
+/// Identity headers are best-effort hints only (not trusted):
+/// - Client may send `X-Aethos-From-WayfarerId` and `X-Aethos-To-WayfarerId` headers.
+/// - Server may echo `X-Aethos-From-WayfarerId`.
+public final class HttpLink: FrameTransport {
     public enum HttpLinkError: Swift.Error, Equatable {
         case invalidBaseURL
         case badResponseStatus(Int)
         case missingResponseBody
         case invalidFrameBytes
-        case remoteIdentityMismatch(expected: String, got: String)
         case network(String)
     }
 
@@ -52,10 +53,24 @@ public final class HttpLink: Link {
         self.session = session
     }
 
+    private func url(for endpoint: String) -> URL {
+        baseURL.appendingPathComponent(endpoint, isDirectory: false)
+    }
+
+    private func requestWithCompat(_ req: URLRequest, compatEndpoint: String?) throws -> (Data?, HTTPURLResponse) {
+        let (data, resp) = try request(req)
+        if resp.statusCode == 404, let compatEndpoint, let originalURL = req.url {
+            var retry = req
+            let base = originalURL.deletingLastPathComponent()
+            retry.url = base.appendingPathComponent(compatEndpoint, isDirectory: false)
+            return try request(retry)
+        }
+        return (data, resp)
+    }
+
     public func send(_ frame: Frame) throws {
         let body = frame.encode()
-        let url = baseURL.appendingPathComponent("frames", isDirectory: false)
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url(for: "frame"))
         req.httpMethod = "POST"
         req.httpBody = body
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -67,12 +82,12 @@ public final class HttpLink: Link {
             req.setValue(expected, forHTTPHeaderField: "X-Aethos-To-WayfarerId")
         }
 
-        let (_, response) = try request(req)
+        let (_, response) = try requestWithCompat(req, compatEndpoint: "frames")
         let status = response.statusCode
         guard (200..<300).contains(status) else {
             throw HttpLinkError.badResponseStatus(status)
         }
-        try verifyRemoteIdentity(from: response)
+        _ = response.value(forHTTPHeaderField: "X-Aethos-From-WayfarerId")
     }
 
     public func receive() throws -> Frame? {
@@ -82,8 +97,7 @@ public final class HttpLink: Link {
 
     /// Like `receive()` but returns the echoed remote wayfarer id (if present).
     public func receiveWithRemoteInfo() throws -> (Frame?, String?) {
-        let url = baseURL.appendingPathComponent("frames", isDirectory: false)
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url(for: "frame"))
         req.httpMethod = "GET"
         if let local = localWayfarerIdHex {
             req.setValue(local, forHTTPHeaderField: "X-Aethos-From-WayfarerId")
@@ -92,19 +106,15 @@ public final class HttpLink: Link {
             req.setValue(expected, forHTTPHeaderField: "X-Aethos-To-WayfarerId")
         }
 
-        let (data, response) = try request(req)
+        let (data, response) = try requestWithCompat(req, compatEndpoint: "frames")
         let status = response.statusCode
         if status == 204 {
             let remote = response.value(forHTTPHeaderField: "X-Aethos-From-WayfarerId")
-            if let remote {
-                try verifyRemoteIdentity(expected: expectedRemoteWayfarerIdHex, got: remote)
-            }
             return (nil, remote)
         }
         guard status == 200 else {
             throw HttpLinkError.badResponseStatus(status)
         }
-        try verifyRemoteIdentity(from: response)
 
         guard let data else {
             throw HttpLinkError.missingResponseBody
@@ -114,21 +124,6 @@ public final class HttpLink: Link {
         }
         let remote = response.value(forHTTPHeaderField: "X-Aethos-From-WayfarerId")
         return (frame, remote)
-    }
-
-    private func verifyRemoteIdentity(from response: HTTPURLResponse) throws {
-        guard let expected = expectedRemoteWayfarerIdHex else { return }
-        let got = response.value(forHTTPHeaderField: "X-Aethos-From-WayfarerId")
-        if let got {
-            try verifyRemoteIdentity(expected: expected, got: got)
-        }
-    }
-
-    private func verifyRemoteIdentity(expected: String?, got: String) throws {
-        guard let expected else { return }
-        if expected.lowercased() != got.lowercased() {
-            throw HttpLinkError.remoteIdentityMismatch(expected: expected, got: got)
-        }
     }
 
     private func request(_ req: URLRequest) throws -> (Data?, HTTPURLResponse) {
@@ -163,13 +158,17 @@ public final class HttpLink: Link {
 
 /// Minimal HTTP server used by `aethos serve`.
 ///
-/// - POST /frames: validates `Frame.decode`, stores raw bytes into inbox directory
-/// - GET /frames: returns one encoded frame from outbox directory, 204 if none
+/// Endpoints:
+/// - POST /frame: validates `Frame.decode`, stores raw bytes into inbox directory
+/// - GET /frame: returns one encoded frame from outbox directory, 204 if none
+/// - Back-compat: POST/GET /frames
+/// - GET /inventory: returns one Inventory frame from outbox directory, 204 if none
+/// - POST /inventory-request: accepts either InventoryRequest frame bytes or canonical bytes
 ///
 /// Notes:
 /// - This server always closes the connection after a response.
 /// - Frame integrity/authentication are handled at higher layers; this transport only moves bytes.
-/// - When `localWayfarerIdHex` is set, requests with `X-Aethos-To-WayfarerId` that does not match are rejected.
+/// - Identity headers (if present) are best-effort hints and are not enforced.
 public final class HttpFrameServer: @unchecked Sendable {
     public enum ServerError: Swift.Error, Equatable {
         case alreadyStarted
@@ -352,20 +351,22 @@ public final class HttpFrameServer: @unchecked Sendable {
             debug("initialBodyBytes=\(buf.count)")
         }
 
-        // Optional identity check.
-        if let local = localWayfarerIdHex,
-           let to = headers["x-aethos-to-wayfarerid"],
-           local.lowercased() != to.lowercased() {
-            _ = sendResponse(fd: fd, status: 403, headers: defaultHeaders(), body: Data())
+        if method == "GET" && (path == "/frame" || path == "/frames") {
+            handleGetFrames(fd: fd, onlyType: nil)
             return
         }
 
-        if method == "GET" && path == "/frames" {
-            handleGetFrames(fd: fd)
+        if method == "GET" && path == "/inventory" {
+            handleGetFrames(fd: fd, onlyType: CargoCodec.FrameType.inventory)
             return
         }
 
-        if method == "POST" && path == "/frames" {
+        if method == "GET" && path == "/message" {
+            handleGetFrames(fd: fd, onlyType: CargoCodec.FrameType.message)
+            return
+        }
+
+        if method == "POST" && (path == "/frame" || path == "/frames") {
             // Some HTTP clients (including some URLSession configurations) may use
             // `Expect: 100-continue` and will not send the body until we acknowledge.
             if let expect = headers["expect"], expect.lowercased().contains("100-continue") {
@@ -395,6 +396,66 @@ public final class HttpFrameServer: @unchecked Sendable {
             }
 
             handlePostFrames(fd: fd, body: body)
+            return
+        }
+
+        if method == "POST" && path == "/inventory-request" {
+            if let expect = headers["expect"], expect.lowercased().contains("100-continue") {
+                _ = sendAll(fd: fd, data: Data("HTTP/1.1 100 Continue\r\n\r\n".utf8))
+            }
+
+            let body: Data
+            if let te = headers["transfer-encoding"], te.lowercased().contains("chunked") {
+                guard let b = readChunkedBody(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else if let lenStr = headers["content-length"], let len = Int(lenStr), len >= 0 {
+                guard let b = readFixedBody(fd: fd, already: buf, length: len, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else {
+                guard let b = readToEOF(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            }
+
+            handlePostInventoryRequest(fd: fd, body: body)
+            return
+        }
+
+        if method == "POST" && path == "/message" {
+            if let expect = headers["expect"], expect.lowercased().contains("100-continue") {
+                _ = sendAll(fd: fd, data: Data("HTTP/1.1 100 Continue\r\n\r\n".utf8))
+            }
+
+            let body: Data
+            if let te = headers["transfer-encoding"], te.lowercased().contains("chunked") {
+                guard let b = readChunkedBody(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else if let lenStr = headers["content-length"], let len = Int(lenStr), len >= 0 {
+                guard let b = readFixedBody(fd: fd, already: buf, length: len, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            } else {
+                guard let b = readToEOF(fd: fd, already: buf, maxBytes: 20 * 1024 * 1024) else {
+                    _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                    return
+                }
+                body = b
+            }
+
+            handlePostMessage(fd: fd, body: body)
             return
         }
 
@@ -435,9 +496,75 @@ public final class HttpFrameServer: @unchecked Sendable {
         _ = sendResponse(fd: fd, status: 201, headers: defaultHeaders(), body: Data())
     }
 
-    private func handleGetFrames(fd: Int32) {
+    private func handlePostInventoryRequest(fd: Int32, body: Data) {
+        // Accept either:
+        // - an encoded Frame of type inventoryRequest
+        // - canonical InventoryRequestV1 bytes (wrapped into a Frame for storage)
+        let frameBytes: Data
+        if let f = try? Frame.decode(body) {
+            guard CargoCodec.FrameType(rawValue: f.type) == .inventoryRequest else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            frameBytes = body
+        } else {
+            guard (try? CanonicalEncoderV1.decodeInventoryRequest(canonical: body)) != nil else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            let id = AethosIDs.sha256(body)
+            let f = Frame(type: CargoCodec.FrameType.inventoryRequest.rawValue, id: id, partIndex: 0, partCount: 1, payload: body)
+            frameBytes = f.encode()
+        }
+
+        let name = uniqueName(prefix: "in-", ext: "bin")
+        let url = inboxDir.appendingPathComponent(name, isDirectory: false)
+        do {
+            try frameBytes.write(to: url, options: [.atomic])
+        } catch {
+            _ = sendResponse(fd: fd, status: 500, headers: defaultHeaders(), body: Data())
+            return
+        }
+
+        _ = sendResponse(fd: fd, status: 201, headers: defaultHeaders(), body: Data())
+    }
+
+    private func handlePostMessage(fd: Int32, body: Data) {
+        // Accept either:
+        // - an encoded Frame of type message
+        // - canonical MessageV1 bytes (wrapped into a Frame for storage)
+        let frameBytes: Data
+        if let f = try? Frame.decode(body) {
+            guard CargoCodec.FrameType(rawValue: f.type) == .message else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            frameBytes = body
+        } else {
+            guard (try? CanonicalEncoderV1.decodeMessage(canonical: body)) != nil else {
+                _ = sendResponse(fd: fd, status: 400, headers: defaultHeaders(), body: Data())
+                return
+            }
+            let id = AethosIDs.messageId(canonicalBytes: body)
+            let f = Frame(type: CargoCodec.FrameType.message.rawValue, id: id, partIndex: 0, partCount: 1, payload: body)
+            frameBytes = f.encode()
+        }
+
+        let name = uniqueName(prefix: "in-", ext: "bin")
+        let url = inboxDir.appendingPathComponent(name, isDirectory: false)
+        do {
+            try frameBytes.write(to: url, options: [.atomic])
+        } catch {
+            _ = sendResponse(fd: fd, status: 500, headers: defaultHeaders(), body: Data())
+            return
+        }
+
+        _ = sendResponse(fd: fd, status: 201, headers: defaultHeaders(), body: Data())
+    }
+
+    private func handleGetFrames(fd: Int32, onlyType: CargoCodec.FrameType?) {
         while true {
-            guard let next = oldestOutboxEntry() else {
+            guard let next = oldestOutboxEntry(onlyType: onlyType) else {
                 _ = sendResponse(fd: fd, status: 204, headers: defaultHeaders(), body: Data())
                 return
             }
@@ -450,8 +577,13 @@ public final class HttpFrameServer: @unchecked Sendable {
                 continue
             }
 
-            guard (try? Frame.decode(bytes)) != nil else {
+            guard let frame = try? Frame.decode(bytes) else {
                 _ = try? archiveBad(next, reason: "decode")
+                continue
+            }
+
+            if let onlyType, CargoCodec.FrameType(rawValue: frame.type) != onlyType {
+                // Selection should already filter by type; do not consume non-matching frame.
                 continue
             }
 
@@ -606,7 +738,7 @@ public final class HttpFrameServer: @unchecked Sendable {
         }
     }
 
-    private func oldestOutboxEntry() -> URL? {
+    private func oldestOutboxEntry(onlyType: CargoCodec.FrameType?) -> URL? {
         let entries = (try? fileManager.contentsOfDirectory(
             at: outboxDir,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -614,7 +746,23 @@ public final class HttpFrameServer: @unchecked Sendable {
         )) ?? []
         let candidates = entries.filter { !$0.lastPathComponent.hasPrefix(".") }
         guard !candidates.isEmpty else { return nil }
-        return candidates.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
+
+        let sorted = candidates.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard let onlyType else {
+            return sorted.first
+        }
+
+        for url in sorted {
+            guard let bytes = try? Data(contentsOf: url),
+                  let frame = try? Frame.decode(bytes)
+            else {
+                continue
+            }
+            if CargoCodec.FrameType(rawValue: frame.type) == onlyType {
+                return url
+            }
+        }
+        return nil
     }
 
     private func archiveGood(_ url: URL) throws {

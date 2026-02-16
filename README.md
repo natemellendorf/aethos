@@ -141,6 +141,12 @@ It is suitable as a **reference implementation and experimentation platform**.
 
 ---
 
+## App Pivot Readiness
+
+APP_PIVOT_READY: true
+
+---
+
 ## Non-Goals
 
 Aethos is **not** intended to be:

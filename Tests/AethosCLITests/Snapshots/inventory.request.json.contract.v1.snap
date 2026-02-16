@@ -1,0 +1,12 @@
+{
+  "command": "inventory.request",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "enqueued": false,
+  "missing_count": 0,
+  "ok": true,
+  "remote_count": 0,
+  "want": []
+}

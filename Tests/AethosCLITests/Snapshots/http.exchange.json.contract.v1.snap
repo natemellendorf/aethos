@@ -1,0 +1,15 @@
+{
+  "command": "http.exchange",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "frames_pulled": 0,
+  "frames_sent": 0,
+  "limit": 500,
+  "ok": true,
+  "remote_wayfarer_id": "",
+  "request_cap": 200,
+  "rounds": 1,
+  "url": "http://127.0.0.1:8080"
+}

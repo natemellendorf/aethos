@@ -1,0 +1,15 @@
+{
+  "command": "peers.list",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "ok": true,
+  "peers": [],
+  "summary": {
+    "now_epoch_seconds": 0,
+    "stale": 0,
+    "stale_after_seconds": 86400,
+    "total": 0
+  }
+}

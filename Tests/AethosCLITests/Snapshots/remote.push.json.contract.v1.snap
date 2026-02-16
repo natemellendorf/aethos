@@ -1,0 +1,12 @@
+{
+  "advertised_count": 0,
+  "command": "remote.push",
+  "contract": {
+    "name": "aethos.cli.json.v1",
+    "version": 1
+  },
+  "frames_sent": 0,
+  "ok": true,
+  "request_cap": 200,
+  "to": "http://127.0.0.1:8080"
+}

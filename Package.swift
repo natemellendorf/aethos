@@ -13,12 +13,29 @@ let package = Package(
         .package(path: "AethosCore")
     ],
     targets: [
-        .executableTarget(
-            name: "AethosCLI",
+        .target(
+            name: "AethosCLILib",
             dependencies: [
                 .product(name: "AethosCore", package: "AethosCore")
             ],
+            path: "Sources/AethosCLILib"
+        ),
+        .executableTarget(
+            name: "AethosCLI",
+            dependencies: [
+                "AethosCLILib"
+            ],
             path: "Sources/AethosCLI"
+        ),
+        .testTarget(
+            name: "AethosCLITests",
+            dependencies: [
+                "AethosCLILib"
+            ],
+            path: "Tests/AethosCLITests",
+            resources: [
+                .copy("Snapshots")
+            ]
         )
     ]
 )
