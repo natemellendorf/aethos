@@ -11,6 +11,7 @@ public enum CargoCodec {
         case unknownFrameType(UInt8)
         case invalidParts
         case metadataMustBeSingleFrame
+        case metadataIdMismatch
     }
 
     // Stable frame type codes.
@@ -86,6 +87,28 @@ public enum CargoCodec {
         case .receipt, .envelope, .manifest, .inventory, .inventoryRequest, .message:
             guard frame.partCount == 1, frame.partIndex == 0 else {
                 throw CargoCodecError.metadataMustBeSingleFrame
+            }
+
+            let expectedId: Data
+            switch type {
+            case .receipt:
+                expectedId = AethosIDs.receiptId(canonicalBytes: frame.payload)
+            case .envelope:
+                expectedId = AethosIDs.envelopeId(canonicalBytes: frame.payload)
+            case .manifest:
+                expectedId = AethosIDs.manifestId(canonicalBytes: frame.payload)
+            case .inventory:
+                expectedId = AethosIDs.sha256(frame.payload)
+            case .inventoryRequest:
+                expectedId = AethosIDs.sha256(frame.payload)
+            case .message:
+                expectedId = AethosIDs.messageId(canonicalBytes: frame.payload)
+            case .chunk:
+                expectedId = frame.id // unreachable
+            }
+
+            guard frame.id == expectedId else {
+                throw CargoCodecError.metadataIdMismatch
             }
             return .metadata(type: frame.type, id: frame.id, bytes: frame.payload)
 

@@ -29,7 +29,8 @@ func httpFrameRoundTrip() throws {
     #expect((try? Frame.decode(storedBytes)) == frameA)
 
     // Seed server outbox and receive it via HTTP.
-    let frameB = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: Data(repeating: 0x02, count: 32), partIndex: 0, partCount: 1, payload: Data([0x9]))
+    let receiptCanonical = CanonicalEncoderV1.encode(ReceiptV1(envelopeId: Data(repeating: 0x02, count: 32), manifestId: Data(repeating: 0x03, count: 32), receivedAtUnixMs: 9))
+    let frameB = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.receiptId(canonicalBytes: receiptCanonical), partIndex: 0, partCount: 1, payload: receiptCanonical)
     let outFile = outbox.appendingPathComponent("0001.bin")
     try frameB.encode().write(to: outFile, options: [.atomic])
 
@@ -85,7 +86,8 @@ func httpServerSupportsInventoryAndInventoryRequestEndpoints() throws {
     let invFrame = Frame(type: CargoCodec.FrameType.inventory.rawValue, id: AethosIDs.sha256(invBytes), partIndex: 0, partCount: 1, payload: invBytes)
     try invFrame.encode().write(to: outbox.appendingPathComponent("000-inv.bin"), options: [.atomic])
 
-    let receiptFrame = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: Data(repeating: 0x02, count: 32), partIndex: 0, partCount: 1, payload: Data([0x9]))
+    let receiptCanonical = CanonicalEncoderV1.encode(ReceiptV1(envelopeId: Data(repeating: 0x02, count: 32), manifestId: Data(repeating: 0x03, count: 32), receivedAtUnixMs: 9))
+    let receiptFrame = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.receiptId(canonicalBytes: receiptCanonical), partIndex: 0, partCount: 1, payload: receiptCanonical)
     try receiptFrame.encode().write(to: outbox.appendingPathComponent("001-receipt.bin"), options: [.atomic])
 
     // GET /inventory returns an inventory frame.
@@ -354,7 +356,10 @@ private func ingestAll(link: HttpLink, store: AethosStore) throws {
                 try store.recordReceived(item: InboxItem(id: id, kind: .inventory, payload: bytes, receivedAt: Date()))
             case .inventoryRequest:
                 try store.recordReceived(item: InboxItem(id: id, kind: .inventoryRequest, payload: bytes, receivedAt: Date()))
+            case .message:
+                try store.recordReceived(item: InboxItem(id: id, kind: .message, payload: bytes, receivedAt: Date()))
             case .chunk, .none:
+                // This helper only ingests metadata + chunks.
                 break
             }
         case let .chunkPart(id, partIndex, partCount, bytes):

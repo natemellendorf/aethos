@@ -34,7 +34,7 @@ func fileDropRoundTripAndArchive() throws {
     let link = try FileDropLink(inboxDir: inbox, outboxDir: outbox, archiveDir: archive)
 
     let payload = Data((0..<2048).map { UInt8($0 % 251) })
-    let frame = Frame(type: CargoCodec.FrameType.manifest.rawValue, id: AethosIDs.sha256(payload), partIndex: 0, partCount: 1, payload: payload)
+    let frame = Frame(type: CargoCodec.FrameType.manifest.rawValue, id: AethosIDs.manifestId(canonicalBytes: payload), partIndex: 0, partCount: 1, payload: payload)
     try link.send(frame)
 
     let outFiles = try fm.contentsOfDirectory(at: outbox, includingPropertiesForKeys: nil)
@@ -81,7 +81,7 @@ func fileDropUnreadableInboxEntryIsArchivedAsBadAndSkipped() throws {
 
     // Also add a good frame file after it; receive() should skip bad and return good.
     let payload = Data("ok".utf8)
-    let goodFrame = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.sha256(payload), partIndex: 0, partCount: 1, payload: payload)
+    let goodFrame = Frame(type: CargoCodec.FrameType.receipt.rawValue, id: AethosIDs.receiptId(canonicalBytes: payload), partIndex: 0, partCount: 1, payload: payload)
     let goodBytes = goodFrame.encode()
     let goodFile = inbox.appendingPathComponent("001-good.bin", isDirectory: false)
     try goodBytes.write(to: goodFile, options: [.atomic])

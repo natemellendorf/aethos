@@ -23,6 +23,26 @@ func metadataEncodesToSingleFrameAndDecodes() throws {
 }
 
 @Test
+func metadataDecodeRejectsMismatchedId() throws {
+    let canonical = Data("hello".utf8)
+    let expected = AethosIDs.receiptId(canonicalBytes: canonical)
+    var wrong = expected
+    wrong[0] ^= 0xFF
+
+    let frame = Frame(
+        type: CargoCodec.FrameType.receipt.rawValue,
+        id: wrong,
+        partIndex: 0,
+        partCount: 1,
+        payload: canonical
+    )
+
+    #expect(throws: CargoCodec.CargoCodecError.metadataIdMismatch) {
+        _ = try CargoCodec.decode(frame)
+    }
+}
+
+@Test
 func chunkEncodesToMultipleFramesAndReassembles() throws {
     let chunkId = Data(repeating: 0xAA, count: 32)
     let bytes = Data((0..<3000).map { UInt8($0 % 251) })
