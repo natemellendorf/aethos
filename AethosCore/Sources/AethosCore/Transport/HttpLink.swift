@@ -23,7 +23,7 @@ import Glibc
 /// Identity headers are best-effort hints only (not trusted):
 /// - Client may send `X-Aethos-From-WayfarerId` and `X-Aethos-To-WayfarerId` headers.
 /// - Server may echo `X-Aethos-From-WayfarerId`.
-public final class HttpLink: Link {
+public final class HttpLink: FrameTransport {
     public enum HttpLinkError: Swift.Error, Equatable {
         case invalidBaseURL
         case badResponseStatus(Int)

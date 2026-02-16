@@ -1,6 +1,6 @@
 import Foundation
 
-public final class FileDropLink: Link {
+public final class FileDropLink: FrameTransport {
     public enum FileDropError: Swift.Error, Equatable {
         case cannotCreateDirectories(String)
         case cannotWrite(String)

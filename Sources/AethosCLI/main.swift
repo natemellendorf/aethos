@@ -6,6 +6,12 @@ enum CLIError: Swift.Error {
     case usage(String)
 }
 
+struct CLIHumanError: LocalizedError, CustomStringConvertible {
+    let message: String
+    var errorDescription: String? { message }
+    var description: String { message }
+}
+
 struct CLI {
     let args: [String]
 
@@ -51,6 +57,8 @@ struct CLI {
                 try cmdServe(home: home, args: rest)
             case "http":
                 try cmdHttp(home: home, args: rest, json: jsonMode)
+            case "quic":
+                try cmdQuic(home: home, args: rest, json: jsonMode)
             case "remote":
                 try cmdRemote(home: home, args: rest, json: jsonMode)
             case "messages":
@@ -73,7 +81,7 @@ struct CLI {
     private func contractV1CommandName(command: String, args: [String]) -> String {
         // Prefer full command path for contract v1 error reporting.
         // Example: `http exchange` -> `http.exchange`.
-        let supportsSub: Set<String> = ["transfers", "inventory", "peers", "relay", "http", "remote", "messages"]
+        let supportsSub: Set<String> = ["transfers", "inventory", "peers", "relay", "http", "quic", "remote", "messages"]
         guard supportsSub.contains(command) else { return command }
         guard let sub = args.first, !sub.hasPrefix("-") else { return command }
         return "\(command).\(sub)"
@@ -2143,6 +2151,43 @@ struct CLI {
         }
     }
 
+    // MARK: - QUIC transport (experimental)
+
+    private func cmdQuic(home: PeerHome, args: [String], json: JSONMode) throws {
+        guard let sub = args.first else {
+            throw CLIError.usage("quic requires a subcommand: serve | exchange")
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "serve":
+            try cmdQuicServe(home: home, args: rest, json: json)
+        case "exchange":
+            try cmdQuicExchange(home: home, args: rest, json: json)
+        default:
+            throw CLIError.usage("Unknown quic subcommand: \(sub)")
+        }
+    }
+
+    private func cmdQuicServe(home: PeerHome, args: [String], json _: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let bind = parsed["--bind"], !bind.isEmpty else {
+            throw CLIError.usage("quic serve requires --bind <host:port>")
+        }
+        _ = try parseBind(bind)
+        _ = home
+        throw CLIHumanError(message: "not implemented")
+    }
+
+    private func cmdQuicExchange(home: PeerHome, args: [String], json _: JSONMode) throws {
+        let parsed = try parseKeyValues(args)
+        guard let with = parsed["--with"], !with.isEmpty else {
+            throw CLIError.usage("quic exchange requires --with <host:port>")
+        }
+        _ = with
+        _ = home
+        throw CLIHumanError(message: "not implemented")
+    }
+
     // MARK: - remote transport
 
     private func cmdRemote(home: PeerHome, args: [String], json: JSONMode) throws {
@@ -2469,6 +2514,8 @@ struct CLI {
       pump                  Plan + write frames to outbox
       serve                 Run HTTP frame server (POST/GET /frame)
       http exchange         Inventory exchange over HTTP
+      quic serve            (Experimental) Run QUIC frame server (not implemented)
+      quic exchange         (Experimental) Inventory exchange over QUIC (not implemented)
       remote push           Push planned frames to a remote peer
       remote exchange       Inventory exchange over HTTP (alias)
       messages list         List stored protocol messages
@@ -2494,14 +2541,16 @@ struct CLI {
       serve  --bind <host:port>
       http exchange --url <http(s)://host:port> [--peer <wayfarerIdHex>] [--rounds <n>]
                    [--limit <n>] [--request-cap <n>]
+      quic serve --bind <host:port>
+      quic exchange --with <host:port>
       remote push --to <http(s)://host:port> [--limit <n>] [--request-cap <n>]
       remote exchange --with <http(s)://host:port> [--peer <wayfarerIdHex>] [--rounds <n>]
-                    [--limit <n>] [--request-cap <n>]
+                     [--limit <n>] [--request-cap <n>]
       transfers show <transfer_id>
       inventory request     (reads inventory JSON from stdin)
       inventory exchange    --with <wayfarerIdHex> [--limit <n>] [--request-cap <n>]
       inventory gossip      [--limit-peers <n>] [--peer-limit <n>] [--request-cap <n>]
-                            [--stale-after <s>] [--max-rounds <n>] [--include-stale]
+                             [--stale-after <s>] [--max-rounds <n>] [--include-stale]
       peers list            [--limit <n>] [--stale-after <s>] [--include-stale]
       messages list         [--limit <n>]
       messages show <message_id_hex>
