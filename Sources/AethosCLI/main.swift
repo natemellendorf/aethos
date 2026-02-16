@@ -597,7 +597,7 @@ struct CLI {
 
         // Use an inflated planning budget so the router includes all chunks in the plan.
         // The pump's actual send loop enforces the real budget per frame.
-        let planBudget = SessionBudget(maxBytes: maxBytes * 10, maxItems: maxItems * 10)
+        let planBudget = SessionBudget(maxBytes: maxBytes * 100, maxItems: maxItems * 10)
         let plan = try router.planNextSession(budget: planBudget, now: Date())
 
         var cursor = try loadSendCursors(from: home.transportCursorPath)
@@ -685,19 +685,31 @@ struct CLI {
 
             case let .chunk(id, _):
                 let chunkHex = Hex.encode(id)
-                let idx = Int(cursor[chunkHex] ?? 0) % frames.count
-                let frame = frames[idx]
-                if frame.sizeBytes > remainingBytes { continue }
-                try link.send(frame)
-                sentFrames += 1
-                sentBytes += frame.sizeBytes
-                remainingBytes -= frame.sizeBytes
-                remainingItems -= 1
-                cursor[chunkHex] = UInt16((idx + 1) % frames.count)
+                var idx = Int(cursor[chunkHex] ?? 0)
+                if idx >= frames.count { idx = 0 }
+                var sentChunkFrame = false
+                var sentSizeBytes = 0
+                for _ in 0..<frames.count {
+                    let frame = frames[idx]
+                    if frame.sizeBytes <= remainingBytes {
+                        try link.send(frame)
+                        sentFrames += 1
+                        sentBytes += frame.sizeBytes
+                        remainingBytes -= frame.sizeBytes
+                        remainingItems -= 1
+                        sentChunkFrame = true
+                        sentSizeBytes = frame.sizeBytes
+                        idx = (idx + 1) % frames.count
+                        break
+                    }
+                    idx = (idx + 1) % frames.count
+                }
+                guard sentChunkFrame else { continue }
+                cursor[chunkHex] = UInt16(idx)
 
                 // Track bytes sent per manifest
-                if let mHex = chunkToManifestHash[chunkHex] {
-                    manifestBytesDelta[mHex, default: 0] += frame.sizeBytes
+                if let mHex = chunkToManifestHash[chunkHex], sentChunkFrame {
+                    manifestBytesDelta[mHex, default: 0] += sentSizeBytes
                 }
             }
         }
