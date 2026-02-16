@@ -62,13 +62,23 @@ public struct DefaultIdentityStore: IdentityStore {
         if let directory {
             self.directory = directory
         } else {
-            self.directory = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".aethos-dev/identity", isDirectory: true)
+            self.directory = Self.defaultDirectory()
         }
         self.v1FileURL = self.directory.appendingPathComponent("identity-v1.json", isDirectory: false)
         self.v2FileURL = self.directory.appendingPathComponent("identity-v2.json", isDirectory: false)
         self.privateKeyURL = self.directory.appendingPathComponent("private.key", isDirectory: false)
         self.publicKeyURL = self.directory.appendingPathComponent("public.key", isDirectory: false)
+    }
+
+    private static func defaultDirectory() -> URL {
+#if os(iOS) || os(tvOS) || os(watchOS)
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("Aethos/identity", isDirectory: true)
+#else
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".aethos-dev/identity", isDirectory: true)
+#endif
     }
 
     public func load() throws -> IdentityStoreSnapshot? {
