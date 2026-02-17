@@ -69,6 +69,46 @@ public struct EvictionCounts: Equatable, Sendable {
     }
 }
 
+/// Snapshot of current Aethos status for iOS integration.
+/// Provides a summary of peers, transfers, and custody for UI display.
+public struct StatusSnapshot: Codable, Equatable, Sendable {
+    public let peerIdentifiers: [String]
+    public let transfersSummary: TransfersSummary
+    public let custodySummary: CustodySummary
+
+    public struct TransfersSummary: Codable, Equatable, Sendable {
+        public let incoming: Int
+        public let outgoing: Int
+        public let pending: Int
+
+        public init(incoming: Int, outgoing: Int, pending: Int) {
+            self.incoming = incoming
+            self.outgoing = outgoing
+            self.pending = pending
+        }
+    }
+
+    public struct CustodySummary: Codable, Equatable, Sendable {
+        public let totalSize: Int64
+        public let fileCount: Int
+
+        public init(totalSize: Int64, fileCount: Int) {
+            self.totalSize = totalSize
+            self.fileCount = fileCount
+        }
+    }
+
+    public init(
+        peerIdentifiers: [String],
+        transfersSummary: TransfersSummary,
+        custodySummary: CustodySummary
+    ) {
+        self.peerIdentifiers = peerIdentifiers
+        self.transfersSummary = transfersSummary
+        self.custodySummary = custodySummary
+    }
+}
+
 public final class AethosStore {
     public enum StoreError: Swift.Error, Equatable {
         case openFailed(String)
@@ -586,6 +626,62 @@ public final class AethosStore {
             transfers.append(try readTransferRow(stmt))
         }
         return transfers
+    }
+
+    /// Returns counts of transfers by direction and pending status.
+    /// Pending includes queued, sending, and receiving statuses.
+    public func getTransferCounts() throws -> StatusSnapshot.TransfersSummary {
+        let allTransfers = try listTransfers()
+        var incoming = 0
+        var outgoing = 0
+        var pending = 0
+
+        let pendingStatuses: Set<Transfer.Status> = [.queued, .sending, .receiving]
+
+        for transfer in allTransfers {
+            switch transfer.direction {
+            case .inbound:
+                incoming += 1
+            case .outbound:
+                outgoing += 1
+            }
+            if pendingStatuses.contains(transfer.status) && !transfer.evicted {
+                pending += 1
+            }
+        }
+
+        return StatusSnapshot.TransfersSummary(
+            incoming: incoming,
+            outgoing: outgoing,
+            pending: pending
+        )
+    }
+
+    /// Returns a snapshot of current Aethos status including peers, transfers, and custody.
+    public func statusSnapshot() throws -> StatusSnapshot {
+        let now = Int64(Date().timeIntervalSince1970)
+
+        // Get peer identifiers
+        let peers = try listPeers(limit: 1000, now: now)
+        let peerIdentifiers = peers.map { $0.wayfarerId }
+
+        // Get transfer counts
+        let transfersSummary = try getTransferCounts()
+
+        // Get custody summary
+        let totalRelayBytes = try relayCacheBytes()
+        let relayCount = try countForwardableRelayTransfers(now: Date())
+
+        let custodySummary = StatusSnapshot.CustodySummary(
+            totalSize: totalRelayBytes,
+            fileCount: relayCount
+        )
+
+        return StatusSnapshot(
+            peerIdentifiers: peerIdentifiers,
+            transfersSummary: transfersSummary,
+            custodySummary: custodySummary
+        )
     }
 
     private func readTransferRow(_ stmt: OpaquePointer) throws -> Transfer {
