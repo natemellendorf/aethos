@@ -160,7 +160,7 @@ public final class AethosStore {
 
     // MARK: Schema version
 
-    private static let currentSchemaVersion: Int = 5
+    private static let currentSchemaVersion: Int = 6
 
     public init(path: URL) throws {
         try FileManager.default.createDirectory(
@@ -1079,24 +1079,31 @@ public final class AethosStore {
             try migrateV2toV3()
             try migrateV3toV4()
             try migrateV4toV5()
+            try migrateV5toV6()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 1:
             try migrateV1toV2()
             try migrateV2toV3()
             try migrateV3toV4()
             try migrateV4toV5()
+            try migrateV5toV6()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 2:
             try migrateV2toV3()
             try migrateV3toV4()
             try migrateV4toV5()
+            try migrateV5toV6()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 3:
             try migrateV3toV4()
             try migrateV4toV5()
+            try migrateV5toV6()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 4:
             try migrateV4toV5()
+            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
+        case 5:
+            try migrateV5toV6()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case Self.currentSchemaVersion:
             return
@@ -1182,6 +1189,133 @@ public final class AethosStore {
         CREATE INDEX IF NOT EXISTS idx_messages_direction_created_at ON messages(direction, created_at);
         CREATE INDEX IF NOT EXISTS idx_messages_kind_created_at ON messages(kind, created_at);
         """)
+    }
+
+    private func migrateV5toV6() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS delivery_receipts (
+            message_id BLOB NOT NULL,
+            destination_wayfarer_id TEXT NOT NULL,
+            received_at INTEGER NOT NULL,
+            signature BLOB NOT NULL,
+            PRIMARY KEY (message_id, destination_wayfarer_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_delivery_receipts_received_at ON delivery_receipts(received_at);
+        """)
+    }
+
+    // MARK: Delivery Receipts
+
+    /// Record a delivery receipt. Deduplicates by (messageId, destinationWayfarerId).
+    public func recordDeliveryReceipt(_ receipt: DeliveryReceipt) throws {
+        guard let signature = receipt.signature else {
+            throw StoreError.sqliteError("Cannot record unsigned delivery receipt")
+        }
+
+        let sql = """
+        INSERT OR REPLACE INTO delivery_receipts (message_id, destination_wayfarer_id, received_at, signature)
+        VALUES (?, ?, ?, ?);
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        try bindData(stmt, index: 1, data: receipt.messageId)
+        try bindText(stmt, index: 2, text: receipt.destinationWayfarerId)
+        try bindInt64(stmt, index: 3, value: Self.epochSeconds(receipt.receivedAt))
+        try bindData(stmt, index: 4, data: signature)
+
+        try stepDone(stmt)
+    }
+
+    /// Get a delivery receipt by messageId and destinationWayfarerId.
+    public func getDeliveryReceipt(messageId: Data, destinationWayfarerId: String) throws -> DeliveryReceipt? {
+        let sql = """
+        SELECT message_id, destination_wayfarer_id, received_at, signature
+        FROM delivery_receipts
+        WHERE message_id = ? AND destination_wayfarer_id = ?
+        LIMIT 1;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindData(stmt, index: 1, data: messageId)
+        try bindText(stmt, index: 2, text: destinationWayfarerId)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            guard let msgId = columnData(stmt, index: 0),
+                  let wayfarerId = columnText(stmt, index: 1),
+                  let sig = columnData(stmt, index: 3)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column in delivery_receipts")
+            }
+            let receivedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 2)))
+            return DeliveryReceipt(
+                messageId: msgId,
+                destinationWayfarerId: wayfarerId,
+                receivedAt: receivedAt,
+                signature: sig
+            )
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    /// List delivery receipts, optionally filtered by messageId or limited.
+    public func listDeliveryReceipts(messageId: Data? = nil, limit: Int = 100) throws -> [DeliveryReceipt] {
+        let sql: String
+        if messageId != nil {
+            sql = """
+            SELECT message_id, destination_wayfarer_id, received_at, signature
+            FROM delivery_receipts
+            WHERE message_id = ?
+            ORDER BY received_at DESC
+            LIMIT ?;
+            """
+        } else {
+            sql = """
+            SELECT message_id, destination_wayfarer_id, received_at, signature
+            FROM delivery_receipts
+            ORDER BY received_at DESC
+            LIMIT ?;
+            """
+        }
+
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        if let msgId = messageId {
+            try bindData(stmt, index: 1, data: msgId)
+            try bindInt32(stmt, index: 2, value: Int32(min(limit, Int(Int32.max))))
+        } else {
+            try bindInt32(stmt, index: 1, value: Int32(min(limit, Int(Int32.max))))
+        }
+
+        var receipts: [DeliveryReceipt] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+
+            guard let msgId = columnData(stmt, index: 0),
+                  let wayfarerId = columnText(stmt, index: 1),
+                  let sig = columnData(stmt, index: 3)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column in delivery_receipts")
+            }
+
+            let receivedAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 2)))
+            receipts.append(DeliveryReceipt(
+                messageId: msgId,
+                destinationWayfarerId: wayfarerId,
+                receivedAt: receivedAt,
+                signature: sig
+            ))
+        }
+
+        return receipts
     }
 
     // MARK: Messages

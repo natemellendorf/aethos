@@ -13,7 +13,7 @@ func schemaMigrationV2toV3AddsNewColumns() throws {
 
     let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
     // Fresh database should be at the latest schema.
-    #expect(try store.__debugUserVersion() == 5)
+    #expect(try store.__debugUserVersion() == 6)
 
     // Verify we can create a transfer with custody fields.
     let now = Date(timeIntervalSince1970: 1_000)
