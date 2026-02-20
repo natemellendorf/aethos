@@ -33,7 +33,7 @@ public actor WebSocketRelayConnection: RelayConnectionProtocol {
         }
         
         for message in pendingMessages {
-            await send(message)
+            _ = await send(message)
         }
         pendingMessages.removeAll()
     }
