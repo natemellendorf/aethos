@@ -70,10 +70,8 @@ public enum RelayFrame: Equatable, Sendable {
     public static let relayForwardTypeId: UInt8 = 0x22
     public static let envelopeTypeId: UInt8 = 0x01
 
-    // MARK: - Encoding
-
     /// Encode the frame for wire transport.
-    /// Format: [typeId: 1 byte][payloadLength: 4 bytes big-endian][payload: N bytes]
+    /// Uses custom binary framing with length-prefixed payloads.
     public func encode() throws -> Data {
         let typeId: UInt8
         var payload = Data()
@@ -99,9 +97,16 @@ public enum RelayFrame: Equatable, Sendable {
 
         case .nack(let envelopeId, let reason):
             typeId = Self.nackTypeId
-            let reasonBytes = Data(reason.utf8)
-            payload = envelopeId + Data([0x00]) + reasonBytes
-
+            // Length-prefixed encoding: [envelopeId length (2 bytes)][envelopeId][reason length (2 bytes)][reason]
+            // This is deterministic and handles envelope IDs containing 0x00 bytes
+            var envelopeIdLength = UInt16(envelopeId.count).bigEndian
+            var reasonData = reason.data(using: .utf8) ?? Data()
+            var reasonLength = UInt16(reasonData.count).bigEndian
+            
+            payload.append(contentsOf: withUnsafeBytes(of: &envelopeIdLength) { Data($0) })
+            payload.append(envelopeId)
+            payload.append(contentsOf: withUnsafeBytes(of: &reasonLength) { Data($0) })
+            payload.append(reasonData)
         case .heartbeat:
             typeId = Self.heartbeatTypeId
 
@@ -154,6 +159,40 @@ public enum RelayFrame: Equatable, Sendable {
             }
             return .clientHello(wayfarerId: wayfarerId)
 
+        case envelopeTypeId:
+            return .envelope(payload)
+            
+        case ackTypeId:
+            return .ack(envelopeId: payload)
+            
+        case nackTypeId:
+            // Try new length-prefixed format first: [envelopeId len (2)][envelopeId][reason len (2)][reason]
+            // Fall back to old format for backward compatibility: envelopeId + 0x00 + reason
+            if payload.count >= 4 {
+                let envelopeIdLength = UInt16(bigEndian: payload.subdata(in: 0..<2).withUnsafeBytes { $0.load(as: UInt16.self) })
+                let reasonOffset = 2 + Int(envelopeIdLength)
+                
+                if payload.count >= reasonOffset + 2 {
+                    let reasonLength = UInt16(bigEndian: payload.subdata(in: reasonOffset..<(reasonOffset + 2)).withUnsafeBytes { $0.load(as: UInt16.self) })
+                    
+                    if payload.count >= reasonOffset + 2 + Int(reasonLength) {
+                        let envelopeId = Data(payload.subdata(in: 2..<reasonOffset))
+                        let reasonData = payload.subdata(in: (reasonOffset + 2)..<(reasonOffset + 2 + Int(reasonLength)))
+                        let reason = String(data: reasonData, encoding: .utf8) ?? "unknown"
+                        return .nack(envelopeId: envelopeId, reason: reason)
+                    }
+                }
+            }
+            
+            // Fallback to old format for backward compatibility
+            guard let zeroIndex = payload.firstIndex(of: 0) else {
+                return .nack(envelopeId: payload, reason: "unknown")
+            }
+            let envelopeId = Data(payload[..<zeroIndex])
+            let reasonData = payload[(zeroIndex + 1)...]
+            let reason = String(data: reasonData, encoding: .utf8) ?? "unknown"
+            return .nack(envelopeId: envelopeId, reason: reason)
+
         case publishTypeId:
             guard let (envelopeId, body) = decodeIdAndPayload(payload) else {
                 return nil
@@ -165,18 +204,6 @@ public enum RelayFrame: Equatable, Sendable {
                 return nil
             }
             return .deliver(envelopeId: envelopeId, payload: body, metadata: metadata)
-
-        case ackTypeId:
-            return .ack(envelopeId: payload)
-
-        case nackTypeId:
-            guard let zeroIndex = payload.firstIndex(of: 0x00) else {
-                return .nack(envelopeId: payload, reason: "unknown")
-            }
-            let envelopeId = Data(payload[..<zeroIndex])
-            let reasonData = payload[(zeroIndex + 1)...]
-            let reason = String(data: reasonData, encoding: .utf8) ?? "unknown"
-            return .nack(envelopeId: envelopeId, reason: reason)
 
         case heartbeatTypeId:
             return .heartbeat
@@ -199,14 +226,11 @@ public enum RelayFrame: Equatable, Sendable {
             }
             return .relayForward(envelopeId: envelopeId, payload: body)
 
-        case envelopeTypeId:
-            return .envelope(payload)
-
         default:
             return nil
         }
     }
-
+    
     // MARK: - Payload Helpers
 
     /// Encode an ID (4-byte length prefix) followed by a body.

@@ -170,12 +170,16 @@ public struct RelayPublication: Identifiable, Equatable, Sendable {
     public var ackedRelays: Set<String>
     public var failedRelays: Set<String>
     public let createdAt: Date
-
+    
+    /// Required acknowledgements for quorum (typically publishQuorum)
+    public let requiredAcks: Int
+    
     public init(
         id: UUID = UUID(),
         envelopeId: Data,
         payload: Data,
-        targetRelays: Set<String>
+        targetRelays: Set<String>,
+        requiredAcks: Int? = nil
     ) {
         self.id = id
         self.envelopeId = envelopeId
@@ -184,6 +188,7 @@ public struct RelayPublication: Identifiable, Equatable, Sendable {
         self.ackedRelays = []
         self.failedRelays = []
         self.createdAt = Date()
+        self.requiredAcks = requiredAcks ?? max(1, targetRelays.count)
     }
 
     public var isComplete: Bool {
@@ -191,7 +196,7 @@ public struct RelayPublication: Identifiable, Equatable, Sendable {
     }
 
     public var isQuorumAchieved: Bool {
-        ackedRelays.count >= 1
+        ackedRelays.count >= requiredAcks
     }
 }
 
@@ -282,6 +287,8 @@ public actor RelayTransport {
     public var onPublishAcked: ((Data, String) async -> Void)?
 
     /// Legacy callback for raw envelope data.
+    private var heartbeatTask: Task<Void, Never>?
+    
     public var onEnvelopeReceived: ((Data) async -> Void)?
 
     /// Legacy callback for ack data.
@@ -321,11 +328,18 @@ public actor RelayTransport {
         for relayId in activeRelays {
             await connect(relayId: relayId)
         }
+        
+        // Start heartbeat loop
+        startHeartbeatLoop()
     }
 
     public func stop() async {
         guard isRunning else { return }
-
+        
+        // Stop heartbeat loop
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        
         for (_, connection) in connections {
             await connection.disconnect()
         }
@@ -431,7 +445,8 @@ public actor RelayTransport {
         let publication = RelayPublication(
             envelopeId: envelopeId,
             payload: payload,
-            targetRelays: Set(selectedRelays)
+            targetRelays: Set(selectedRelays),
+            requiredAcks: config.publishQuorum
         )
 
         publications[publication.id] = publication
@@ -654,7 +669,40 @@ public actor RelayTransport {
 
         connections.removeValue(forKey: relayId)
     }
-
+    
+    // MARK: - Heartbeat
+    
+    private func startHeartbeatLoop() {
+        heartbeatTask = Task { [weak self] in
+            guard let self else { return }
+            
+            while !Task.isCancelled {
+                await self.sendHeartbeats()
+                
+                // Wait for heartbeat interval before next iteration
+                try? await Task.sleep(nanoseconds: UInt64(self.config.heartbeatIntervalSeconds * 1_000_000_000))
+            }
+        }
+    }
+    
+    private func sendHeartbeats() async {
+        guard isRunning else { return }
+        
+        let frame = RelayFrame.heartbeat
+        
+        for (relayId, connection) in connections {
+            let isConnected = await connection.isConnected
+            guard isConnected else { continue }
+            
+            let success = await connection.send(frame)
+            
+            if !success {
+                // Heartbeat send failed - record failure for this relay
+                await recordFailure(relayId: relayId)
+            }
+        }
+    }
+    
     // MARK: - Relay Selection
 
     private func selectRelaysForConnections(count: Int) -> [String] {
