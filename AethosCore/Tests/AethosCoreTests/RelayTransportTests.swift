@@ -39,6 +39,45 @@ func relayFrameNackEncodeDecodeRoundTrip() throws {
 }
 
 @Test
+func relayFrameNackEncodeDecodeRoundTripWithZeroBytes() throws {
+    // Test NACK framing with envelope ID containing 0x00 bytes
+    // This tests the deterministic length-prefixed encoding fix
+    var envelopeId = Data(repeating: 0x00, count: 16)
+    envelopeId.append(contentsOf: [0xAB, 0xCD, 0xEF])  // Append some non-zero bytes
+    let reason = "relay unavailable"
+    let frame = RelayFrame.nack(envelopeId: envelopeId, reason: reason)
+    
+    let encoded = try frame.encode()
+    let decoded = try RelayFrame.decode(encoded)
+    
+    #expect(decoded == .nack(envelopeId: envelopeId, reason: reason))
+}
+
+@Test
+func relayFrameNackBackwardCompatibilityWithOldFormat() throws {
+    // Test backward compatibility: decode old format (envelopeId + 0x00 + reason)
+    // This simulates data from older clients that used the old delimiter-based format
+    var oldFormatPayload = Data(repeating: 0x42, count: 10)
+    oldFormatPayload.append(0x00)  // Delimiter
+    oldFormatPayload.append(contentsOf: "offline".utf8)
+    
+    // Frame type + length prefix + payload
+    var encoded = Data([RelayFrame.nackTypeId])
+    var length = UInt32(oldFormatPayload.count).bigEndian
+    encoded.append(contentsOf: withUnsafeBytes(of: &length) { Data($0) })
+    encoded.append(oldFormatPayload)
+    
+    // Should decode successfully using backward compatibility fallback
+    let decoded = try RelayFrame.decode(encoded)
+    
+    #expect(decoded != nil)
+    if case .nack(let envId, let reason) = decoded {
+        #expect(Data(envId) == Data(repeating: 0x42, count: 10))
+        #expect(reason == "offline")
+    }
+}
+
+@Test
 func relayFrameHeartbeatEncodeDecodeRoundTrip() throws {
     let frame = RelayFrame.heartbeat
 
@@ -352,16 +391,39 @@ func relayHealthManagerSelectsTopK() {
 
 @Test
 func relayPublicationTracksAckedRelays() {
+    // With requiredAcks=1, quorum is achieved with single ack (backward compatible)
     var publication = RelayPublication(
         envelopeId: Data(repeating: 0xAB, count: 32),
         payload: Data("test payload".utf8),
-        targetRelays: Set(["relay-a", "relay-b", "relay-c"])
+        targetRelays: Set(["relay-a", "relay-b", "relay-c"]),
+        requiredAcks: 1
     )
 
     publication.ackedRelays.insert("relay-a")
 
     #expect(publication.ackedRelays.count == 1)
     #expect(!publication.isComplete)
+    #expect(publication.isQuorumAchieved)
+}
+
+@Test
+func relayPublicationQuorumRequiresMultipleAcks() {
+    // With publishQuorum=2, need 2 acks for quorum
+    var publication = RelayPublication(
+        envelopeId: Data(repeating: 0xAB, count: 32),
+        payload: Data("test payload".utf8),
+        targetRelays: Set(["relay-a", "relay-b", "relay-c"]),
+        requiredAcks: 2
+    )
+    
+    publication.ackedRelays.insert("relay-a")
+    
+    #expect(publication.ackedRelays.count == 1)
+    #expect(!publication.isQuorumAchieved)
+    
+    publication.ackedRelays.insert("relay-b")
+    
+    #expect(publication.ackedRelays.count == 2)
     #expect(publication.isQuorumAchieved)
 }
 
