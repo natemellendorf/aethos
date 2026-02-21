@@ -3,6 +3,18 @@
 This project uses beads
 Use 'bd' for task tracking
 
+## Bead Lifecycle Discipline (Mandatory)
+
+All bead work must follow these lifecycle rules:
+
+- Always branch from `origin/main`.
+- Always use git worktrees.
+- Never commit `.beads/*`.
+- Never commit compiled artifacts/binaries.
+- Conventional commits only. No emojis.
+- Bead MUST be closed when complete.
+- Respect repo boundaries and existing AGENTS instructions.
+
 ## Repository Hygiene
 
 ### Worktree Discipline (Required for All Beads)
