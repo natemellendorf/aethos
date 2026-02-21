@@ -8,6 +8,7 @@ public enum CanonicalEncoderV1 {
         case receipt = 4
         case inventory = 5
         case inventoryRequest = 6
+        case sealedEnvelope = 7
     }
 
     public enum MessageField: UInt8 {
@@ -40,6 +41,18 @@ public enum CanonicalEncoderV1 {
 
     public enum InventoryRequestField: UInt8 {
         case want = 1
+    }
+    
+    /// Field identifiers for sealed envelope encoding.
+    public enum SealedEnvelopeField: UInt8 {
+        case version = 1
+        case envelopeId = 2
+        case destinationWayfarerId = 3
+        case createdAtUnixMs = 4
+        case expiresAtUnixMs = 5
+        case nonce = 6
+        case ciphertext = 7
+        case signature = 8
     }
 
     /// Key type tag for canonical public identity encoding.
@@ -147,6 +160,40 @@ public enum CanonicalEncoderV1 {
 
         out.appendField(id: PublicIdentityField.signingPublicKey.rawValue, raw: identity.signingPublicKey)
         out.appendField(id: PublicIdentityField.exchangePublicKey.rawValue, raw: identity.exchangePublicKey)
+
+        return out
+    }
+    
+    /// Encode a SealedEnvelopeV1 into canonical bytes.
+    /// Format: [version:1][type:1][field envelopeId][field destination][field createdAt][field expiresAt][field nonce][field ciphertext][optional signature]
+    public static func encodeSealedEnvelopeV1(
+        version: UInt8,
+        envelopeId: Data,
+        destinationWayfarerId: Data,
+        createdAtUnixMs: Int64,
+        expiresAtUnixMs: Int64,
+        nonce: Data,
+        ciphertext: Data,
+        signature: Data?
+    ) -> Data {
+        var out = Data()
+        out.appendUInt8(version)
+        out.appendUInt8(TypeDiscriminator.sealedEnvelope.rawValue)
+
+        out.appendField(id: SealedEnvelopeField.envelopeId.rawValue, raw: envelopeId)
+        out.appendField(id: SealedEnvelopeField.destinationWayfarerId.rawValue, raw: destinationWayfarerId)
+
+        var createdRaw = Data()
+        createdRaw.appendInt64(createdAtUnixMs)
+        out.appendField(id: SealedEnvelopeField.createdAtUnixMs.rawValue, raw: createdRaw)
+        
+        var expiresRaw = Data()
+        expiresRaw.appendInt64(expiresAtUnixMs)
+        out.appendField(id: SealedEnvelopeField.expiresAtUnixMs.rawValue, raw: expiresRaw)
+
+        out.appendField(id: SealedEnvelopeField.nonce.rawValue, raw: nonce)
+        out.appendField(id: SealedEnvelopeField.ciphertext.rawValue, raw: ciphertext)
+        out.appendOptionalField(id: SealedEnvelopeField.signature.rawValue, raw: signature)
 
         return out
     }
