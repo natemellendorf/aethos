@@ -3,6 +3,71 @@
 This project uses beads
 Use 'bd' for task tracking
 
+## Repository Hygiene
+
+### Worktree Discipline (Required for All Beads)
+All bead work MUST run in dedicated git worktrees to ensure clean separation and prevent accidental main branch mutations.
+
+**Canonical Workflow:**
+
+1. **Create worktree** before starting any bead work:
+   ```bash
+   git fetch origin
+   git checkout main
+   git pull --ff-only
+   git checkout -b bead/<bead-id>
+   git worktree add ../wt-aethos-<bead-id> bead/<bead-id>
+   cd ../wt-aethos-<bead-id>
+   ```
+
+2. **Run bead work** in the worktree directory.
+
+3. **Cleanup** when done:
+   ```bash
+   cd /path/to/aethos
+   git worktree remove ../wt-aethos-<bead-id>
+   git branch -d bead/<bead-id>
+   ```
+
+### Branch Safety Rules
+
+1. **All beads must branch from latest main**
+   - Run `git fetch origin && git checkout main && git pull --ff-only` before creating branch
+   - Never work directly on main branch
+
+2. **bead-sync exemption requires ALLOW_MAIN_CHECKOUT=1**
+   - Only use for: syncing bead state files, running `bd sync` commands, reading from main branch
+   - Always verify you're in the correct context before proceeding
+
+3. **Agents must stop immediately if validation fails**
+   - Do not proceed with implementation if worktree validation fails
+   - Fix the underlying issue before continuing
+
+### Pre-commit Checklist
+
+Before every commit, verify:
+
+- [ ] **No forbidden artifacts staged**: Check `git status` for `.beads/*`, `.build/`, `.swiftpm/`, `DerivedData/`, `*.xcworkspace/`, `.DS_Store`
+- [ ] **Tests pass**: Run `swift test`
+- [ ] **Build succeeds**: Run `swift build`
+- [ ] **Changes are incremental and testable**
+- [ ] **No debug statements**: No `print()`, `debugPrint()`, or logging statements left behind
+- [ ] **No emojis in code/comments**: Use text only
+- [ ] **Branch is descendant of origin/main**: Verify with `git log --oneline origin/main..HEAD`
+
+### Git Ignore Conventions
+
+The following are automatically ignored:
+- `.DS_Store`
+- `.vscode/`
+- `.swiftpm/`
+- `.build/`
+- `Packages/`
+- `xcuserdata/`
+- `*.xcodeproj/`
+- `*.xcworkspace/`
+- `peer/` (runtime data)
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

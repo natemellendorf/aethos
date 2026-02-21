@@ -662,3 +662,281 @@ func relayTransportListRelayDescriptorsIncludesHealthScore() async {
     #expect(descriptors.count == 1)
     #expect(descriptors[0].lastKnownHealthScore == RelayHealth.initialScore)
 }
+
+// MARK: - Relay Scoring Tests
+
+@Test
+func scoreIncreasesOnSuccess() {
+    var scoring = RelayScoring(relays: ["relay-a"])
+    
+    // Record several successful deliveries
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 50.0)
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 60.0)
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 70.0)
+    
+    let score = scoring.score(for: "relay-a")
+    
+    // Score should be high due to successful deliveries
+    #expect(score > 0.5)
+}
+
+@Test
+func scoreDecreasesOnFailure() {
+    var scoring = RelayScoring(relays: ["relay-a"])
+    
+    // Record successful deliveries first
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 50.0)
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 60.0)
+    
+    let scoreBeforeFailure = scoring.score(for: "relay-a")
+    
+    // Record failures
+    scoring.recordDeliveryFailure(relayId: "relay-a")
+    scoring.recordDeliveryFailure(relayId: "relay-a")
+    
+    let scoreAfterFailure = scoring.score(for: "relay-a")
+    
+    // Score should decrease after failures
+    #expect(scoreAfterFailure < scoreBeforeFailure)
+}
+
+@Test
+func relaySortingByScore() {
+    var scoring = RelayScoring(relays: ["relay-a", "relay-b", "relay-c"])
+    
+    // Best performer
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 30.0)
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 30.0)
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 30.0)
+    
+    // Medium performer
+    scoring.recordDeliverySuccess(relayId: "relay-b", latencyMs: 100.0)
+    scoring.recordDeliverySuccess(relayId: "relay-b", latencyMs: 100.0)
+    
+    // Poor performer with failures
+    scoring.recordDeliveryFailure(relayId: "relay-c")
+    scoring.recordDeliveryFailure(relayId: "relay-c")
+    
+    let sorted = scoring.relaysSortedByScore()
+    
+    // relay-a should be first (best), relay-c last (worst)
+    #expect(sorted[0] == "relay-a")
+    #expect(sorted[2] == "relay-c")
+}
+
+@Test
+func scoreDecayOverTime() {
+    var scoring = RelayScoring(relays: ["relay-a"], config: RelayScoring.ScoringConfig(
+        inactivityDecayPerHour: 0.1
+    ))
+    
+    // Record success with timestamp
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 50.0)
+    
+    let scoreBeforeDecay = scoring.score(for: "relay-a")
+    #expect(scoreBeforeDecay > 0.5)
+    
+    // Simulate 2 hours of inactivity by setting lastActivityAt to 2 hours ago
+    // The decay is applied based on time since lastActivityAt
+    let twoHoursAgo = Date().addingTimeInterval(-7200)
+    if var metrics = scoring.metrics["relay-a"] {
+        metrics.lastActivityAt = twoHoursAgo
+        scoring.metrics["relay-a"] = metrics
+    }
+    
+    scoring.applyInactivityDecay(referenceTime: Date())
+    
+    let scoreAfterDecay = scoring.score(for: "relay-a")
+    
+    // Score should decrease after inactivity decay is applied
+    #expect(scoreAfterDecay < scoreBeforeDecay)
+}
+
+@Test
+func blackholePenaltyApplied() {
+    var scoring = RelayScoring(relays: ["relay-a"], config: RelayScoring.ScoringConfig(
+        blackholePenalty: 0.2
+    ))
+    
+    // Start with good score
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 50.0)
+    let goodScore = scoring.score(for: "relay-a")
+    
+    // Record blackhole behavior (accepts publish but no ack)
+    scoring.recordBlackhole(relayId: "relay-a")
+    scoring.recordBlackhole(relayId: "relay-a")
+    
+    let scoreAfterBlackhole = scoring.score(for: "relay-a")
+    
+    // Score should be penalized for blackhole behavior
+    #expect(scoreAfterBlackhole < goodScore)
+}
+
+@Test
+func disconnectPenaltyApplied() {
+    var scoring = RelayScoring(relays: ["relay-a"], config: RelayScoring.ScoringConfig(
+        disconnectPenalty: 0.1
+    ))
+    
+    // Start with good score
+    scoring.recordDeliverySuccess(relayId: "relay-a", latencyMs: 50.0)
+    let goodScore = scoring.score(for: "relay-a")
+    
+    // Record disconnects
+    scoring.recordDisconnect(relayId: "relay-a")
+    scoring.recordDisconnect(relayId: "relay-a")
+    
+    let scoreAfterDisconnect = scoring.score(for: "relay-a")
+    
+    // Score should be penalized for disconnects
+    #expect(scoreAfterDisconnect < goodScore)
+}
+
+// MARK: - Adaptive Publish Width Tests
+
+@Test
+func adaptiveWidthIncreasesWhenUnhealthy() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 2)
+    
+    // Record several failures
+    adaptiveWidth.recordFailure()
+    adaptiveWidth.recordFailure()
+    
+    // Width should increase when unhealthy
+    #expect(adaptiveWidth.getWidth() > 2)
+}
+
+@Test
+func adaptiveWidthDecreasesWhenStable() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 3)
+    
+    // Record several successes
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    
+    // Width should decrease when stable
+    #expect(adaptiveWidth.getWidth() < 3)
+}
+
+@Test
+func adaptiveWidthClampedToMin() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 1)
+    
+    // Even with failures, should not go below min
+    for _ in 0..<10 {
+        adaptiveWidth.recordFailure()
+    }
+    
+    #expect(adaptiveWidth.getWidth() >= 1)
+}
+
+@Test
+func adaptiveWidthClampedToMax() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 5)
+    
+    // Even with successes, should not go above max
+    for _ in 0..<20 {
+        adaptiveWidth.recordSuccess()
+    }
+    
+    #expect(adaptiveWidth.getWidth() <= 5)
+}
+
+@Test
+func adaptiveWidthRespectsConsecutiveFailures() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 2)
+    
+    // Two consecutive failures should trigger width increase
+    adaptiveWidth.recordFailure()
+    adaptiveWidth.recordFailure()
+    
+    // Width must increase after 2 consecutive failures
+    #expect(adaptiveWidth.getWidth() >= 3)
+}
+
+@Test
+func adaptiveWidthRespectsConsecutiveSuccesses() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 4)
+    
+    // Three consecutive successes should trigger width decrease
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    
+    // Width must decrease after 3 consecutive successes
+    #expect(adaptiveWidth.getWidth() <= 3)
+}
+
+@Test
+func adaptiveWidthStatistics() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 2, windowSize: 5)
+    
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordSuccess()
+    adaptiveWidth.recordFailure()
+    
+    let stats = adaptiveWidth.statistics
+    
+    #expect(stats.currentWidth == 2)
+    #expect(stats.minWidth == 1)
+    #expect(stats.maxWidth == 5)
+    #expect(stats.healthyRatio > 0.5)
+    #expect(stats.consecutiveFailures == 1)
+    // After recording success, success, failure: consecutive successes reset to 0, failures to 1
+    #expect(stats.consecutiveSuccesses == 0)
+}
+
+@Test
+func adaptiveWidthReset() {
+    var adaptiveWidth = AdaptivePublishWidth(minWidth: 1, maxWidth: 5, initialWidth: 3)
+    
+    // Change width
+    adaptiveWidth.recordFailure()
+    adaptiveWidth.recordFailure()
+    #expect(adaptiveWidth.getWidth() != 3)
+    
+    // Reset
+    adaptiveWidth.reset()
+    
+    // Should be back to initial
+    #expect(adaptiveWidth.getWidth() == 3)
+    #expect(adaptiveWidth.statistics.recentOutcomes.isEmpty)
+}
+
+// MARK: - Forward Success Tracking Tests
+
+@Test
+func forwardSuccessScore() {
+    var scoring = RelayScoring(relays: ["relay-a"])
+    
+    // Record forward successes
+    scoring.recordForwardSuccess(relayId: "relay-a")
+    scoring.recordForwardSuccess(relayId: "relay-a")
+    scoring.recordForwardSuccess(relayId: "relay-a")
+    
+    let score = scoring.score(for: "relay-a")
+    
+    // Score should reflect forward success
+    #expect(score > 0.5)
+}
+
+@Test
+func forwardFailurePenalty() {
+    var scoring = RelayScoring(relays: ["relay-a"])
+    
+    // Start with good score
+    scoring.recordForwardSuccess(relayId: "relay-a")
+    scoring.recordForwardSuccess(relayId: "relay-a")
+    let goodScore = scoring.score(for: "relay-a")
+    
+    // Add failures
+    scoring.recordForwardFailure(relayId: "relay-a")
+    scoring.recordForwardFailure(relayId: "relay-a")
+    
+    let scoreAfterFailure = scoring.score(for: "relay-a")
+    
+    // Score should decrease with forward failures
+    #expect(scoreAfterFailure < goodScore)
+}
