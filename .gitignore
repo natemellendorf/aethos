@@ -7,3 +7,5 @@ Packages/
 xcuserdata/
 *.xcodeproj/
 *.xcworkspace/
+DerivedData/
+.beads/
