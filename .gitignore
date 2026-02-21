@@ -9,3 +9,4 @@ xcuserdata/
 *.xcworkspace/
 DerivedData/
 .beads/
+.worktrees/
