@@ -187,7 +187,7 @@ public actor RelayLink {
 
         try await sendJson(jsonString)
 
-        // Wait for send_ok
+        // Wait for send_ok with timeout
         return try await withCheckedThrowingContinuation { continuation in
             pendingSends[msgId] = PendingSend(
                 msgId: msgId,
@@ -196,21 +196,35 @@ public actor RelayLink {
                 ttlSeconds: ttlSeconds,
                 task: continuation
             )
+            
+            // Schedule timeout
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(config.sendTimeout * 1_000_000_000))
+                // Check if still pending (not already resolved)
+                if let pending = pendingSends.removeValue(forKey: msgId) {
+                    pending.task.resume(throwing: RelayLinkError.sendTimeout)
+                }
+            }
         }
     }
 
     /// Pull pending messages from the relay.
-    /// Note: Currently pull is implemented via receiveStream. This method returns empty.
     /// - Parameter limit: Maximum messages to retrieve
-    /// - Returns: Array of received messages (currently returns empty - use receiveStream)
+    /// - Returns: Array of received messages
     public func pull(limit: Int) async throws -> [ReceivedMessage] {
         guard state == .connected, handshakeComplete else {
             throw RelayLinkError.handshakeNotComplete
         }
 
-        // Pull is handled via receiveStream - this is a placeholder for future implementation
-        // For now, we return empty and rely on push delivery
-        return []
+        let pullFrame = PullFrame(limit: limit)
+        let jsonString = try parser.encode(.pull(pullFrame))
+
+        try await sendJson(jsonString)
+
+        // Wait for messages response
+        return try await withCheckedThrowingContinuation { continuation in
+            self.pendingPull = continuation
+        }
     }
 
     /// Acknowledge receipt of a message.
@@ -333,11 +347,12 @@ public actor RelayLink {
                 }
 
             case .error(let errorFrame):
-                // Handle error - could be for a pending send
+                // Handle error - broadcast to all pending sends
+                let error = RelayLinkError.relayError(errorFrame.code, errorFrame.message)
                 for (_, pending) in pendingSends {
-                    pending.task.resume(throwing: RelayLinkError.relayError(errorFrame.code, errorFrame.message))
-                    break
+                    pending.task.resume(throwing: error)
                 }
+                pendingSends.removeAll()
             }
         } catch {
             // Log parsing error but don't crash

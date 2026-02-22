@@ -77,7 +77,7 @@ public struct SendFrame: Codable, Sendable {
 
     public init(to: WayfarerID, payload: Data, ttlSeconds: Int = 3600) {
         self.to = to.rawValue
-        self.payloadB64 = payload.base64EncodedString()
+        self.payloadB64 = WireBase64.encode(payload)
         self.ttlSeconds = ttlSeconds
     }
 
@@ -249,7 +249,7 @@ public struct ReceivedMessage: Sendable, Identifiable {
 
     public init?(msgId: String, fromHex: String, payloadB64: String, receivedAt: Date, wireBytes: Data) {
         guard let from = WayfarerID(hexString: fromHex),
-              let payload = Data(base64Encoded: payloadB64) else {
+              let payload = try? WireBase64.decodeUrl(payloadB64) else {
             return nil
         }
         self.id = msgId
@@ -344,16 +344,36 @@ public struct WireParser {
 // MARK: - Base64 Utilities
 
 public enum WireBase64 {
-    /// Decode base64 with strict mode - fails fast on invalid input.
+    /// Decode base64url with strict mode - fails fast on invalid input.
     public static func decode(_ string: String) throws -> Data {
-        guard let data = Data(base64Encoded: string) else {
+        try decodeUrl(string)
+    }
+
+    /// Encode to base64url string (URL-safe alphabet, no padding).
+    public static func encode(_ data: Data) -> String {
+        // Convert to base64 and strip padding, then make URL-safe
+        data.base64EncodedString()
+            .replacingOccurrences(of: "=", with: "")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+    }
+
+    /// Decode base64url string (URL-safe alphabet, no padding).
+    public static func decodeUrl(_ string: String) throws -> Data {
+        // Convert from base64url to standard base64
+        var normalized = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        
+        // Add padding if needed
+        let remainder = normalized.count % 4
+        if remainder > 0 {
+            normalized += String(repeating: "=", count: 4 - remainder)
+        }
+        
+        guard let data = Data(base64Encoded: normalized) else {
             throw WireParseError.invalidBase64(string)
         }
         return data
-    }
-
-    /// Encode to base64 string (standard alphabet, no padding).
-    public static func encode(_ data: Data) -> String {
-        data.base64EncodedString()
     }
 }
