@@ -4,6 +4,8 @@ Note: Scope split is strict.
 - `docs/spec/*` defines wire-level transports, frames, and protocol semantics.
 - `docs/protocol.md` defines core structures and their canonical byte encodings used by those wire contracts.
 
+Timestamp unit convention: fields suffixed `UnixMs` use Unix epoch milliseconds; some transport metadata in client-relay contracts may use Unix epoch seconds as explicitly specified in those transport docs.
+
 Frozen decisions:
 - CBOR for application payload content profiles (schema not defined in this document)
 - SHA-256 IDs
