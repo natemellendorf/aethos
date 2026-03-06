@@ -23,7 +23,7 @@ wayfarer_id := sha256(ed25519_pubkey_raw_bytes)
 
 Canonical v1 derivation is defined in `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
 
-Example: `aethos1...` (64 hex characters)
+Example (hex placeholder): `0123...abcd`
 
 ## Wire Format
 
@@ -33,7 +33,7 @@ All frames are JSON objects sent over WebSocket as text messages.
 
 Payloads use strict Base64 encoding (RFC 4648) with no padding:
 - Encoding: `base64url` (URL-safe alphabet)
-- Decoding: Must use `.strict` option - invalid Base64 fails fast
+- Decoding: Implementations MUST use strict base64url decode; invalid input MUST fail fast
 
 ### CBOR Wire Bytes
 
@@ -55,7 +55,7 @@ Client sends immediately after WebSocket connect to identify itself.
 ```json
 {
   "type": "hello",
-  "wayfarer_id": "aethos1..." 
+  "wayfarer_id": "0123...abcd" 
 }
 ```
 
@@ -66,7 +66,7 @@ Client sends a message to another Wayfarer via the relay.
 ```json
 {
   "type": "send",
-  "to": "aethos1...",
+  "to": "0123...abcd",
   "payload_b64": "o2... ",
   "ttl_seconds": 3600
 }
@@ -133,7 +133,7 @@ Relay delivers a message to the client (push model).
 {
   "type": "message",
   "msg_id": "uuid...",
-  "from": "aethos1...",
+  "from": "0123...abcd",
   "payload_b64": "o2...",
   "received_at": 1234567890
 }
@@ -149,7 +149,7 @@ Relay responds to a pull request with multiple messages.
   "messages": [
     {
       "msg_id": "uuid...",
-      "from": "aethos1...",
+      "from": "0123...abcd",
       "payload_b64": "o2...",
       "received_at": 1234567890
     }

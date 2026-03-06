@@ -17,9 +17,12 @@ This document defines the normative client-relay wire protocol.
 
 ## 2. Shared Types
 
-- `wayfarer_id`: string, lowercase hex, exactly 64 chars (`[0-9a-f]{64}`), SHA-256 of Ed25519 public key.
+- `wayfarer_id`: string, lowercase hex, exactly 64 chars (`[0-9a-f]{64}`).
+  - Canonical derivation: `wayfarer_id = hex_lower(SHA-256(ed25519_public_key_raw_bytes))`.
+  - `ed25519_public_key_raw_bytes` means the 32-byte Ed25519 public key byte sequence (not hex/base64/text encoding).
 - `device_id`: string, stable identifier unique per device for a given `wayfarer_id`.
-  - RECOMMENDED format: lowercase hex SHA-256 of the device Ed25519 public key (64 chars).
+  - RECOMMENDED derivation: `device_id = hex_lower(SHA-256(ed25519_device_public_key_raw_bytes))`.
+  - `ed25519_device_public_key_raw_bytes` means the 32-byte Ed25519 device public key byte sequence (not hex/base64/text encoding).
   - Other stable opaque strings are allowed.
   - Relays MUST treat `device_id` as opaque.
 - `msg_id`: string, opaque relay-assigned message identifier (UUID v4 RECOMMENDED).
