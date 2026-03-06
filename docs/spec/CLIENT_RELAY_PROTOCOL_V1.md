@@ -32,6 +32,7 @@ This document defines the normative client-relay wire protocol.
 - `ttl_seconds`: integer (`Int64`) in seconds, positive, default `3600` when omitted.
 - `received_at`: integer (`Int64`), Unix epoch seconds.
 - `expires_at`: integer (`Int64`), Unix epoch seconds.
+- Guard rail: this client-relay contract uses seconds for `received_at`/`expires_at`; `docs/spec/FEDERATION_PROTOCOL_V1.md` uses milliseconds for similarly named fields.
 - `limit`: integer (`Int64`), positive, default `50` when omitted.
 
 ## 3. Frame Types

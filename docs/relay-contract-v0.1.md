@@ -17,8 +17,8 @@ RelayLink is a JSON-over-WebSocket protocol for cross-platform client-to-relay c
 A WayfarerID is the SHA256 hash of an Ed25519 public key, represented as a lowercase hexadecimal string (64 characters).
 
 ```
-wayfarer_id := sha256(ed25519_pubkey_raw_bytes)
-            // 64 lowercase hex chars: 0-9, a-f
+wayfarer_id := hex_lower(sha256(ed25519_pubkey_raw_bytes))
+            // exactly 64 lowercase hex chars: 0-9, a-f
 ```
 
 Canonical v1 derivation is defined in `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
@@ -31,9 +31,9 @@ All frames are JSON objects sent over WebSocket as text messages.
 
 ### Base64 Encoding
 
-Payloads use strict Base64 encoding (RFC 4648) with no padding:
-- Encoding: `base64url` (URL-safe alphabet)
-- Decoding: Implementations MUST use strict base64url decode; invalid input MUST fail fast
+Payloads use strict base64url (RFC 4648, URL-safe alphabet) with no padding:
+- Encoding: MUST emit unpadded base64url (`=` padding omitted)
+- Decoding: MUST use strict base64url decode and fail fast on invalid input
 
 ### CBOR Wire Bytes
 
@@ -55,7 +55,7 @@ Client sends immediately after WebSocket connect to identify itself.
 ```json
 {
   "type": "hello",
-  "wayfarer_id": "0123...abcd" 
+  "wayfarer_id": "0123...abcd"
 }
 ```
 
@@ -67,13 +67,13 @@ Client sends a message to another Wayfarer via the relay.
 {
   "type": "send",
   "to": "0123...abcd",
-  "payload_b64": "o2... ",
+  "payload_b64": "o2...",
   "ttl_seconds": 3600
 }
 ```
 
 - `to`: Recipient WayfarerID (64 hex chars)
-- `payload_b64`: Base64-encoded CBOR envelope bytes
+- `payload_b64`: strict base64url (RFC 4648, no padding) encoded CBOR envelope bytes
 - `ttl_seconds`: Message time-to-live (default: 3600)
 - Returns `send_ok` with `msg_id` for acknowledgment
 

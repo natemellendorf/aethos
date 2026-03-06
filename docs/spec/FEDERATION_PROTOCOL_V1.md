@@ -16,6 +16,7 @@ Transport encoding is not finalized.
 - JSON transport MAY be used during transition/debugging if it preserves the same field semantics.
 
 All timestamp fields in this document use Unix epoch milliseconds encoded as `UInt64` (`created_at`, `expires_at`, `sent_at`).
+Guard rail: unlike `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md` (`received_at`/`expires_at` in seconds), federation timestamp fields are milliseconds.
 
 ## 2. Envelope Schema (Normative)
 

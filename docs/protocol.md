@@ -4,7 +4,7 @@ Note: Scope split is strict.
 - `docs/spec/*` defines wire-level transports, frames, and protocol semantics.
 - `docs/protocol.md` defines core structures and their canonical byte encodings used by those wire contracts.
 
-Timestamp unit convention: canonical fields suffixed `UnixMs` are Unix epoch milliseconds (`UInt64`); some transport metadata in client-relay contracts may use Unix epoch seconds as explicitly specified in those transport docs.
+Timestamp note: fields suffixed `UnixMs` use Unix epoch milliseconds (`UInt64`). Some transport-level contracts use Unix epoch seconds where explicitly specified.
 
 Frozen decisions:
 - CBOR for application payload content profiles (schema not defined in this document)
@@ -53,6 +53,8 @@ Field ids (in order):
 - `1` toWayfarerId (bytes, exactly 32 raw bytes)
 - `2` manifestId (bytes)
 - `3` body (bytes)
+
+`toWayfarerId` MUST be the 32-byte WayfarerID value (SHA-256 digest bytes), NOT the Ed25519 public key bytes.
 
 ### ManifestV1 Canonical Fields
 
