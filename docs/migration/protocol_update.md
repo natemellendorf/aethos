@@ -242,7 +242,7 @@ Without a divergence audit, later changes become ambiguous. It becomes difficult
 ### Step 1.1 — Create master compatibility matrix in aethos
 Create:
 
-`docs/PROTOCOL_COMPATIBILITY_MATRIX.md`
+`docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
 
 This file should include a table with columns like:
 - feature / field / semantic
@@ -679,8 +679,8 @@ Defined in future security roadmap.
 The following documents should exist and be kept up to date.
 
 ## In aethos
-- `docs/PROTOCOL_MIGRATION_PLAN.md`
-- `docs/PROTOCOL_COMPATIBILITY_MATRIX.md`
+- `docs/migration/protocol_update.md` (this canonical migration plan)
+- `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
@@ -817,10 +817,10 @@ Is a signed final-recipient receipt required?
 The next concrete actions should be:
 
 ## Action 1
-Add this migration plan to `aethos/docs/PROTOCOL_MIGRATION_PLAN.md`.
+Keep this migration plan current in `docs/migration/protocol_update.md`.
 
 ## Action 2
-Create `aethos/docs/PROTOCOL_COMPATIBILITY_MATRIX.md`.
+Create or update `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
 ## Action 3
 Ensure `aethos-relay/docs/PROTOCOL_DIVERGENCES.md` exists.
