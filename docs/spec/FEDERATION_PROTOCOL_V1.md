@@ -21,13 +21,18 @@ All timestamp fields in this document use Unix epoch milliseconds encoded as `UI
 
 Federation forwarding uses this envelope object:
 
-- `envelope_id`: bytes(32) identifier (JSON form: 64-char lowercase hex string)
+- `envelope_id`: bytes(32) identifier derived as `SHA-256(payload)` (JSON form: 64-char lowercase hex string)
 - `destination`: bytes(32) WayfarerID destination (JSON form: 64-char lowercase hex string)
-- `payload`: bytes opaque payload (JSON form: base64url string, no padding)
+- `payload`: bytes canonical `EnvelopeV1` bytes as defined by `Canonical Bytes v1` in `docs/protocol.md` (JSON form: base64url string, no padding)
 - `created_at`: `UInt64` Unix ms
 - `expires_at`: `UInt64` Unix ms
 - `hop_count`: `UInt32`
 - `seen_relays`: array of relay identifiers (strings)
+
+Derivation rules:
+
+1. `payload` MUST be exactly the canonical encoded `EnvelopeV1` bytes.
+2. `envelope_id` MUST be the SHA-256 digest of those exact `payload` bytes (`envelope_id = SHA-256(payload)`).
 
 ## 3. Frame Types
 
@@ -106,6 +111,7 @@ Optional fields:
 2. Relay A -> Relay B: `relay_hello`.
 3. Relay B -> Relay A: `relay_hello` (or equivalent successful handshake acceptance).
 4. Relay A prepares envelope:
+   - verifies `hop_count < MAX_HOPS` before any forward attempt
    - increments `hop_count`
    - appends `relay-a` to `seen_relays`
 5. Relay A -> Relay B: `relay_forward(envelope)`.

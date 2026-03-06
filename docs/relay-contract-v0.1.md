@@ -2,6 +2,10 @@
 
 Status: Historical/legacy reference. Canonical v1 client-relay contract is `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
 
+> WARNING (v0.1 vs v1 divergence):
+> - In v1, `payload_b64` carries canonical `EnvelopeV1` bytes from `docs/protocol.md` (`Canonical Bytes v1`), not generic "CBOR bytes" wording.
+> - In v1, idempotency uses `client_msg_id`; v0.1 wording about retrying with `msg_id` is legacy and not accurate for v1.
+
 ## Overview
 
 RelayLink is a JSON-over-WebSocket protocol for cross-platform client-to-relay communication. It provides reliable message delivery with acknowledgment semantics and supports both push (server-initiated) and pull (client-initiated) delivery models.
@@ -30,6 +34,8 @@ Payloads use strict Base64 encoding (RFC 4648) with no padding:
 - Decoding: Must use `.strict` option - invalid Base64 fails fast
 
 ### CBOR Wire Bytes
+
+Note: The "CBOR-encoded" wording below is historical v0.1 terminology. v1 defines `payload_b64` as canonical `EnvelopeV1` bytes in `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
 
 The `payload_b64` field contains CBOR-encoded data. The internal structure follows the EnvelopeV1 schema:
 - `toWayfarerId`: 32-byte recipient ID (Data)
@@ -191,6 +197,8 @@ The relay MUST:
 
 The client MUST NOT consider a message delivered until `send_ok` is received. If no response within timeout, client should retry (with same `msg_id` for idempotency).
 
+Note: v1 replaces this retry-idempotency wording with `client_msg_id`; see `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
+
 ### Receive Acknowledgment
 
 The relay delivers messages via `message` (push) or `messages` (pull). The client SHOULD send `ack` once the message is:
@@ -206,6 +214,8 @@ The relay MUST NOT delete a message until `ack_ok` is received. This provides at
 - If `send_ok` not received within 30 seconds, retry with same `msg_id`
 - Relay MUST handle duplicate `msg_id` gracefully (idempotent)
 - After 3 retries, consider recipient offline or relay unavailable
+
+Note: In v1, retries are keyed by `client_msg_id` rather than `msg_id`.
 
 ### Reconnection
 
