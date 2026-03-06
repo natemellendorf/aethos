@@ -19,6 +19,8 @@ This document defines receipt vocabulary and transport semantics without changin
 
 This spec does not add or remove `ReceiptV1` fields.
 
+Timestamp unit for `receivedAtUnixMs` is fixed: Unix epoch milliseconds encoded as `UInt64`.
+
 ## 2. Vocabulary Layer
 
 ### DeviceReceipt
@@ -44,7 +46,10 @@ A `FederationReceipt` is a `ReceiptV1` with semantics:
 
 ## 4. Scope Signaling Without Modifying `ReceiptV1`
 
-Because `ReceiptV1` has no built-in scope/kind discriminator, transport wrappers MUST carry receipt scope.
+Because `ReceiptV1` has no built-in scope/kind discriminator:
+
+- If a transport/channel can carry both `DeviceReceipt` and `FederationReceipt`, wrappers MUST carry explicit scope.
+- If a transport/channel carries only one receipt scope by construction, scope MAY be implicit.
 
 ### 4.1 JSON transport wrapper (normative for JSON channels)
 
@@ -58,11 +63,11 @@ Because `ReceiptV1` has no built-in scope/kind discriminator, transport wrappers
 Fields:
 
 - `receipt_scope`: string, `device` or `federation`
-- `receipt_v1_b64`: base64url (no padding) canonical `ReceiptV1` bytes
+- `receipt_v1_b64`: base64url (no padding) canonical `ReceiptV1` bytes from `docs/protocol.md` (`Canonical Bytes v1`)
 
 ### 4.2 CBOR transport wrapper (logical equivalent)
 
-When CBOR is used, wrappers MUST carry equivalent semantics:
+When CBOR is used and explicit scope signaling is required, wrappers MUST carry equivalent semantics:
 
 - `receipt_scope`: text (`"device"` or `"federation"`)
 - `receipt_v1`: bytes (canonical `ReceiptV1`)
