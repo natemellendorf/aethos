@@ -1,5 +1,7 @@
 # Aethos Protocol v1 (MVP0)
 
+Note: `docs/spec/*` is the canonical source for wire-level protocol contracts. This document remains canonical for core structures and canonical byte encoding.
+
 Frozen decisions:
 - CBOR encoding
 - SHA-256 IDs

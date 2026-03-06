@@ -1,5 +1,7 @@
 # RelayLink v0.1 Contract
 
+Status: Historical/legacy reference. Canonical v1 client-relay contract is `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
+
 ## Overview
 
 RelayLink is a JSON-over-WebSocket protocol for cross-platform client-to-relay communication. It provides reliable message delivery with acknowledgment semantics and supports both push (server-initiated) and pull (client-initiated) delivery models.
