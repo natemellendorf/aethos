@@ -23,7 +23,9 @@ This document defines the normative client-relay wire protocol.
   - Other stable opaque strings are allowed.
   - Relays MUST treat `device_id` as opaque.
 - `msg_id`: string, opaque relay-assigned message identifier (UUID v4 RECOMMENDED).
-- `client_msg_id`: string, client-provided idempotency key (UUID v4 RECOMMENDED).
+- `client_msg_id`: string, client-provided idempotency key.
+  - MUST be 1..128 ASCII characters (`0x21`..`0x7E`).
+  - UUID v4 RECOMMENDED.
 - `ttl_seconds`: integer (`Int64`) in seconds, positive, default `3600` when omitted.
 - `received_at`: integer (`Int64`), Unix epoch seconds.
 - `expires_at`: integer (`Int64`), Unix epoch seconds.
@@ -218,6 +220,7 @@ Required fields:
   - `RECIPIENT_OFFLINE`
   - `RATE_LIMITED`
   - `AUTH_FAILED`
+  - `IDEMPOTENCY_MISMATCH`
   - `INTERNAL_ERROR`
 - `message`: string, human-readable explanation
 
@@ -226,6 +229,10 @@ Required fields:
 1. Deployments MUST authenticate each client connection and authorize that the authenticated peer is allowed to act as `hello.wayfarer_id`.
 2. This specification does not standardize the authentication mechanism; deployments MAY use mTLS, bearer tokens, signed challenges, or equivalent mechanisms.
 3. If authentication or authorization fails, relay MUST return `error(code=AUTH_FAILED, ...)` and MAY close the connection.
+4. Deployments MUST prevent one authenticated peer from claiming arbitrary `device_id` values that affect per-device delivery or ack state.
+5. Deployments MUST enforce this property by a binding mechanism defined by deployment policy, for example:
+   - deriving `device_id` from authenticated device key material, or
+   - verifying the claimed `device_id` is registered to the authenticated `wayfarer_id`.
 
 ## 5. Ordering and Connection Rules
 
@@ -251,15 +258,23 @@ Client MUST treat send as unconfirmed until `send_ok` arrives.
 2. `client_msg_id` is OPTIONAL for backward compatibility with `docs/relay-contract-v0.1.md`.
 3. If client sets `client_msg_id`, it MUST reuse the same value for retries of that same logical send.
 4. If `client_msg_id` is present, relay MUST dedupe by `(sender_wayfarer_id, client_msg_id)` where `sender_wayfarer_id` is the authenticated `hello.wayfarer_id`.
-5. For a deduped retry with `client_msg_id`, relay MUST return the same `msg_id`, `received_at`, and `expires_at` values as the original accepted send.
-6. If `client_msg_id` is absent, idempotency is best-effort and not guaranteed.
-7. Client SHOULD treat the relay as unavailable/offline after 3 retries.
+5. For that dedupe key, the first accepted `send` establishes an idempotency tuple of:
+   - `to`
+   - decoded `payload_b64` bytes
+   - requested `ttl_seconds` value (with omitted value treated as `3600`)
+6. For subsequent `send` frames with the same `(sender_wayfarer_id, client_msg_id)`:
+   - If the idempotency tuple matches exactly, relay MUST return the same `send_ok` values (`msg_id`, `received_at`, `expires_at`) as the original accepted send.
+   - If the idempotency tuple differs, relay MUST NOT create a new message and MUST respond with `error(code=IDEMPOTENCY_MISMATCH, ...)`.
+7. If `client_msg_id` is absent, idempotency is best-effort and not guaranteed.
+8. Client SHOULD treat the relay as unavailable/offline after 3 retries.
 
 Backoff guidance: exponential backoff, base 1s, max 60s, jitter +/-20%.
 
 ### 6.3 Per-device tracking and ack binding (v1 requirement)
 
 Delivery and ack state MUST be tracked by `(wayfarer_id, device_id)`.
+
+Per-device ack binding in this section relies on the `device_id` authenticity/binding requirement in Section 4.
 
 - Relay MUST maintain per-device pending state keyed by `(wayfarer_id, device_id, msg_id)`.
 - Relay MUST bind `ack(msg_id)` to the `(wayfarer_id, device_id)` established by `hello` on that connection.
