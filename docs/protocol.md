@@ -1,9 +1,11 @@
 # Aethos Protocol v1 (MVP0)
 
-Note: `docs/spec/*` is the canonical source for wire-level protocol contracts. This document remains canonical for core structures and canonical byte encoding.
+Note: Scope split is strict.
+- `docs/spec/*` defines wire-level transports, frames, and protocol semantics.
+- `docs/protocol.md` defines core structures and their canonical byte encodings used by those wire contracts.
 
 Frozen decisions:
-- CBOR encoding
+- CBOR for application payload content profiles (schema not defined in this document)
 - SHA-256 IDs
 - Ed25519 identity + receipt signatures
 - 32KB chunks (32768 bytes)

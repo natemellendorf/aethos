@@ -15,7 +15,7 @@ Transport encoding is not finalized.
 - CBOR is the preferred transport for v1 alignment with core protocol.
 - JSON transport MAY be used during transition/debugging if it preserves the same field semantics.
 
-Timestamp fields use Unix epoch milliseconds as `UInt64`.
+All timestamp fields in this document use Unix epoch milliseconds encoded as `UInt64` (`created_at`, `expires_at`, `sent_at`).
 
 ## 2. Envelope Schema (Normative)
 
@@ -92,9 +92,9 @@ Optional fields:
 
 ## 4. Invariants and Validation Rules
 
-1. Relays MUST increment `hop_count` by exactly 1 before forwarding onward.
-2. Relays MUST enforce `MAX_HOPS` (implementation-defined constant).
-3. If `hop_count` exceeds or reaches `MAX_HOPS` policy threshold, relay MUST reject (no forward).
+1. Relays MUST enforce `MAX_HOPS` (implementation-defined constant).
+2. Relay MUST reject forwarding when incoming `hop_count >= MAX_HOPS`.
+3. For accepted envelopes (`hop_count < MAX_HOPS`), relay MUST increment `hop_count` by exactly 1 before forwarding onward.
 4. `seen_relays` MUST include the local relay identifier before forwarding.
 5. If local relay ID already exists in `seen_relays`, relay MUST reject to prevent loops.
 6. `expires_at` is immutable after creation; TTL MUST NOT be extended at any relay hop.
