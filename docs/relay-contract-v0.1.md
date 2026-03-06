@@ -207,7 +207,7 @@ The relay delivers messages via `message` (push) or `messages` (pull). The clien
 - Successfully processed (stored to disk, displayed to user, etc.)
 - Not a duplicate
 
-The relay MUST NOT delete a message until `ack_ok` is received. This provides at-least-once delivery semantics.
+The relay MUST NOT delete a message until it has accepted the client's `ack` and sent `ack_ok`. This provides at-least-once delivery semantics.
 
 ## Retry & Reconnect Expectations
 
