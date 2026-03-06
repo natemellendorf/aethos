@@ -215,6 +215,7 @@ Required fields:
 - `type`: string, must be `error`
 - `code`: string, one of:
   - `INVALID_WAYFARER_ID`
+  - `TO_MISMATCH`
   - `INVALID_PAYLOAD`
   - `PAYLOAD_TOO_LARGE`
   - `RECIPIENT_OFFLINE`
@@ -223,6 +224,10 @@ Required fields:
   - `IDEMPOTENCY_MISMATCH`
   - `INTERNAL_ERROR`
 - `message`: string, human-readable explanation
+
+Code semantics note:
+
+- `TO_MISMATCH`: `send.to` does not equal `hex_lower(EnvelopeV1.toWayfarerId)` decoded from `payload_b64`.
 
 ## 4. Security and Authentication
 
@@ -246,9 +251,13 @@ Required fields:
 
 Relay MUST:
 
-1. Validate sender authorization (per Section 4), recipient, and payload.
-2. Durably persist message state, including immutable `received_at` and `expires_at` timestamps.
-3. Only then emit `send_ok`.
+1. Decode `payload_b64` as canonical `EnvelopeV1` bytes encoded per `Canonical Bytes v1` in `docs/protocol.md`.
+2. Let `toWayfarerId_bytes` be the decoded `EnvelopeV1.toWayfarerId` raw bytes.
+3. Enforce `send.to == hex_lower(toWayfarerId_bytes)`.
+4. If step 3 fails, relay MUST reject and MUST return `error(code=TO_MISMATCH, ...)`.
+5. Validate sender authorization (per Section 4), recipient, and payload semantics.
+6. Durably persist message state, including immutable `received_at` and `expires_at` timestamps.
+7. Only then emit `send_ok`.
 
 Client MUST treat send as unconfirmed until `send_ok` arrives.
 
