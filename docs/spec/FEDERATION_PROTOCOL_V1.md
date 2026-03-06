@@ -33,6 +33,8 @@ Derivation rules:
 
 1. `payload` MUST be exactly the canonical encoded `EnvelopeV1` bytes.
 2. `envelope_id` MUST be the SHA-256 digest of those exact `payload` bytes (`envelope_id = SHA-256(payload)`).
+3. `payload` bytes MUST decode to `EnvelopeV1` per `Canonical Bytes v1` in `docs/protocol.md`; `EnvelopeV1.toWayfarerId` MUST be exactly 32 raw bytes.
+4. `destination` MUST equal `hex_lower(EnvelopeV1.toWayfarerId)` where `destination` is represented on the wire as 64 lowercase hex characters.
 
 ## 3. Frame Types
 
@@ -104,6 +106,7 @@ Optional fields:
 5. If local relay ID already exists in `seen_relays`, relay MUST reject to prevent loops.
 6. `expires_at` is immutable after creation; TTL MUST NOT be extended at any relay hop.
 7. Expired envelopes (`now_ms >= expires_at`) MUST NOT be forwarded.
+8. If `destination != hex_lower(EnvelopeV1.toWayfarerId)`, relay MUST reject, MUST NOT forward, and MUST send `relay_ack(status=rejected, code=DESTINATION_MISMATCH)`.
 
 ## 5. Minimal Forwarding Sequence
 
@@ -127,3 +130,4 @@ Relay MUST return `relay_ack(status=rejected, code=...)` when any of the followi
 - `LOOP_DETECTED`: local relay already present in `seen_relays`
 - `INVALID_DESTINATION`: malformed `destination`
 - `INVALID_PAYLOAD`: malformed/undecodable payload bytes
+- `DESTINATION_MISMATCH`: `destination` does not match `hex_lower(EnvelopeV1.toWayfarerId)` decoded from `payload`

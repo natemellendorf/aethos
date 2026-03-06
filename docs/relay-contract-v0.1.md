@@ -17,9 +17,11 @@ RelayLink is a JSON-over-WebSocket protocol for cross-platform client-to-relay c
 A WayfarerID is the SHA256 hash of an Ed25519 public key, represented as a lowercase hexadecimal string (64 characters).
 
 ```
-wayfarer_id := sha256(hex encode(ed25519_pubkey))
+wayfarer_id := sha256(ed25519_pubkey_raw_bytes)
             // 64 lowercase hex chars: 0-9, a-f
 ```
+
+Canonical v1 derivation is defined in `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
 
 Example: `aethos1...` (64 hex characters)
 
