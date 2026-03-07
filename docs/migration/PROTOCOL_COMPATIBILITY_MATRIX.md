@@ -5,8 +5,8 @@ Purpose: track implementation alignment against canonical protocol specs across 
 ## Progress Summary
 
 - Total Features: 33
-- Aligned With Spec: 1
-- Diverging From Spec: 17
+- Aligned With Spec: 2
+- Diverging From Spec: 16
 - Verification Needed: 6
 
 Counts are computed per row: **Aligned** when both Relay and iOS are `OK`; **Diverging** when either side is `DIVERGES`; **Verification Needed** when no side is `DIVERGES` and at least one side is `VERIFY`. Rows with any `NOT_IMPLEMENTED` status are included in **Total Features** but excluded from **Aligned**/**Diverging**/**Verification Needed** totals.
@@ -58,7 +58,7 @@ Status vocab:
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-error`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | OK | OK | both | COMPLETE | CRP-004 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-error`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: `msg_id` is deprecated legacy compatibility only; relay may temporarily mirror `message` into `msg_id` for legacy clients, and iOS uses `msg_id` fallback only when structured `code`/`message` fields are absent. |
 | ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-error`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | ERR-PRE-HELLO-ERROR-PATH | Pre-handshake rejection behavior | Relay should reject non-`hello` pre-handshake frames via canonical error path. | VERIFY | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: none (not yet audited) |
 
