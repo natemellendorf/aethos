@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/1DA3AF26-09BA-4768-91E3-F67B76B0ADA2.png" alt="Aethos banner" width="960">
+</p>
+
 # Aethos
 
 Aethos is a deterministic, store-and-forward data exchange protocol designed for unreliable, intermittent, or constrained links.
