@@ -395,12 +395,12 @@ Move from wayfarer-only device identity to explicit `(wayfarer_id, device_id)` i
 #### Compatibility rule
 Both old and new hello formats should be accepted during transition.
 
-#### device_id rollout strategy (CRP-001)
+#### Device_id rollout strategy (CRP-001)
 Implementation order:
 1. `aethos-ios` ships canonical `hello` with `wayfarer_id` + `device_id`.
 2. `aethos-relay` accepts both legacy and canonical `hello` formats.
 3. `aethos-relay` uses `device_id` for per-device identity/tracking where present.
-4. strict canonical enforcement is enabled only at coordinated cutover.
+4. Strict canonical enforcement is enabled only at coordinated cutover.
 
 Compatibility expectations:
 - relay accepts both hello formats during migration.
