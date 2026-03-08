@@ -4,6 +4,11 @@ Status: Canonical v1 fixture catalog
 
 This document defines canonical conformance fixtures for `docs/spec/GOSSIP_SYNC_V1.md`.
 
+Related migration references:
+
+- Migration roadmap: `docs/migration/protocol_update.md`
+- Compatibility scoreboard: `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+
 ## 1. Normative Scope
 
 - Normative message contract: `docs/spec/GOSSIP_SYNC_V1.md`
