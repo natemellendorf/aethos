@@ -53,6 +53,8 @@ public struct GossipSyncExecutionKnobs: Equatable, Sendable {
     public let maxInboundInventoryItemsPerFrame: Int
     public let maxInboundMissingItemIdsPerFrame: Int
     public let maxInboundTransferItemsPerFrame: Int
+    public let maxInboundReceiptAcceptedItemIdsPerFrame: Int
+    public let maxInboundReceiptRejectedItemsPerFrame: Int
     public let maxDecodedEnvelopeBytes: Int
     public let maxTrackedFramesPerSession: Int
     public let maxAnnouncedInventoryItemsPerSession: Int
@@ -65,6 +67,8 @@ public struct GossipSyncExecutionKnobs: Equatable, Sendable {
         maxInboundInventoryItemsPerFrame: Int = 500,
         maxInboundMissingItemIdsPerFrame: Int = 500,
         maxInboundTransferItemsPerFrame: Int = 64,
+        maxInboundReceiptAcceptedItemIdsPerFrame: Int = 256,
+        maxInboundReceiptRejectedItemsPerFrame: Int = 256,
         maxDecodedEnvelopeBytes: Int = 262_144,
         maxTrackedFramesPerSession: Int = 2_048,
         maxAnnouncedInventoryItemsPerSession: Int = 500
@@ -76,6 +80,8 @@ public struct GossipSyncExecutionKnobs: Equatable, Sendable {
         self.maxInboundInventoryItemsPerFrame = max(1, maxInboundInventoryItemsPerFrame)
         self.maxInboundMissingItemIdsPerFrame = max(1, maxInboundMissingItemIdsPerFrame)
         self.maxInboundTransferItemsPerFrame = max(1, maxInboundTransferItemsPerFrame)
+        self.maxInboundReceiptAcceptedItemIdsPerFrame = max(1, maxInboundReceiptAcceptedItemIdsPerFrame)
+        self.maxInboundReceiptRejectedItemsPerFrame = max(1, maxInboundReceiptRejectedItemsPerFrame)
         self.maxDecodedEnvelopeBytes = max(1, maxDecodedEnvelopeBytes)
         self.maxTrackedFramesPerSession = max(1, maxTrackedFramesPerSession)
         self.maxAnnouncedInventoryItemsPerSession = max(1, maxAnnouncedInventoryItemsPerSession)
@@ -108,6 +114,7 @@ struct GossipSyncSessionDebugStats: Equatable, Sendable {
     let sessionId: String?
     let state: GossipSyncState
     let trackedFrameCount: Int
+    let trackedFrameFingerprintByteCountMax: Int
     let trackedFrameKeysInOrder: [String]
     let announcedInventoryCount: Int
     let announcedInventoryItemIdsInOrder: [String]
@@ -229,6 +236,7 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             sessionId: session.sessionId,
             state: session.state,
             trackedFrameCount: session.trackedFrameByIdempotencyKey.count,
+            trackedFrameFingerprintByteCountMax: session.trackedFrameByIdempotencyKey.values.map(\.count).max() ?? 0,
             trackedFrameKeysInOrder: session.trackedFrameOrder,
             announcedInventoryCount: session.announcedInventoryByItemId.count,
             announcedInventoryItemIdsInOrder: session.announcedInventoryOrder
@@ -332,6 +340,12 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
 
         guard frame.senderWayfarerId == peerWayfarerId else {
             moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "sender_peer_mismatch")
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+        }
+
+        if let preflightFailureReason = preflightInboundFrame(frame) {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: preflightFailureReason)
             sessionsByPeerId[peerWayfarerId] = session
             return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
         }
@@ -732,42 +746,60 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         hooks.onResumeAvailable?(GossipSyncResumeHint(peerWayfarerId: peerWayfarerId, lastSessionId: session.sessionId))
     }
 
+    private func preflightInboundFrame(_ frame: GossipSyncFrame) -> String? {
+        switch frame {
+        case .inventorySummary(let inventoryFrame):
+            guard inventoryFrame.page == 1, inventoryFrame.hasMore == false else {
+                return "inventory_pagination_violation"
+            }
+            guard inventoryFrame.inventory.count <= knobs.maxInboundInventoryItemsPerFrame else {
+                return "inventory_items_exceeded"
+            }
+            return nil
+        case .missingRequest(let missingFrame):
+            guard missingFrame.page == 1, missingFrame.hasMore == false else {
+                return "missing_request_pagination_violation"
+            }
+            guard missingFrame.missingItemIds.count <= knobs.maxInboundMissingItemIdsPerFrame else {
+                return "missing_request_items_exceeded"
+            }
+            return nil
+        case .transfer(let transferFrame):
+            guard transferFrame.page == 1, transferFrame.hasMore == false else {
+                return "transfer_pagination_violation"
+            }
+            guard transferFrame.items.count <= knobs.maxInboundTransferItemsPerFrame else {
+                return "transfer_items_exceeded"
+            }
+            for item in transferFrame.items {
+                if Base64URL.estimatedDecodedByteCount(for: item.envelopeB64) > knobs.maxDecodedEnvelopeBytes {
+                    return "transfer_envelope_bytes_exceeded"
+                }
+            }
+            return nil
+        case .receipt(let receiptFrame):
+            guard receiptFrame.page == 1, receiptFrame.hasMore == false else {
+                return "receipt_pagination_violation"
+            }
+            guard receiptFrame.acceptedItemIds.count <= knobs.maxInboundReceiptAcceptedItemIdsPerFrame else {
+                return "receipt_accepted_items_exceeded"
+            }
+            guard receiptFrame.rejectedItems.count <= knobs.maxInboundReceiptRejectedItemsPerFrame else {
+                return "receipt_rejected_items_exceeded"
+            }
+            return nil
+        }
+    }
+
     private func trackFrame(_ frame: GossipSyncFrame, session: inout PeerSession) -> FrameTrackingVerdict {
         let idempotencyKey = Self.idempotencyKey(for: frame)
-        let fingerprint: Data
-        do {
-            fingerprint = try Self.frameFingerprint(frame)
-        } catch {
-            return .violation("frame_fingerprint_failed")
-        }
+        let fingerprint = Self.frameFingerprint(frame)
 
         if let existing = session.trackedFrameByIdempotencyKey[idempotencyKey] {
             if existing == fingerprint {
                 return .duplicate
             }
             return .violation("idempotency_mismatch")
-        }
-
-        if case .inventorySummary(let inventoryFrame) = frame {
-            if inventoryFrame.page != 1 || inventoryFrame.hasMore {
-                return .violation("inventory_pagination_violation")
-            }
-        }
-        if case .missingRequest(let missingFrame) = frame {
-            if missingFrame.page != 1 || missingFrame.hasMore {
-                return .violation("missing_request_pagination_violation")
-            }
-        }
-
-        if case .transfer(let transferFrame) = frame {
-            if transferFrame.page != 1 || transferFrame.hasMore {
-                return .violation("transfer_pagination_violation")
-            }
-        }
-        if case .receipt(let receiptFrame) = frame {
-            if receiptFrame.page != 1 || receiptFrame.hasMore {
-                return .violation("receipt_pagination_violation")
-            }
         }
 
         session.trackedFrameByIdempotencyKey[idempotencyKey] = fingerprint
@@ -789,10 +821,104 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         }
     }
 
-    private static func frameFingerprint(_ frame: GossipSyncFrame) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(frame)
+    private static func frameFingerprint(_ frame: GossipSyncFrame) -> Data {
+        var input = Data()
+
+        switch frame {
+        case .inventorySummary(let summary):
+            appendFingerprintField(summary.type.rawValue, to: &input)
+            appendFingerprintField(String(summary.syncVersion), to: &input)
+            appendFingerprintField(summary.sessionId, to: &input)
+            appendFingerprintField(summary.senderWayfarerId, to: &input)
+            appendFingerprintField(String(summary.page), to: &input)
+            appendFingerprintField(summary.hasMore ? "1" : "0", to: &input)
+
+            let normalizedEntries = summary.inventory
+                .map { entry in
+                    "\(entry.itemId)|\(entry.manifestId)|\(entry.toWayfarerId)|\(entry.expiresAtUnixMs)|\(entry.totalSizeBytes)|\(entry.chunkSizeBytes)|\(entry.chunkCount)"
+                }
+                .sorted()
+            appendFingerprintField(String(normalizedEntries.count), to: &input)
+            for entry in normalizedEntries {
+                appendFingerprintField(entry, to: &input)
+            }
+
+        case .missingRequest(let request):
+            appendFingerprintField(request.type.rawValue, to: &input)
+            appendFingerprintField(String(request.syncVersion), to: &input)
+            appendFingerprintField(request.sessionId, to: &input)
+            appendFingerprintField(request.senderWayfarerId, to: &input)
+            appendFingerprintField(String(request.page), to: &input)
+            appendFingerprintField(request.hasMore ? "1" : "0", to: &input)
+            appendFingerprintField(request.requestId, to: &input)
+            appendFingerprintField(String(request.inResponseToPage), to: &input)
+            appendFingerprintField(String(request.maxTransferItems), to: &input)
+            appendFingerprintField(String(request.maxTransferBytes), to: &input)
+
+            let normalizedMissingItemIds = request.missingItemIds.sorted()
+            appendFingerprintField(String(normalizedMissingItemIds.count), to: &input)
+            for itemId in normalizedMissingItemIds {
+                appendFingerprintField(itemId, to: &input)
+            }
+
+        case .transfer(let transfer):
+            appendFingerprintField(transfer.type.rawValue, to: &input)
+            appendFingerprintField(String(transfer.syncVersion), to: &input)
+            appendFingerprintField(transfer.sessionId, to: &input)
+            appendFingerprintField(transfer.senderWayfarerId, to: &input)
+            appendFingerprintField(String(transfer.page), to: &input)
+            appendFingerprintField(transfer.hasMore ? "1" : "0", to: &input)
+            appendFingerprintField(transfer.transferId, to: &input)
+            appendFingerprintField(transfer.inResponseToRequestId, to: &input)
+
+            let normalizedEntries = transfer.items
+                .map { entry in
+                    let envelopeDigestHex = Hex.encode(AethosIDs.sha256(Data(entry.envelopeB64.utf8)))
+                    return "\(entry.itemId)|\(entry.manifestId)|\(entry.toWayfarerId)|\(entry.expiresAtUnixMs)|\(entry.totalSizeBytes)|\(entry.chunkSizeBytes)|\(entry.chunkCount)|\(entry.envelopeB64.count)|\(envelopeDigestHex)"
+                }
+                .sorted()
+            appendFingerprintField(String(normalizedEntries.count), to: &input)
+            for entry in normalizedEntries {
+                appendFingerprintField(entry, to: &input)
+            }
+
+        case .receipt(let receipt):
+            appendFingerprintField(receipt.type.rawValue, to: &input)
+            appendFingerprintField(String(receipt.syncVersion), to: &input)
+            appendFingerprintField(receipt.sessionId, to: &input)
+            appendFingerprintField(receipt.senderWayfarerId, to: &input)
+            appendFingerprintField(String(receipt.page), to: &input)
+            appendFingerprintField(receipt.hasMore ? "1" : "0", to: &input)
+            appendFingerprintField(receipt.receiptId, to: &input)
+            appendFingerprintField(receipt.inResponseToTransferId, to: &input)
+            appendFingerprintField(receipt.status.rawValue, to: &input)
+
+            let normalizedAcceptedItemIds = receipt.acceptedItemIds.sorted()
+            appendFingerprintField(String(normalizedAcceptedItemIds.count), to: &input)
+            for itemId in normalizedAcceptedItemIds {
+                appendFingerprintField(itemId, to: &input)
+            }
+
+            let normalizedRejectedItems = receipt.rejectedItems
+                .map { entry in
+                    let messageDigestHex = Hex.encode(AethosIDs.sha256(Data(entry.message.utf8)))
+                    return "\(entry.itemId)|\(entry.code)|\(entry.message.count)|\(messageDigestHex)"
+                }
+                .sorted()
+            appendFingerprintField(String(normalizedRejectedItems.count), to: &input)
+            for item in normalizedRejectedItems {
+                appendFingerprintField(item, to: &input)
+            }
+        }
+
+        return AethosIDs.sha256(input)
+    }
+
+    private static func appendFingerprintField(_ value: String, to buffer: inout Data) {
+        let data = Data(value.utf8)
+        var length = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &length) { buffer.append(contentsOf: $0) }
+        buffer.append(data)
     }
 
     private static func validateCommonFrameFields(_ frame: GossipSyncFrame) -> Bool {
