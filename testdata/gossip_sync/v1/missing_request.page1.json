@@ -1,0 +1,15 @@
+{
+  "type": "missing_request",
+  "sync_version": 1,
+  "session_id": "sess-20260308-a-b-01",
+  "sender_wayfarer_id": "8d8f6f44e4b40b4f0918e7f7f442f06f0ae53faee2f8f770efad8cb66c2af6a1",
+  "page": 1,
+  "has_more": false,
+  "request_id": "req-20260308-a-b-01",
+  "in_response_to_page": 1,
+  "missing_item_ids": [
+    "65c6d5ad66f5755d0b32c185a006445b42a98e34636a0abc55cbc2b5997060d4"
+  ],
+  "max_transfer_items": 8,
+  "max_transfer_bytes": 262144
+}

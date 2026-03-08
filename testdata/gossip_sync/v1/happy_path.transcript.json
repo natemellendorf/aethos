@@ -1,0 +1,49 @@
+{
+  "name": "gossip_sync_v1_happy_path_single_page",
+  "sync_version": 1,
+  "session_id": "sess-20260308-a-b-01",
+  "participants": {
+    "peer_a": {
+      "role": "source",
+      "wayfarer_id": "b3a1de726f72df0bbf78600515de15a5ca4f4ff9ce2f7f95f3f9ea3f09f8809f"
+    },
+    "peer_b": {
+      "role": "receiver",
+      "wayfarer_id": "8d8f6f44e4b40b4f0918e7f7f442f06f0ae53faee2f8f770efad8cb66c2af6a1"
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "from": "peer_a",
+      "to": "peer_b",
+      "fixture": "inventory_summary.page1.json",
+      "state_after_sender": "inventory_exchanged",
+      "state_after_receiver": "inventory_exchanged"
+    },
+    {
+      "step": 2,
+      "from": "peer_b",
+      "to": "peer_a",
+      "fixture": "missing_request.page1.json",
+      "state_after_sender": "missing_requested",
+      "state_after_receiver": "missing_requested"
+    },
+    {
+      "step": 3,
+      "from": "peer_a",
+      "to": "peer_b",
+      "fixture": "transfer.page1.json",
+      "state_after_sender": "transfer_in_progress",
+      "state_after_receiver": "transfer_in_progress"
+    },
+    {
+      "step": 4,
+      "from": "peer_b",
+      "to": "peer_a",
+      "fixture": "receipt.page1.json",
+      "state_after_sender": "converged",
+      "state_after_receiver": "converged"
+    }
+  ]
+}

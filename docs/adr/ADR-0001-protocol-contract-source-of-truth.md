@@ -23,7 +23,7 @@ For v1 contracts introduced with this ADR:
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
-- `docs/spec/GOSSIP_SYNC_V1.md` (future-facing, non-normative)
+- `docs/spec/GOSSIP_SYNC_V1.md` (canonical v1 transport-neutral sync contract)
 
 ## Consequences
 

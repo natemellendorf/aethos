@@ -209,7 +209,7 @@ Create canonical `FEDERATION_PROTOCOL_V1.md` in `aethos`.
 Create canonical `RECEIPTS.md` in `aethos`.
 
 ### Step 0.5
-Optionally create `GOSSIP_SYNC_V1.md` in `aethos` as a future-facing sync contract.
+Finalize `GOSSIP_SYNC_V1.md` in `aethos` as the canonical v1 transport-neutral sync contract.
 
 ### Step 0.6
 Update `aethos-relay` documentation to reference `aethos` as the canonical spec location.
@@ -534,6 +534,10 @@ Test:
 - partial inventory overlap
 - retry after disconnect
 
+Canonical fixture references for this phase:
+- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
+- `testdata/gossip_sync/v1/*.json`
+
 ### Step 4.5 — Integrate sync with relay
 In `aethos-relay`:
 - integrate sync engine without breaking current queue behavior
@@ -680,7 +684,9 @@ The following documents should exist and be kept up to date.
 
 ## In aethos
 - `docs/migration/protocol_update.md` (this canonical migration plan)
+- `docs/migration/protocol_architecture.md`
 - `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`

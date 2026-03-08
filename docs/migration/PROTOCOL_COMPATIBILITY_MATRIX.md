@@ -2,6 +2,12 @@
 
 Purpose: track implementation alignment against canonical protocol specs across `aethos-relay` and `aethos-ios`, and map each gap to migration work. Related migration plan: `docs/migration/protocol_update.md`.
 
+Related migration references:
+
+- Architecture companion: `docs/migration/protocol_architecture.md`
+- Gossip sync contract: `docs/spec/GOSSIP_SYNC_V1.md`
+- Gossip sync conformance fixtures: `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
+
 ## Progress Summary
 
 - Total Features: 33
