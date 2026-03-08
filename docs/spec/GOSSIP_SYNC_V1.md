@@ -35,7 +35,7 @@ This contract is aligned with frozen protocol decisions:
 - `item_id`: lowercase hex, exactly 64 chars; MUST equal `hex_lower(SHA-256(envelope_bytes))`.
 - `manifest_id`: lowercase hex, exactly 64 chars; MUST equal `hex_lower(SHA-256(canonical_manifest_v1_bytes))`, where `canonical_manifest_v1_bytes` is `ManifestV1` encoded exactly as `Canonical Bytes v1` in `docs/protocol.md`.
 - `sync_version`: integer, MUST be `1` for this contract.
-- `session_id`: opaque string identifier unique per sync attempt between a peer pair.
+- `session_id`: opaque ASCII identifier unique per sync attempt between a peer pair; MUST match `[A-Za-z0-9._:-]{1,128}`.
 - `page`: integer, 1-based.
 - `has_more`: boolean.
 - `chunk_size_bytes`: integer, MUST be `32768`.
@@ -122,6 +122,7 @@ Field semantics:
 Versioning expectation:
 
 - `request_id` identifies one logical missing-request stream and participates in page-level idempotency keys (`(stream_key, page)`).
+- `request_id` MUST match `[A-Za-z0-9._:-]{1,128}`.
 
 Pagination/batching behavior:
 
@@ -130,6 +131,8 @@ Pagination/batching behavior:
 - Missing-request stream key is `(session_id, request_id)`.
 - `has_more=true` means the next page for the same missing-request stream key is expected at `page+1`.
 - `missing_item_ids` SHOULD be sorted ascending for deterministic request chunks.
+- Each `missing_item_ids[]` entry MUST be `item_id` format (`[0-9a-f]{64}`).
+- Receiver safety bound (MVP0 profile): total UTF-8 bytes across `missing_item_ids[]` in one frame MUST be `<= 32768`.
 
 ### 4.3 Transfer (`type = transfer`)
 
@@ -157,6 +160,8 @@ Field semantics:
 - Decoded `envelope_b64` bytes MUST decode as canonical `EnvelopeV1`.
 - `to_wayfarer_id` MUST equal `hex_lower(EnvelopeV1.toWayfarerId)` decoded from `envelope_b64`.
 - Expired items MUST NOT be transferred.
+- `transfer_id` and `in_response_to_request_id` MUST each match `[A-Za-z0-9._:-]{1,128}`.
+- `envelope_b64` MUST be strict unpadded base64url: alphabet `[A-Za-z0-9_-]` only, no `=`, and unpadded length MUST NOT satisfy `len % 4 == 1`.
 
 Versioning expectation:
 
@@ -201,6 +206,9 @@ Field semantics:
 - `status=accepted`: `accepted_item_ids` MUST equal `transfer_item_ids`, and `rejected_items` MUST be empty.
 - `status=rejected`: `accepted_item_ids` MUST be empty, and `rejected_items[].item_id` MUST equal `transfer_item_ids`.
 - `status=partial`: both accepted and rejected sets MUST be non-empty, and their union MUST equal `transfer_item_ids`.
+- `receipt_id` and `in_response_to_transfer_id` MUST each match `[A-Za-z0-9._:-]{1,128}`.
+- `rejected_items[].code` UTF-8 length MUST be `<= 64` bytes.
+- `rejected_items[].message` UTF-8 length MUST be `<= 256` bytes.
 
 Versioning expectation:
 
