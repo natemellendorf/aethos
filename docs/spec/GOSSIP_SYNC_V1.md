@@ -8,6 +8,7 @@ This document defines the normative transport-neutral sync contract used to conv
 - Core canonical structures and bytes: `docs/protocol.md`
 - Related contracts: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`, `docs/spec/FEDERATION_PROTOCOL_V1.md`, `docs/spec/RECEIPTS.md`
 - Conformance fixtures: `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
+- Migration roadmap/status: `docs/migration/protocol_update.md`, `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`, `docs/migration/protocol_architecture.md`
 
 ## 1. Transport Neutrality and Encoding
 

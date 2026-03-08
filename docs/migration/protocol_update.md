@@ -26,6 +26,8 @@ This document defines:
 - [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
+- [Gossip sync spec](../spec/GOSSIP_SYNC_V1.md)
+- [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
 
 ---
 
@@ -480,6 +482,9 @@ Ensure relay federation acknowledgments match canonical definitions exactly.
 ## Objective
 Implement the protocol-level “send all messages I have” behavior as a transport-neutral sync model.
 
+## Status
+In progress — canonical contract is specified in `docs/spec/GOSSIP_SYNC_V1.md`; implementation rollout is underway.
+
 ## Why this phase matters
 This is the architectural flip from relay-centric queueing to distributed, opportunistic message delivery.
 
@@ -498,7 +503,9 @@ This must work for:
 ## Step-by-step
 
 ### Step 4.1 — Finalize sync spec in aethos
-If not already complete, finish `GOSSIP_SYNC_V1.md`.
+Completed: `GOSSIP_SYNC_V1.md` is now the canonical v1 transport-neutral sync contract.
+
+Current expectation: keep semantic changes versioned; limit near-term edits to clarifications, examples, and cross-links.
 
 Define:
 - InventorySummary
@@ -522,6 +529,8 @@ Preferred location:
 - `aethos` if acceptable for repo boundaries
 or
 - a shared runtime module if you choose to keep `aethos` spec-heavy
+
+Status: implementation in progress.
 
 Responsibilities:
 - manage sync session state
@@ -568,6 +577,9 @@ In `aethos-ios`:
 ## Objective
 Enable local peers to discover one another automatically and perform sync without explicit user action.
 
+## Status
+In progress — local peer discovery and discovery-driven sync integration have started.
+
 ## Why this phase matters
 This phase delivers the local-network behavior you originally asked for.
 
@@ -588,6 +600,8 @@ Likely mechanism:
 - mDNS / Bonjour
 or
 - multicast if needed
+
+Current migration note: iOS implementation work is in progress with Bonjour/mDNS discovery, peer-table tracking, and diagnostics surfaces now started in the runtime/app stack.
 
 Advertise:
 - wayfarer_id
@@ -830,11 +844,12 @@ The next concrete actions should be:
 
 ## Migration update (2026-03-08)
 
-Client-relay legacy cleanup verification is now far enough along to start the next phase of protocol work: **transport-neutral gossip sync implementation plus LAN discovery integration**.
+Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral gossip sync + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
 
-- Relay-side canonical-only cleanup is largely complete for client-relay wire behavior.
-- iOS has canonical fixture coverage in place, with remaining runtime compatibility tolerances tracked as residual exceptions.
-- The canonical migration scoreboard and residual exceptions are maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` under **Client-Relay Cutover Readiness (2026-03-08)**.
+- Relay-side canonical cleanup is sufficiently complete to begin Phase 4 integration work.
+- Gossip sync is specified in `docs/spec/GOSSIP_SYNC_V1.md`; implementation rollout is in progress.
+- Local peer discovery is in progress, with iOS now implementing Bonjour/mDNS discovery + peer table + diagnostics.
+- The migration scoreboard for both residual cutover items and Phase 4/5 kickoff status is maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
 ## Action 1
 Keep this migration plan current in `docs/migration/protocol_update.md`.
@@ -842,12 +857,7 @@ Keep this migration plan current in `docs/migration/protocol_update.md`.
 ## Action 2
 Create or update `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
-## Migration update (2026-03-08)
-
-- Relay-side canonical-only cleanup for client-relay wire behavior is in progress; remaining blockers are tracked in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
-- iOS has canonical fixture coverage in place, with remaining runtime compatibility tolerances tracked as residual exceptions.
-- The canonical migration scoreboard and residual exceptions are maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` under **Client-Relay Cutover Readiness (2026-03-08)**.
-- This is not approval to remove legacy acceptance paths yet; canonical-only cutover remains evidence-gated by fixtures + matrix per CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md.
+Note: this kickoff does not authorize immediate removal of all legacy client-relay compatibility paths; canonical-only cutover remains evidence-gated by fixtures + matrix per `CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`.
 
 ## Action 3
 Ensure `aethos-relay/docs/PROTOCOL_DIVERGENCES.md` exists.

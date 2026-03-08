@@ -7,6 +7,9 @@ Purpose: track implementation alignment against canonical protocol specs across 
 - [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Migration plan](./protocol_update.md)
+- [Architecture companion](./protocol_architecture.md)
+- [Gossip sync v1 spec](../spec/GOSSIP_SYNC_V1.md)
+- [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
 
 Related migration references:
 
@@ -27,6 +30,20 @@ Counts are computed per row:
 - **Diverging** when either side is `DIVERGES`.
 - **Verification Needed** when no side is `DIVERGES` and at least one side is `VERIFY`.
 - Rows with any `NOT_IMPLEMENTED` status are included in **Total Features** but excluded from **Aligned**/**Diverging**/**Verification Needed** totals.
+
+Note: these counts apply to the compatibility feature matrix rows below and do not include the Phase 4/5 kickoff scoreboard section.
+
+## Phase 4/5 Kickoff Scoreboard (2026-03-08)
+
+Status vocabulary for this section: `Specified` / `In progress` / `Not started` / `Implemented`.
+
+| Track ID | Track | Status | Notes | Primary references |
+| --- | --- | --- | --- | --- |
+| P45-GOSSIP-CONTRACT | `GOSSIP_SYNC_V1` contract | Specified | Canonical v1 gossip-sync contract is defined and versioned; Phase 4 implementation rollout is active. | [GOSSIP_SYNC_V1](../spec/GOSSIP_SYNC_V1.md), [Fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md), [Phase 4 plan](./protocol_update.md#10-phase-4--gossip-sync-implementation) |
+| P45-SYNC-ENGINE | Transport-neutral sync engine implementation | In progress | Sync engine/session integration work has started; fixture-backed convergence validation is still in progress across implementations. | [Phase 4 Step 4.3](./protocol_update.md#step-43--implement-transport-neutral-sync-engine), [Gossip fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md) |
+| P45-LOCAL-DISCOVERY | Local peer discovery | In progress | Local discovery rollout has started; iOS reports Bonjour/mDNS discovery implementation in progress. | [Phase 5 plan](./protocol_update.md#11-phase-5--lan-discovery-and-local-peer-delivery), [Phase 5 Step 5.2](./protocol_update.md#step-52--implement-ios-local-discovery) |
+| P45-PEER-TABLE | Peer-table tracking | In progress | Peer-table tracking is underway for discovered identities/endpoints/last-seen and diagnostics visibility. | [Phase 5 Step 5.4](./protocol_update.md#step-54--build-peer-table-abstraction), [Phase 5 Step 5.6](./protocol_update.md#step-56--add-diagnostics-ui-and-logs) |
+| P45-DISCOVERY-SYNC-INTEGRATION | Discovery-driven sync integration | In progress | Discovery-triggered connection + gossip-sync wiring has started; full end-to-end evidence remains tracked as rollout work. | [Phase 5 Step 5.5](./protocol_update.md#step-55--trigger-sync-on-discovery-driven-connection), [Gossip fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md) |
 
 ## Schema
 
