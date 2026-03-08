@@ -42,6 +42,14 @@
       "from": "peer_b",
       "to": "peer_a",
       "fixture": "receipt.page1.json",
+      "state_after_sender": "inventory_exchanged",
+      "state_after_receiver": "inventory_exchanged"
+    },
+    {
+      "step": 5,
+      "from": "peer_b",
+      "to": "peer_a",
+      "fixture": "missing_request.empty.page1.json",
       "state_after_sender": "converged",
       "state_after_receiver": "converged"
     }

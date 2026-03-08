@@ -15,6 +15,8 @@ This document defines the normative transport-neutral sync contract used to conv
 2. Field names and required/optional semantics in this document are normative.
 3. For MVP0, binary transports SHOULD encode sync frames as CBOR.
 4. JSON form MAY be used for debugging and conformance fixtures if it preserves identical field semantics.
+5. `inventory_summary` data reveals local inventory and MUST NOT be sent to unauthenticated peers.
+6. Inventory eligibility and authorization policy is deployment-specific, but implementations MUST enforce it before emitting `inventory_summary`.
 
 ## 2. Frozen Protocol Compatibility (MVP0)
 
@@ -31,13 +33,21 @@ This contract is aligned with frozen protocol decisions:
 - `wayfarer_id`: lowercase hex, exactly 64 chars (`[0-9a-f]{64}`).
   - Canonical derivation remains `hex_lower(SHA-256(ed25519_public_key_raw_bytes))`.
 - `item_id`: lowercase hex, exactly 64 chars; MUST equal `hex_lower(SHA-256(envelope_bytes))`.
-- `manifest_id`: lowercase hex, exactly 64 chars; MUST equal canonical `ManifestV1` hash.
+- `manifest_id`: lowercase hex, exactly 64 chars; MUST equal `hex_lower(SHA-256(canonical_manifest_v1_bytes))`, where `canonical_manifest_v1_bytes` is `ManifestV1` encoded exactly as `Canonical Bytes v1` in `docs/protocol.md`.
 - `sync_version`: integer, MUST be `1` for this contract.
 - `session_id`: opaque string identifier unique per sync attempt between a peer pair.
 - `page`: integer, 1-based.
 - `has_more`: boolean.
 - `chunk_size_bytes`: integer, MUST be `32768`.
 - `expires_at_unix_ms`: integer (`UInt64`) Unix epoch milliseconds.
+- `total_size_bytes`: integer, semantic size from `ManifestV1.totalSize` (payload/body bytes, not envelope byte length).
+- `chunk_count`: integer, semantic chunk count from `ManifestV1.chunkIds.count`.
+
+Chunk metadata and transfer model:
+
+1. v1 does NOT define chunk payload frames.
+2. `transfer.items[].envelope_b64` always carries full canonical `EnvelopeV1` bytes.
+3. `total_size_bytes`, `chunk_size_bytes`, and `chunk_count` are manifest metadata values associated with `manifest_id` and MUST be consistent between `inventory_summary` and `transfer` for the same `item_id`.
 
 Common required fields on all sync messages:
 
@@ -88,7 +98,8 @@ Versioning expectation:
 Pagination/batching behavior:
 
 - `inventory` MAY be split across pages.
-- `has_more=true` means the next page for the same `(session_id, type)` is expected at `page+1`.
+- Inventory stream key is `(session_id, sender_wayfarer_id)`.
+- `has_more=true` means the next page for the same inventory stream key is expected at `page+1`.
 
 ### 4.2 MissingRequest (`type = missing_request`)
 
@@ -104,16 +115,20 @@ Required fields:
 Field semantics:
 
 - `missing_item_ids` MUST contain only IDs observed in the session's `inventory_summary` stream.
-- Receivers MUST ignore (or explicitly reject in `receipt`) IDs not present in announced inventory.
+- Receivers MUST ignore `missing_item_ids` that were not announced in `inventory_summary` for the active session.
 - Requesters MUST NOT request expired items.
+- If requester computes an empty missing set, it MUST still send `missing_request` with `missing_item_ids=[]`, `page=1`, and `has_more=false` for that logical request.
 
 Versioning expectation:
 
-- `request_id` is the idempotency key for request replay handling.
+- `request_id` identifies one logical missing-request stream and participates in page-level idempotency keys (`(stream_key, page)`).
 
 Pagination/batching behavior:
 
-- Large missing sets MAY be split across pages with stable `request_id` prefixing strategy.
+- Large missing sets MAY be split across pages.
+- All pages for one logical request MUST use the same `request_id`.
+- Missing-request stream key is `(session_id, request_id)`.
+- `has_more=true` means the next page for the same missing-request stream key is expected at `page+1`.
 - `missing_item_ids` SHOULD be sorted ascending for deterministic request chunks.
 
 ### 4.3 Transfer (`type = transfer`)
@@ -145,11 +160,13 @@ Field semantics:
 
 Versioning expectation:
 
-- `transfer_id` is the idempotency key for transfer replay handling.
+- `transfer_id` identifies one logical transfer stream and participates in page-level idempotency keys (`(stream_key, page)`).
 
 Pagination/batching behavior:
 
 - `items` MAY be split across pages.
+- Transfer stream key is `(session_id, transfer_id)`.
+- `has_more=true` means the next page for the same transfer stream key is expected at `page+1`.
 - Sender SHOULD honor `max_transfer_items` and `max_transfer_bytes` from the corresponding request.
 
 ### 4.4 Receipt (`type = receipt`)
@@ -172,18 +189,27 @@ Required fields per rejection entry:
 Field semantics:
 
 - `receipt` acknowledges sync transfer processing, not end-recipient delivery.
-- `receipt` MUST NOT be conflated with `ReceiptV1` device/federation semantics from `docs/spec/RECEIPTS.md`.
+- `receipt` is a sync receipt and MUST NOT be conflated with `ReceiptV1` device/federation semantics from `docs/spec/RECEIPTS.md`.
 - `status=accepted` means all transferred items for the referenced frame were accepted.
-- `status=partial` means a mixed outcome.
+- `status=partial` means a mixed outcome where some transfer items were accepted and some were rejected.
 - `status=rejected` means no items from that frame were accepted.
+- Let `transfer_item_ids` be the set of item IDs from the referenced transfer stream.
+- `accepted_item_ids` and `rejected_items[].item_id` MUST each be subsets of `transfer_item_ids`.
+- `accepted_item_ids` and `rejected_items[].item_id` MUST be disjoint.
+- Duplicate IDs in either set are not allowed.
+- `status=accepted`: `accepted_item_ids` MUST equal `transfer_item_ids`, and `rejected_items` MUST be empty.
+- `status=rejected`: `accepted_item_ids` MUST be empty, and `rejected_items[].item_id` MUST equal `transfer_item_ids`.
+- `status=partial`: both accepted and rejected sets MUST be non-empty, and their union MUST equal `transfer_item_ids`.
 
 Versioning expectation:
 
-- `receipt_id` is the idempotency key for receipt replay handling.
+- `receipt_id` identifies one logical receipt stream and participates in page-level idempotency keys (`(stream_key, page)`).
 
 Pagination/batching behavior:
 
 - Receipts MAY be paged when acknowledging large transfer batches.
+- Receipt stream key is `(session_id, receipt_id)`.
+- `has_more=true` means the next page for the same receipt stream key is expected at `page+1`.
 
 ## 5. Versioning Expectations
 
@@ -192,39 +218,57 @@ Pagination/batching behavior:
 3. Same-version additive optional fields are allowed; receivers MUST ignore unknown optional fields.
 4. Removing or changing required-field semantics requires a new sync version.
 
-## 6. Generic Pagination and Batching Rules
+## 6. Stream-Scoped Pagination, Ordering, and Session Rules
 
-1. Pages are contiguous and 1-based per `(session_id, type)`.
-2. `has_more=false` marks the terminal page for that message stream.
-3. Re-sent pages with same `(session_id, type, page)` MUST be semantically identical.
-4. Out-of-order pages MUST be rejected for the active stream and transition to `retry_pending`.
-5. Senders SHOULD cap each frame by item count and byte budget appropriate to transport constraints.
+### 6.1 Stream keys
+
+Pagination is scoped by logical stream key, not only by message type.
+
+- `inventory_summary` stream key: `(session_id, sender_wayfarer_id)` (equivalently `(session_id, type, sender_wayfarer_id)` because `type` is fixed for this stream)
+- `missing_request` stream key: `(session_id, request_id)`
+- `transfer` stream key: `(session_id, transfer_id)`
+- `receipt` stream key: `(session_id, receipt_id)`
+
+### 6.2 Page ordering and replay
+
+1. Pages are contiguous and 1-based within each stream key.
+2. `has_more=false` marks terminal page for that stream key.
+3. Idempotency key is `(stream_key, page)`.
+4. Replayed frame with same idempotency key MUST be semantically identical.
+5. Out-of-order or gap page numbers for the active stream key MUST be ignored and MUST transition session state to `retry_pending`.
+6. Senders SHOULD cap each frame by item count and byte budget appropriate to transport constraints.
+
+### 6.3 Session establishment and collisions
+
+1. Session initiator chooses `session_id` and sends the first `inventory_summary`.
+2. Responder MUST echo that `session_id` in all response frames for the active session.
+3. Frames with unknown or non-active `session_id` MUST be ignored and MUST transition local state to `retry_pending`.
+4. Multiple concurrent sessions MUST NOT be interleaved on one peer connection.
+5. If both peers initiate conflicting active sessions on the same connection, both sides MUST transition to `retry_pending` and restart with backoff using a new `session_id`.
 
 ## 7. Sync Semantics (Expected Exchange)
 
 Expected exchange sequence:
 
-1. Peer A and Peer B establish session context and choose/accept `session_id`.
+1. Peer A (initiator) chooses `session_id`; Peer B accepts it by echoing the same `session_id`.
 2. Peer A sends `inventory_summary` pages.
 3. Peer B computes diff and sends `missing_request` pages.
-4. Peer A sends `transfer` pages for requested items.
-5. Peer B stores accepted items idempotently and sends `receipt` pages.
-6. Peers repeat from inventory exchange as needed until no additional items are requested.
+4. If Peer B has no missing items, Peer B MUST still send `missing_request` with `missing_item_ids=[]`, `page=1`, and `has_more=false`.
+5. Peer A sends `transfer` pages for requested items.
+6. Peer B stores accepted items idempotently and sends `receipt` pages.
+7. Peers repeat from inventory exchange as needed until an empty missing request is exchanged and accepted.
 
 Convergence rule:
 
-- Session is converged when both peers have no additional missing items for the active inventory view.
+- Session is converged when an empty `missing_request` (`missing_item_ids=[]`, `page=1`, `has_more=false`) is exchanged for the active inventory view.
 
 ## 8. Idempotency, Dedupe, and Replay Rules
 
 ### 8.1 Frame-level idempotency keys
 
-- `inventory_summary`: `(session_id, sender_wayfarer_id, page)`
-- `missing_request`: `request_id`
-- `transfer`: `transfer_id`
-- `receipt`: `receipt_id`
-
-If a key is repeated, replayed frame content MUST be semantically identical. Mismatch is a protocol violation and MUST transition to `retry_pending`.
+- Frame idempotency key is `(stream_key, page)` as defined in Section 6.
+- If a key is repeated, replayed frame content MUST be semantically identical.
+- If repeated key content differs, receiver MUST treat it as protocol violation and transition to `retry_pending`.
 
 ### 8.2 Item-level dedupe
 
@@ -260,11 +304,10 @@ Transition summary:
 | --- | --- | --- |
 | `idle` | send/receive first `inventory_summary` | `inventory_exchanged` |
 | `inventory_exchanged` | send/receive non-empty `missing_request` | `missing_requested` |
-| `inventory_exchanged` | both peers compute empty missing set | `converged` |
+| `inventory_exchanged` | send/receive empty `missing_request` (`missing_item_ids=[]`, `page=1`, `has_more=false`) | `converged` |
 | `missing_requested` | send/receive first `transfer` page | `transfer_in_progress` |
-| `transfer_in_progress` | valid `receipt` processed and more sync needed | `inventory_exchanged` |
-| `transfer_in_progress` | valid `receipt` processed and no sync remaining | `converged` |
-| any active state | timeout, transport failure, page/order violation, idempotency mismatch | `retry_pending` |
+| `transfer_in_progress` | valid `receipt` processed | `inventory_exchanged` |
+| any active state | timeout, transport failure, unknown/non-active session frame, page/order violation, idempotency mismatch | `retry_pending` |
 | `retry_pending` | retry budget and backoff allow reattempt | `idle` |
 
 Retry expectation:
@@ -278,5 +321,6 @@ Retry expectation:
 
 Normative/illustrative rule:
 
-- The v1 machine-readable fixture JSON files are normative for conformance expectations in this repository.
+- The single-message v1 fixtures (`inventory_summary.page1.json`, `missing_request.page1.json`, `transfer.page1.json`, `receipt.page1.json`, `missing_request.empty.page1.json`) are normative for conformance expectations in this repository.
+- Transcript fixtures are informative scenario aids and are not normative contract vectors.
 - Markdown examples are explanatory/illustrative and must not override this contract.
