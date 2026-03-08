@@ -2,6 +2,12 @@
 
 Purpose: track implementation alignment against canonical protocol specs across `aethos-relay` and `aethos-ios`, and map each gap to migration work. Related migration plan: `docs/migration/protocol_update.md`.
 
+## See also
+
+- Legacy cleanup plan: `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`
+- Client-relay conformance fixtures: `docs/migration/CLIENT_RELAY_CONFORMANCE_FIXTURES.md`
+- Migration plan: `docs/migration/protocol_update.md`
+
 ## Progress Summary
 
 - Total Features: 33

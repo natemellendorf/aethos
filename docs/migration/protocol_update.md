@@ -21,6 +21,12 @@ This document defines:
 - acceptance criteria for each phase
 - open questions and future work
 
+## See also
+
+- Legacy cleanup plan: `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`
+- Client-relay conformance fixtures: `docs/migration/CLIENT_RELAY_CONFORMANCE_FIXTURES.md`
+- Compatibility matrix: `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+
 ---
 
 # 1. Problem Statement
