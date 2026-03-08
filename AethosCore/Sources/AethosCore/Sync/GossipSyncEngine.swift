@@ -1,0 +1,907 @@
+import Foundation
+
+public enum GossipSyncState: String, Equatable, Sendable {
+    case idle
+    case inventoryExchanged = "inventory_exchanged"
+    case missingRequested = "missing_requested"
+    case transferInProgress = "transfer_in_progress"
+    case converged
+    case retryPending = "retry_pending"
+
+    var isActive: Bool {
+        switch self {
+        case .inventoryExchanged, .missingRequested, .transferInProgress, .converged:
+            return true
+        case .idle, .retryPending:
+            return false
+        }
+    }
+}
+
+public enum GossipSyncHandleDisposition: Equatable, Sendable {
+    case handled
+    case ignored
+    case duplicate
+    case retryPending
+}
+
+public struct GossipSyncHandleResult: Equatable, Sendable {
+    public let peerWayfarerId: String
+    public let state: GossipSyncState
+    public let disposition: GossipSyncHandleDisposition
+    public let sentFrameCount: Int
+
+    public init(
+        peerWayfarerId: String,
+        state: GossipSyncState,
+        disposition: GossipSyncHandleDisposition,
+        sentFrameCount: Int
+    ) {
+        self.peerWayfarerId = peerWayfarerId
+        self.state = state
+        self.disposition = disposition
+        self.sentFrameCount = sentFrameCount
+    }
+}
+
+public struct GossipSyncExecutionKnobs: Equatable, Sendable {
+    public let maxInventoryItemsPerSession: Int
+    public let maxTransfersPerSession: Int
+    public let maxTransferItemsPerFrame: Int
+    public let maxTransferBytesPerFrame: Int
+
+    public init(
+        maxInventoryItemsPerSession: Int = 500,
+        maxTransfersPerSession: Int = 64,
+        maxTransferItemsPerFrame: Int = 8,
+        maxTransferBytesPerFrame: Int = 262_144
+    ) {
+        self.maxInventoryItemsPerSession = max(1, maxInventoryItemsPerSession)
+        self.maxTransfersPerSession = max(1, maxTransfersPerSession)
+        self.maxTransferItemsPerFrame = max(1, maxTransferItemsPerFrame)
+        self.maxTransferBytesPerFrame = max(1, maxTransferBytesPerFrame)
+    }
+}
+
+public struct GossipSyncRetryContext: Equatable, Sendable {
+    public let peerWayfarerId: String
+    public let sessionId: String?
+    public let reason: String
+
+    public init(peerWayfarerId: String, sessionId: String?, reason: String) {
+        self.peerWayfarerId = peerWayfarerId
+        self.sessionId = sessionId
+        self.reason = reason
+    }
+}
+
+public struct GossipSyncResumeHint: Equatable, Sendable {
+    public let peerWayfarerId: String
+    public let lastSessionId: String?
+
+    public init(peerWayfarerId: String, lastSessionId: String?) {
+        self.peerWayfarerId = peerWayfarerId
+        self.lastSessionId = lastSessionId
+    }
+}
+
+public struct GossipSyncHooks {
+    public let onRetryPending: ((GossipSyncRetryContext) -> Void)?
+    public let onResumeAvailable: ((GossipSyncResumeHint) -> Void)?
+
+    public init(
+        onRetryPending: ((GossipSyncRetryContext) -> Void)? = nil,
+        onResumeAvailable: ((GossipSyncResumeHint) -> Void)? = nil
+    ) {
+        self.onRetryPending = onRetryPending
+        self.onResumeAvailable = onResumeAvailable
+    }
+}
+
+public enum GossipSyncEngineError: Swift.Error, Equatable {
+    case invalidWayfarerId(String)
+    case sessionNotActive(String)
+}
+
+/// Transport-neutral gossip sync engine implementing `docs/spec/GOSSIP_SYNC_V1.md`.
+///
+/// Wiring model:
+/// 1. On connection established/authenticated, create engine with runtime interfaces.
+/// 2. Call `startSession(with:nowUnixMs:)` to emit `inventory_summary`.
+/// 3. Route every inbound sync frame to `handleInboundSyncFrame(_:from:nowUnixMs:)`.
+/// 4. Persist sync receipts through `GossipReceiptRecording` implementation.
+/// 5. On disconnect/cancel, call `connectionDidClose(with:)` or `cancelSession(with:)`.
+public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
+    public static let supportedSyncVersion: Int = 1
+    public static let fixedChunkSizeBytes: Int = 32_768
+
+    private struct TrackedFrame: Equatable {
+        let idempotencyKey: String
+        let fingerprint: Data
+    }
+
+    private struct PeerSession {
+        var sessionId: String?
+        var state: GossipSyncState = .idle
+        var expectedInventoryPage: Int = 1
+        var announcedInventoryByItemId: [String: GossipInventoryEntry] = [:]
+        var localAdvertisedByItemId: [String: GossipInventoryEntry] = [:]
+        var requestedItemIdsByRequestId: [String: Set<String>] = [:]
+        var transferItemIdsByTransferId: [String: Set<String>] = [:]
+        var trackedFrameByIdempotencyKey: [String: Data] = [:]
+        var transfersSentCount: Int = 0
+        var canceled: Bool = false
+    }
+
+    private enum FrameTrackingVerdict {
+        case accept
+        case duplicate
+        case violation(String)
+    }
+
+    private let localWayfarerId: String
+    private let inventoryProvider: GossipInventoryProviding
+    private let messageLoader: GossipMessageLoading
+    private let receiptRecorder: GossipReceiptRecording
+    private let transportSender: GossipTransportSending
+    private let inboundTransferHandler: GossipInboundTransferApplying
+    private let knobs: GossipSyncExecutionKnobs
+    private let hooks: GossipSyncHooks
+    private let sessionIdFactory: () -> String
+    private let requestIdFactory: () -> String
+    private let transferIdFactory: () -> String
+    private let receiptIdFactory: () -> String
+
+    private var sessionsByPeerId: [String: PeerSession] = [:]
+
+    public init(
+        localWayfarerId: String,
+        inventoryProvider: GossipInventoryProviding,
+        messageLoader: GossipMessageLoading,
+        receiptRecorder: GossipReceiptRecording,
+        transportSender: GossipTransportSending,
+        inboundTransferHandler: GossipInboundTransferApplying,
+        knobs: GossipSyncExecutionKnobs = GossipSyncExecutionKnobs(),
+        hooks: GossipSyncHooks = GossipSyncHooks(),
+        sessionIdFactory: @escaping () -> String = { "sess-\(UUID().uuidString.lowercased())" },
+        requestIdFactory: @escaping () -> String = { "req-\(UUID().uuidString.lowercased())" },
+        transferIdFactory: @escaping () -> String = { "xfer-\(UUID().uuidString.lowercased())" },
+        receiptIdFactory: @escaping () -> String = { "rcpt-\(UUID().uuidString.lowercased())" }
+    ) throws {
+        guard Self.isLowerHex64(localWayfarerId) else {
+            throw GossipSyncEngineError.invalidWayfarerId(localWayfarerId)
+        }
+        self.localWayfarerId = localWayfarerId
+        self.inventoryProvider = inventoryProvider
+        self.messageLoader = messageLoader
+        self.receiptRecorder = receiptRecorder
+        self.transportSender = transportSender
+        self.inboundTransferHandler = inboundTransferHandler
+        self.knobs = knobs
+        self.hooks = hooks
+        self.sessionIdFactory = sessionIdFactory
+        self.requestIdFactory = requestIdFactory
+        self.transferIdFactory = transferIdFactory
+        self.receiptIdFactory = receiptIdFactory
+    }
+
+    public func currentState(for peerWayfarerId: String) -> GossipSyncState {
+        sessionsByPeerId[peerWayfarerId]?.state ?? .idle
+    }
+
+    public func startSession(with peerWayfarerId: String, nowUnixMs: UInt64) throws -> String {
+        guard Self.isLowerHex64(peerWayfarerId) else {
+            throw GossipSyncEngineError.invalidWayfarerId(peerWayfarerId)
+        }
+
+        var session = sessionsByPeerId[peerWayfarerId] ?? PeerSession()
+        if session.state.isActive, let existing = session.sessionId {
+            return existing
+        }
+
+        session = PeerSession()
+        session.sessionId = sessionIdFactory()
+        session.state = .inventoryExchanged
+        try sendInventorySummary(for: peerWayfarerId, session: &session, nowUnixMs: nowUnixMs)
+        sessionsByPeerId[peerWayfarerId] = session
+        return session.sessionId ?? ""
+    }
+
+    public func resumeSession(using hint: GossipSyncResumeHint, nowUnixMs: UInt64) throws -> String {
+        try startSession(with: hint.peerWayfarerId, nowUnixMs: nowUnixMs)
+    }
+
+    public func cancelSession(with peerWayfarerId: String) {
+        guard var session = sessionsByPeerId[peerWayfarerId] else { return }
+        session.canceled = true
+        session.state = .idle
+        session.sessionId = nil
+        session.expectedInventoryPage = 1
+        session.requestedItemIdsByRequestId.removeAll()
+        session.transferItemIdsByTransferId.removeAll()
+        session.trackedFrameByIdempotencyKey.removeAll()
+        sessionsByPeerId[peerWayfarerId] = session
+    }
+
+    public func connectionDidClose(with peerWayfarerId: String) {
+        guard var session = sessionsByPeerId[peerWayfarerId], session.state.isActive else { return }
+        moveToRetryPending(
+            peerWayfarerId: peerWayfarerId,
+            session: &session,
+            reason: "transport_closed"
+        )
+        sessionsByPeerId[peerWayfarerId] = session
+    }
+
+    @discardableResult
+    public func handleInboundSyncFrame(
+        _ frame: GossipSyncFrame,
+        from peerWayfarerId: String,
+        nowUnixMs: UInt64
+    ) throws -> GossipSyncHandleResult {
+        guard Self.isLowerHex64(peerWayfarerId) else {
+            throw GossipSyncEngineError.invalidWayfarerId(peerWayfarerId)
+        }
+
+        var session = sessionsByPeerId[peerWayfarerId] ?? PeerSession()
+        if session.canceled {
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: .idle, disposition: .ignored, sentFrameCount: 0)
+        }
+
+        if frame.syncVersion != Self.supportedSyncVersion {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "unsupported_sync_version")
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+        }
+
+        if case .inventorySummary = frame {
+            // Allowed to establish a new session while idle.
+        } else if session.sessionId == nil {
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: .idle, disposition: .ignored, sentFrameCount: 0)
+        }
+
+        if let activeSessionId = session.sessionId {
+            if frame.sessionId != activeSessionId {
+                if session.state == .idle {
+                    sessionsByPeerId[peerWayfarerId] = session
+                    return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: .idle, disposition: .ignored, sentFrameCount: 0)
+                }
+                moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "session_mismatch")
+                sessionsByPeerId[peerWayfarerId] = session
+                return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+            }
+        } else {
+            session.sessionId = frame.sessionId
+        }
+
+        guard Self.validateCommonFrameFields(frame) else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "invalid_common_fields")
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+        }
+
+        switch trackFrame(frame, session: &session) {
+        case .duplicate:
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .duplicate, sentFrameCount: 0)
+        case .violation(let reason):
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: reason)
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+        case .accept:
+            break
+        }
+
+        let sentCount: Int
+        switch frame {
+        case .inventorySummary(let inventoryFrame):
+            sentCount = try handleInventorySummary(inventoryFrame, peerWayfarerId: peerWayfarerId, session: &session, nowUnixMs: nowUnixMs)
+        case .missingRequest(let missingRequestFrame):
+            sentCount = try handleMissingRequest(missingRequestFrame, peerWayfarerId: peerWayfarerId, session: &session, nowUnixMs: nowUnixMs)
+        case .transfer(let transferFrame):
+            sentCount = try handleTransfer(transferFrame, peerWayfarerId: peerWayfarerId, session: &session, nowUnixMs: nowUnixMs)
+        case .receipt(let receiptFrame):
+            sentCount = try handleReceipt(receiptFrame, peerWayfarerId: peerWayfarerId, session: &session)
+        }
+
+        let disposition: GossipSyncHandleDisposition = session.state == .retryPending ? .retryPending : .handled
+        sessionsByPeerId[peerWayfarerId] = session
+        return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: disposition, sentFrameCount: sentCount)
+    }
+
+    private func handleInventorySummary(
+        _ frame: GossipInventorySummaryFrame,
+        peerWayfarerId: String,
+        session: inout PeerSession,
+        nowUnixMs: UInt64
+    ) throws -> Int {
+        guard frame.page == session.expectedInventoryPage else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "inventory_page_order_violation")
+            return 0
+        }
+
+        for entry in frame.inventory {
+            guard Self.validateInventoryEntry(entry) else {
+                moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "invalid_inventory_entry")
+                return 0
+            }
+            if nowUnixMs >= entry.expiresAtUnixMs { continue }
+            session.announcedInventoryByItemId[entry.itemId] = entry
+        }
+
+        session.expectedInventoryPage += 1
+        session.state = .inventoryExchanged
+
+        let missing = try computeMissingItemIds(announcedByPeer: session.announcedInventoryByItemId, nowUnixMs: nowUnixMs)
+        let requestId = requestIdFactory()
+        let capped = Array(missing.prefix(knobs.maxTransferItemsPerFrame))
+        let missingFrame = GossipMissingRequestFrame(
+            sessionId: frame.sessionId,
+            senderWayfarerId: localWayfarerId,
+            page: 1,
+            hasMore: false,
+            requestId: requestId,
+            inResponseToPage: frame.page,
+            missingItemIds: capped,
+            maxTransferItems: knobs.maxTransferItemsPerFrame,
+            maxTransferBytes: knobs.maxTransferBytesPerFrame
+        )
+        try transportSender.sendSyncFrame(.missingRequest(missingFrame), to: peerWayfarerId)
+
+        if capped.isEmpty {
+            session.state = .converged
+        } else {
+            session.state = .missingRequested
+            session.requestedItemIdsByRequestId[requestId] = Set(capped)
+        }
+        return 1
+    }
+
+    private func handleMissingRequest(
+        _ frame: GossipMissingRequestFrame,
+        peerWayfarerId: String,
+        session: inout PeerSession,
+        nowUnixMs: UInt64
+    ) throws -> Int {
+        guard frame.page >= 1 else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_page_invalid")
+            return 0
+        }
+
+        guard frame.maxTransferItems > 0, frame.maxTransferBytes > 0 else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_budget_invalid")
+            return 0
+        }
+
+        if frame.missingItemIds.isEmpty, frame.page == 1, frame.hasMore == false {
+            session.state = .converged
+            return 0
+        }
+
+        let remainingSessionTransferBudget = knobs.maxTransfersPerSession - session.transfersSentCount
+        guard remainingSessionTransferBudget > 0 else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "transfer_budget_exhausted")
+            return 0
+        }
+
+        let allowedItemCount = min(
+            remainingSessionTransferBudget,
+            knobs.maxTransferItemsPerFrame,
+            frame.maxTransferItems
+        )
+        let allowedBytes = min(knobs.maxTransferBytesPerFrame, frame.maxTransferBytes)
+
+        var transferItems: [GossipTransferEntry] = []
+        transferItems.reserveCapacity(allowedItemCount)
+        var totalEnvelopeBytes = 0
+
+        for itemId in frame.missingItemIds {
+            guard transferItems.count < allowedItemCount else { break }
+            guard let advertised = session.localAdvertisedByItemId[itemId] else { continue }
+            if nowUnixMs >= advertised.expiresAtUnixMs { continue }
+
+            guard let payload = try messageLoader.loadTransferPayload(itemId: itemId) else { continue }
+            if nowUnixMs >= payload.expiresAtUnixMs { continue }
+
+            let envelopeBytes = payload.envelopeBytes.count
+            if totalEnvelopeBytes + envelopeBytes > allowedBytes {
+                break
+            }
+
+            let entry = GossipTransferEntry(
+                itemId: payload.itemId,
+                manifestId: payload.manifestId,
+                toWayfarerId: payload.toWayfarerId,
+                expiresAtUnixMs: payload.expiresAtUnixMs,
+                totalSizeBytes: payload.totalSizeBytes,
+                chunkSizeBytes: payload.chunkSizeBytes,
+                chunkCount: payload.chunkCount,
+                envelopeB64: Base64URL.encode(payload.envelopeBytes)
+            )
+            transferItems.append(entry)
+            totalEnvelopeBytes += envelopeBytes
+        }
+
+        let transferId = transferIdFactory()
+        let transferFrame = GossipTransferFrame(
+            sessionId: frame.sessionId,
+            senderWayfarerId: localWayfarerId,
+            page: 1,
+            hasMore: false,
+            transferId: transferId,
+            inResponseToRequestId: frame.requestId,
+            items: transferItems
+        )
+        try transportSender.sendSyncFrame(.transfer(transferFrame), to: peerWayfarerId)
+
+        session.transferItemIdsByTransferId[transferId] = Set(transferItems.map(\.itemId))
+        session.transfersSentCount += transferItems.count
+        session.state = .transferInProgress
+        return 1
+    }
+
+    private func handleTransfer(
+        _ frame: GossipTransferFrame,
+        peerWayfarerId: String,
+        session: inout PeerSession,
+        nowUnixMs: UInt64
+    ) throws -> Int {
+        guard frame.page == 1, frame.hasMore == false else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "transfer_pagination_violation")
+            return 0
+        }
+
+        guard let requestedIds = session.requestedItemIdsByRequestId[frame.inResponseToRequestId] else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "unknown_request_for_transfer")
+            return 0
+        }
+
+        var accepted: [String] = []
+        var rejected: [GossipRejectedItem] = []
+
+        for item in frame.items {
+            if !requestedIds.contains(item.itemId) {
+                rejected.append(GossipRejectedItem(itemId: item.itemId, code: "UNREQUESTED_ITEM", message: "Item was not requested in active session."))
+                continue
+            }
+
+            let validation = Self.validateTransferEntry(item, nowUnixMs: nowUnixMs)
+            switch validation {
+            case .invalid(let code, let message):
+                rejected.append(GossipRejectedItem(itemId: item.itemId, code: code, message: message))
+                continue
+            case .valid(let envelopeBytes):
+                let parsed = Self.parseEnvelope(canonicalBytes: envelopeBytes)
+                guard parsed.manifestIdHex == item.manifestId else {
+                    rejected.append(GossipRejectedItem(itemId: item.itemId, code: "MANIFEST_ID_MISMATCH", message: "Envelope manifest_id mismatch."))
+                    continue
+                }
+                guard parsed.toWayfarerIdHex == item.toWayfarerId else {
+                    rejected.append(GossipRejectedItem(itemId: item.itemId, code: "TO_WAYFARER_ID_MISMATCH", message: "Envelope to_wayfarer_id mismatch."))
+                    continue
+                }
+
+                switch try inboundTransferHandler.applyInboundTransferItem(item, from: peerWayfarerId, sessionId: frame.sessionId) {
+                case .accepted, .alreadyPresent:
+                    accepted.append(item.itemId)
+                case .rejected(let code, let message):
+                    rejected.append(GossipRejectedItem(itemId: item.itemId, code: code, message: message))
+                }
+            }
+        }
+
+        let status: GossipReceiptStatus
+        if rejected.isEmpty {
+            status = .accepted
+        } else if accepted.isEmpty {
+            status = .rejected
+        } else {
+            status = .partial
+        }
+
+        let receiptFrame = GossipReceiptFrame(
+            sessionId: frame.sessionId,
+            senderWayfarerId: localWayfarerId,
+            page: 1,
+            hasMore: false,
+            receiptId: receiptIdFactory(),
+            inResponseToTransferId: frame.transferId,
+            status: status,
+            acceptedItemIds: accepted,
+            rejectedItems: rejected
+        )
+
+        try transportSender.sendSyncFrame(.receipt(receiptFrame), to: peerWayfarerId)
+
+        session.requestedItemIdsByRequestId.removeValue(forKey: frame.inResponseToRequestId)
+        session.state = .inventoryExchanged
+
+        let missing = try computeMissingItemIds(announcedByPeer: session.announcedInventoryByItemId, nowUnixMs: nowUnixMs)
+        let nextRequestId = requestIdFactory()
+        let capped = Array(missing.prefix(knobs.maxTransferItemsPerFrame))
+        let followUp = GossipMissingRequestFrame(
+            sessionId: frame.sessionId,
+            senderWayfarerId: localWayfarerId,
+            page: 1,
+            hasMore: false,
+            requestId: nextRequestId,
+            inResponseToPage: 1,
+            missingItemIds: capped,
+            maxTransferItems: knobs.maxTransferItemsPerFrame,
+            maxTransferBytes: knobs.maxTransferBytesPerFrame
+        )
+        try transportSender.sendSyncFrame(.missingRequest(followUp), to: peerWayfarerId)
+        if capped.isEmpty {
+            session.state = .converged
+        } else {
+            session.state = .missingRequested
+            session.requestedItemIdsByRequestId[nextRequestId] = Set(capped)
+        }
+
+        return 2
+    }
+
+    private func handleReceipt(
+        _ frame: GossipReceiptFrame,
+        peerWayfarerId: String,
+        session: inout PeerSession
+    ) throws -> Int {
+        guard frame.page == 1, frame.hasMore == false else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "receipt_pagination_violation")
+            return 0
+        }
+
+        guard let transferItemIds = session.transferItemIdsByTransferId[frame.inResponseToTransferId] else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "receipt_for_unknown_transfer")
+            return 0
+        }
+
+        guard Self.validateReceiptSets(
+            status: frame.status,
+            transferItemIds: transferItemIds,
+            acceptedItemIds: Set(frame.acceptedItemIds),
+            rejectedItemIds: Set(frame.rejectedItems.map(\.itemId))
+        ) else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "receipt_set_violation")
+            return 0
+        }
+
+        let record = GossipSyncReceiptRecord(
+            peerWayfarerId: peerWayfarerId,
+            sessionId: frame.sessionId,
+            transferId: frame.inResponseToTransferId,
+            status: frame.status,
+            acceptedItemIds: frame.acceptedItemIds,
+            rejectedItems: frame.rejectedItems
+        )
+        try receiptRecorder.recordSyncReceipt(record)
+
+        session.transferItemIdsByTransferId.removeValue(forKey: frame.inResponseToTransferId)
+        session.state = .inventoryExchanged
+        return 0
+    }
+
+    private func computeMissingItemIds(
+        announcedByPeer: [String: GossipInventoryEntry],
+        nowUnixMs: UInt64
+    ) throws -> [String] {
+        var missing: [String] = []
+        missing.reserveCapacity(announcedByPeer.count)
+        for entry in announcedByPeer.values {
+            if nowUnixMs >= entry.expiresAtUnixMs { continue }
+            if try inventoryProvider.hasLocalItem(itemId: entry.itemId) {
+                continue
+            }
+            missing.append(entry.itemId)
+        }
+        return missing.sorted()
+    }
+
+    private func sendInventorySummary(
+        for peerWayfarerId: String,
+        session: inout PeerSession,
+        nowUnixMs: UInt64
+    ) throws {
+        guard let sessionId = session.sessionId else {
+            throw GossipSyncEngineError.sessionNotActive(peerWayfarerId)
+        }
+        let localInventory = try inventoryProvider.localInventory(
+            for: peerWayfarerId,
+            nowUnixMs: nowUnixMs,
+            limit: knobs.maxInventoryItemsPerSession
+        )
+        let sorted = localInventory
+            .filter { nowUnixMs < $0.expiresAtUnixMs }
+            .sorted { $0.itemId < $1.itemId }
+            .prefix(knobs.maxInventoryItemsPerSession)
+        let inventory = Array(sorted)
+        session.localAdvertisedByItemId = Dictionary(uniqueKeysWithValues: inventory.map { ($0.itemId, $0) })
+        let frame = GossipInventorySummaryFrame(
+            sessionId: sessionId,
+            senderWayfarerId: localWayfarerId,
+            page: 1,
+            hasMore: false,
+            inventory: inventory
+        )
+        try transportSender.sendSyncFrame(.inventorySummary(frame), to: peerWayfarerId)
+    }
+
+    private func moveToRetryPending(
+        peerWayfarerId: String,
+        session: inout PeerSession,
+        reason: String
+    ) {
+        session.state = .retryPending
+        let context = GossipSyncRetryContext(
+            peerWayfarerId: peerWayfarerId,
+            sessionId: session.sessionId,
+            reason: reason
+        )
+        hooks.onRetryPending?(context)
+        hooks.onResumeAvailable?(GossipSyncResumeHint(peerWayfarerId: peerWayfarerId, lastSessionId: session.sessionId))
+    }
+
+    private func trackFrame(_ frame: GossipSyncFrame, session: inout PeerSession) -> FrameTrackingVerdict {
+        let idempotencyKey = Self.idempotencyKey(for: frame)
+        let fingerprint = Self.frameFingerprint(frame)
+
+        if let existing = session.trackedFrameByIdempotencyKey[idempotencyKey] {
+            if existing == fingerprint {
+                return .duplicate
+            }
+            return .violation("idempotency_mismatch")
+        }
+
+        if case .transfer(let transferFrame) = frame {
+            if transferFrame.page != 1 || transferFrame.hasMore {
+                return .violation("transfer_pagination_violation")
+            }
+        }
+        if case .receipt(let receiptFrame) = frame {
+            if receiptFrame.page != 1 || receiptFrame.hasMore {
+                return .violation("receipt_pagination_violation")
+            }
+        }
+
+        session.trackedFrameByIdempotencyKey[idempotencyKey] = fingerprint
+        return .accept
+    }
+
+    private static func idempotencyKey(for frame: GossipSyncFrame) -> String {
+        switch frame {
+        case .inventorySummary(let summary):
+            return "inventory|\(summary.sessionId)|\(summary.senderWayfarerId)|\(summary.page)"
+        case .missingRequest(let request):
+            return "missing|\(request.sessionId)|\(request.requestId)|\(request.page)"
+        case .transfer(let transfer):
+            return "transfer|\(transfer.sessionId)|\(transfer.transferId)|\(transfer.page)"
+        case .receipt(let receipt):
+            return "receipt|\(receipt.sessionId)|\(receipt.receiptId)|\(receipt.page)"
+        }
+    }
+
+    private static func frameFingerprint(_ frame: GossipSyncFrame) -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(frame)) ?? Data()
+    }
+
+    private static func validateCommonFrameFields(_ frame: GossipSyncFrame) -> Bool {
+        guard frame.page >= 1 else { return false }
+        guard !frame.sessionId.isEmpty else { return false }
+        guard isLowerHex64(frame.senderWayfarerId) else { return false }
+        return true
+    }
+
+    private static func validateInventoryEntry(_ entry: GossipInventoryEntry) -> Bool {
+        guard isLowerHex64(entry.itemId) else { return false }
+        guard isLowerHex64(entry.manifestId) else { return false }
+        guard isLowerHex64(entry.toWayfarerId) else { return false }
+        guard entry.chunkSizeBytes == fixedChunkSizeBytes else { return false }
+        guard entry.totalSizeBytes >= 0 else { return false }
+        guard entry.chunkCount >= 0 else { return false }
+        return true
+    }
+
+    private enum TransferValidation {
+        case valid(envelopeBytes: Data)
+        case invalid(code: String, message: String)
+    }
+
+    private static func validateTransferEntry(_ entry: GossipTransferEntry, nowUnixMs: UInt64) -> TransferValidation {
+        guard isLowerHex64(entry.itemId) else {
+            return .invalid(code: "INVALID_ITEM_ID", message: "item_id must be lowercase 64-char hex.")
+        }
+        guard isLowerHex64(entry.manifestId) else {
+            return .invalid(code: "INVALID_MANIFEST_ID", message: "manifest_id must be lowercase 64-char hex.")
+        }
+        guard isLowerHex64(entry.toWayfarerId) else {
+            return .invalid(code: "INVALID_TO_WAYFARER_ID", message: "to_wayfarer_id must be lowercase 64-char hex.")
+        }
+        guard entry.chunkSizeBytes == fixedChunkSizeBytes else {
+            return .invalid(code: "INVALID_CHUNK_SIZE", message: "chunk_size_bytes must be 32768 for v1.")
+        }
+        if nowUnixMs >= entry.expiresAtUnixMs {
+            return .invalid(code: "ITEM_EXPIRED", message: "Transfer item is expired.")
+        }
+
+        guard let envelopeBytes = Base64URL.decode(entry.envelopeB64) else {
+            return .invalid(code: "INVALID_ENVELOPE_BASE64", message: "envelope_b64 is not valid base64url.")
+        }
+
+        let computedItemId = Hex.encode(AethosIDs.sha256(envelopeBytes))
+        guard computedItemId == entry.itemId else {
+            return .invalid(code: "ITEM_ID_MISMATCH", message: "item_id does not match SHA-256(envelope_b64).")
+        }
+
+        return .valid(envelopeBytes: envelopeBytes)
+    }
+
+    private struct ParsedEnvelope {
+        let toWayfarerIdHex: String
+        let manifestIdHex: String
+    }
+
+    private static func parseEnvelope(canonicalBytes: Data) -> ParsedEnvelope {
+        var reader = CanonicalReader(canonicalBytes)
+        guard let _ = reader.readUInt8(),
+              let type = reader.readUInt8(),
+              type == CanonicalEncoderV1.TypeDiscriminator.envelope.rawValue
+        else {
+            return ParsedEnvelope(toWayfarerIdHex: "", manifestIdHex: "")
+        }
+
+        var toWayfarer = Data()
+        var manifestId = Data()
+
+        while !reader.isAtEnd {
+            guard let field = reader.readUInt8(),
+                  let length = reader.readUInt32(),
+                  let raw = reader.readData(count: Int(length))
+            else {
+                break
+            }
+
+            switch field {
+            case CanonicalEncoderV1.EnvelopeField.toWayfarerId.rawValue:
+                toWayfarer = raw
+            case CanonicalEncoderV1.EnvelopeField.manifestId.rawValue:
+                manifestId = raw
+            default:
+                break
+            }
+        }
+
+        return ParsedEnvelope(toWayfarerIdHex: Hex.encode(toWayfarer), manifestIdHex: Hex.encode(manifestId))
+    }
+
+    private static func validateReceiptSets(
+        status: GossipReceiptStatus,
+        transferItemIds: Set<String>,
+        acceptedItemIds: Set<String>,
+        rejectedItemIds: Set<String>
+    ) -> Bool {
+        guard acceptedItemIds.isSubset(of: transferItemIds) else { return false }
+        guard rejectedItemIds.isSubset(of: transferItemIds) else { return false }
+        guard acceptedItemIds.isDisjoint(with: rejectedItemIds) else { return false }
+        let union = acceptedItemIds.union(rejectedItemIds)
+
+        switch status {
+        case .accepted:
+            return acceptedItemIds == transferItemIds && rejectedItemIds.isEmpty
+        case .rejected:
+            return acceptedItemIds.isEmpty && rejectedItemIds == transferItemIds
+        case .partial:
+            return !acceptedItemIds.isEmpty && !rejectedItemIds.isEmpty && union == transferItemIds
+        }
+    }
+
+    private static func isLowerHex64(_ value: String) -> Bool {
+        guard value.count == 64 else { return false }
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 48 ... 57, 97 ... 102:
+                continue
+            default:
+                return false
+            }
+        }
+        return true
+    }
+}
+
+public enum GossipSyncFrameCodec {
+    public enum CodecError: Swift.Error, Equatable {
+        case invalidUTF8
+        case invalidJSON
+    }
+
+    public static func encodeJSONData(_ frame: GossipSyncFrame) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(frame)
+    }
+
+    public static func encodeJSONString(_ frame: GossipSyncFrame) throws -> String {
+        let data = try encodeJSONData(frame)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CodecError.invalidUTF8
+        }
+        return text
+    }
+
+    public static func decodeJSONData(_ data: Data) throws -> GossipSyncFrame {
+        let decoder = JSONDecoder()
+        do {
+            return try decoder.decode(GossipSyncFrame.self, from: data)
+        } catch {
+            throw CodecError.invalidJSON
+        }
+    }
+
+    public static func decodeJSONString(_ text: String) throws -> GossipSyncFrame {
+        guard let data = text.data(using: .utf8) else {
+            throw CodecError.invalidUTF8
+        }
+        return try decodeJSONData(data)
+    }
+}
+
+private enum Base64URL {
+    static func encode(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "=", with: "")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+    }
+
+    static func decode(_ text: String) -> Data? {
+        var normalized = text
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        if remainder != 0 {
+            normalized += String(repeating: "=", count: 4 - remainder)
+        }
+        return Data(base64Encoded: normalized)
+    }
+}
+
+private struct CanonicalReader {
+    private let data: Data
+    private var offset: Int = 0
+
+    init(_ data: Data) {
+        self.data = data
+    }
+
+    var isAtEnd: Bool {
+        offset >= data.count
+    }
+
+    mutating func readUInt8() -> UInt8? {
+        guard offset + 1 <= data.count else { return nil }
+        let value = data[offset]
+        offset += 1
+        return value
+    }
+
+    mutating func readUInt32() -> UInt32? {
+        guard offset + 4 <= data.count else { return nil }
+        var value: UInt32 = 0
+        for index in 0..<4 {
+            value = (value << 8) | UInt32(data[offset + index])
+        }
+        offset += 4
+        return value
+    }
+
+    mutating func readData(count: Int) -> Data? {
+        guard count >= 0, offset + count <= data.count else { return nil }
+        let slice = data[offset..<offset + count]
+        offset += count
+        return Data(slice)
+    }
+}
