@@ -242,6 +242,16 @@ Pagination is scoped by logical stream key, not only by message type.
 7. Any `transfer`/`receipt` frame in `sync_version=1` with `page != 1` or `has_more != false` MUST be ignored and MUST transition session state to `retry_pending`.
 8. Senders SHOULD cap each frame by item count and byte budget appropriate to transport constraints.
 
+### 6.4 MVP0 single-page enforcement (implementation profile)
+
+For MVP0 in this repository, `inventory_summary` and `missing_request` are constrained to single-page frames only:
+
+1. `page` MUST be `1`.
+2. `has_more` MUST be `false`.
+3. Any multi-page attempt (`page != 1` or `has_more == true`) MUST be ignored and MUST transition session state to `retry_pending`.
+
+This preserves wire compatibility while deferring full multi-page stream tracking to a future revision.
+
 ### 6.3 Session establishment and collisions
 
 1. Session initiator chooses `session_id` and sends the first `inventory_summary`.
