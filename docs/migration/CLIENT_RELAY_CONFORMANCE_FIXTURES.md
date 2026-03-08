@@ -89,9 +89,9 @@ Each fixture family below defines minimal objective evidence with explicit **MUS
 
 ### CRF-TTL-DEFAULT-3600
 
-- MUST PASS: omitted `send.ttl_seconds` enforces an effective 3600-second lifetime (before max-TTL capping), validated indirectly by expiry behavior under a controlled clock/time-travel harness (for example: deliverable at `t0+3599`, not deliverable at `t0+3600`).
-- MUST FAIL: omitted TTL using a non-3600 default (observed as too-early or too-late expiry under the same harness).
-- Fixture observability rule: this fixture does **not** require `send_ok` timestamps; it validates effective TTL via delivery/expiry boundary behavior only.
+- MUST PASS: omitted `send.ttl_seconds` enforces an effective 3600-second lifetime (before max-TTL capping), validated under a controlled clock/time-travel harness where `t0` is the harness `now_seconds` (or controlled clock baseline) at the moment the relay accepts the message for storage/delivery evaluation; for this fixture, “deliverable” means the message appears in `pull.messages[]` for the recipient (for example: appears at `t0+3599`, does not appear at `t0+3600`).
+- MUST FAIL: omitted TTL using a non-3600 default (observed as too-early or too-late expiry under the same `t0` baseline and `pull.messages[]` observability rule).
+- Fixture observability and boundary rule: this fixture does **not** require `send_ok` timestamps; evaluators MUST use delivery behavior only, and the canonical non-deliverable boundary is `now_seconds >= expires_at`.
 
 ### CRF-EXPIRED-DELIVERY-BOUNDARY
 
