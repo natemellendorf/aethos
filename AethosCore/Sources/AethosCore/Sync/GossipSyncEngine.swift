@@ -45,6 +45,10 @@ public struct GossipSyncHandleResult: Equatable, Sendable {
 }
 
 public struct GossipSyncExecutionKnobs: Equatable, Sendable {
+    public let maxSessionIdLength: Int
+    public let maxRequestIdLength: Int
+    public let maxTransferIdLength: Int
+    public let maxReceiptIdLength: Int
     public let maxInventoryItemsPerSession: Int
     /// Maximum number of transfer frames this engine will send per session.
     public let maxTransfersPerSession: Int
@@ -52,36 +56,53 @@ public struct GossipSyncExecutionKnobs: Equatable, Sendable {
     public let maxTransferBytesPerFrame: Int
     public let maxInboundInventoryItemsPerFrame: Int
     public let maxInboundMissingItemIdsPerFrame: Int
+    public let maxInboundMissingItemIdBytesPerFrame: Int
     public let maxInboundTransferItemsPerFrame: Int
     public let maxInboundReceiptAcceptedItemIdsPerFrame: Int
     public let maxInboundReceiptRejectedItemsPerFrame: Int
+    public let maxInboundRejectedItemCodeBytes: Int
+    public let maxInboundRejectedItemMessageBytes: Int
     public let maxDecodedEnvelopeBytes: Int
     public let maxTrackedFramesPerSession: Int
     public let maxAnnouncedInventoryItemsPerSession: Int
 
     public init(
+        maxSessionIdLength: Int = 128,
+        maxRequestIdLength: Int = 128,
+        maxTransferIdLength: Int = 128,
+        maxReceiptIdLength: Int = 128,
         maxInventoryItemsPerSession: Int = 500,
         maxTransfersPerSession: Int = 64,
         maxTransferItemsPerFrame: Int = 8,
         maxTransferBytesPerFrame: Int = 262_144,
         maxInboundInventoryItemsPerFrame: Int = 500,
         maxInboundMissingItemIdsPerFrame: Int = 500,
+        maxInboundMissingItemIdBytesPerFrame: Int = 32_768,
         maxInboundTransferItemsPerFrame: Int = 64,
         maxInboundReceiptAcceptedItemIdsPerFrame: Int = 256,
         maxInboundReceiptRejectedItemsPerFrame: Int = 256,
+        maxInboundRejectedItemCodeBytes: Int = 64,
+        maxInboundRejectedItemMessageBytes: Int = 256,
         maxDecodedEnvelopeBytes: Int = 262_144,
         maxTrackedFramesPerSession: Int = 2_048,
         maxAnnouncedInventoryItemsPerSession: Int = 500
     ) {
+        self.maxSessionIdLength = max(1, maxSessionIdLength)
+        self.maxRequestIdLength = max(1, maxRequestIdLength)
+        self.maxTransferIdLength = max(1, maxTransferIdLength)
+        self.maxReceiptIdLength = max(1, maxReceiptIdLength)
         self.maxInventoryItemsPerSession = max(1, maxInventoryItemsPerSession)
         self.maxTransfersPerSession = max(1, maxTransfersPerSession)
         self.maxTransferItemsPerFrame = max(1, maxTransferItemsPerFrame)
         self.maxTransferBytesPerFrame = max(1, maxTransferBytesPerFrame)
         self.maxInboundInventoryItemsPerFrame = max(1, maxInboundInventoryItemsPerFrame)
         self.maxInboundMissingItemIdsPerFrame = max(1, maxInboundMissingItemIdsPerFrame)
+        self.maxInboundMissingItemIdBytesPerFrame = max(1, maxInboundMissingItemIdBytesPerFrame)
         self.maxInboundTransferItemsPerFrame = max(1, maxInboundTransferItemsPerFrame)
         self.maxInboundReceiptAcceptedItemIdsPerFrame = max(1, maxInboundReceiptAcceptedItemIdsPerFrame)
         self.maxInboundReceiptRejectedItemsPerFrame = max(1, maxInboundReceiptRejectedItemsPerFrame)
+        self.maxInboundRejectedItemCodeBytes = max(1, maxInboundRejectedItemCodeBytes)
+        self.maxInboundRejectedItemMessageBytes = max(1, maxInboundRejectedItemMessageBytes)
         self.maxDecodedEnvelopeBytes = max(1, maxDecodedEnvelopeBytes)
         self.maxTrackedFramesPerSession = max(1, maxTrackedFramesPerSession)
         self.maxAnnouncedInventoryItemsPerSession = max(1, maxAnnouncedInventoryItemsPerSession)
@@ -328,8 +349,6 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
                 sessionsByPeerId[peerWayfarerId] = session
                 return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
             }
-        } else {
-            session.sessionId = frame.sessionId
         }
 
         guard Self.validateCommonFrameFields(frame) else {
@@ -360,6 +379,10 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
         case .accept:
             break
+        }
+
+        if session.sessionId == nil {
+            session.sessionId = frame.sessionId
         }
 
         let sentCount: Int
@@ -661,13 +684,20 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return 0
         }
 
-        guard Self.validateReceiptSets(
+        let receiptSetValidation = Self.validateReceiptSets(
             status: frame.status,
             transferItemIds: transferItemIds,
-            acceptedItemIds: Set(frame.acceptedItemIds),
-            rejectedItemIds: Set(frame.rejectedItems.map(\.itemId))
-        ) else {
+            acceptedItemIds: frame.acceptedItemIds,
+            rejectedItemIds: frame.rejectedItems.map(\.itemId)
+        )
+
+        guard receiptSetValidation != .violation else {
             moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "receipt_set_violation")
+            return 0
+        }
+
+        guard receiptSetValidation != .duplicateItemIds else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "receipt_duplicate_item_ids")
             return 0
         }
 
@@ -747,6 +777,10 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
     }
 
     private func preflightInboundFrame(_ frame: GossipSyncFrame) -> String? {
+        guard Self.isValidOpaqueIdentifier(frame.sessionId, maxLength: knobs.maxSessionIdLength) else {
+            return "invalid_session_id"
+        }
+
         switch frame {
         case .inventorySummary(let inventoryFrame):
             guard inventoryFrame.page == 1, inventoryFrame.hasMore == false else {
@@ -755,23 +789,65 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             guard inventoryFrame.inventory.count <= knobs.maxInboundInventoryItemsPerFrame else {
                 return "inventory_items_exceeded"
             }
+            for entry in inventoryFrame.inventory {
+                guard Self.validateInventoryEntry(entry) else {
+                    return "invalid_inventory_entry"
+                }
+            }
             return nil
         case .missingRequest(let missingFrame):
             guard missingFrame.page == 1, missingFrame.hasMore == false else {
                 return "missing_request_pagination_violation"
             }
+            guard Self.isValidOpaqueIdentifier(missingFrame.requestId, maxLength: knobs.maxRequestIdLength) else {
+                return "invalid_request_id"
+            }
             guard missingFrame.missingItemIds.count <= knobs.maxInboundMissingItemIdsPerFrame else {
                 return "missing_request_items_exceeded"
+            }
+            var totalMissingItemIdBytes = 0
+            for itemId in missingFrame.missingItemIds {
+                guard Self.isLowerHex64(itemId) else {
+                    return "invalid_missing_item_id"
+                }
+                totalMissingItemIdBytes += itemId.utf8.count
+                if totalMissingItemIdBytes > knobs.maxInboundMissingItemIdBytesPerFrame {
+                    return "missing_request_item_id_bytes_exceeded"
+                }
             }
             return nil
         case .transfer(let transferFrame):
             guard transferFrame.page == 1, transferFrame.hasMore == false else {
                 return "transfer_pagination_violation"
             }
+            guard Self.isValidOpaqueIdentifier(transferFrame.transferId, maxLength: knobs.maxTransferIdLength) else {
+                return "invalid_transfer_id"
+            }
+            guard Self.isValidOpaqueIdentifier(transferFrame.inResponseToRequestId, maxLength: knobs.maxRequestIdLength) else {
+                return "invalid_in_response_to_request_id"
+            }
             guard transferFrame.items.count <= knobs.maxInboundTransferItemsPerFrame else {
                 return "transfer_items_exceeded"
             }
             for item in transferFrame.items {
+                guard Self.isLowerHex64(item.itemId) else {
+                    return "invalid_item_id"
+                }
+                guard Self.isLowerHex64(item.manifestId) else {
+                    return "invalid_manifest_id"
+                }
+                guard Self.isLowerHex64(item.toWayfarerId) else {
+                    return "invalid_to_wayfarer_id"
+                }
+                guard item.chunkSizeBytes == Self.fixedChunkSizeBytes else {
+                    return "invalid_chunk_size"
+                }
+                guard item.totalSizeBytes >= 0, item.chunkCount >= 0 else {
+                    return "invalid_transfer_entry"
+                }
+                guard Base64URL.isStrictBase64URL(item.envelopeB64) else {
+                    return "invalid_envelope_b64"
+                }
                 if Base64URL.estimatedDecodedByteCount(for: item.envelopeB64) > knobs.maxDecodedEnvelopeBytes {
                     return "transfer_envelope_bytes_exceeded"
                 }
@@ -781,11 +857,44 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             guard receiptFrame.page == 1, receiptFrame.hasMore == false else {
                 return "receipt_pagination_violation"
             }
+            guard Self.isValidOpaqueIdentifier(receiptFrame.receiptId, maxLength: knobs.maxReceiptIdLength) else {
+                return "invalid_receipt_id"
+            }
+            guard Self.isValidOpaqueIdentifier(receiptFrame.inResponseToTransferId, maxLength: knobs.maxTransferIdLength) else {
+                return "invalid_in_response_to_transfer_id"
+            }
             guard receiptFrame.acceptedItemIds.count <= knobs.maxInboundReceiptAcceptedItemIdsPerFrame else {
                 return "receipt_accepted_items_exceeded"
             }
             guard receiptFrame.rejectedItems.count <= knobs.maxInboundReceiptRejectedItemsPerFrame else {
                 return "receipt_rejected_items_exceeded"
+            }
+            let receiptSetValidation = Self.validateReceiptSets(
+                status: receiptFrame.status,
+                transferItemIds: nil,
+                acceptedItemIds: receiptFrame.acceptedItemIds,
+                rejectedItemIds: receiptFrame.rejectedItems.map(\.itemId)
+            )
+            if receiptSetValidation == .duplicateItemIds {
+                return "receipt_duplicate_item_ids"
+            }
+
+            for acceptedItemId in receiptFrame.acceptedItemIds {
+                guard Self.isLowerHex64(acceptedItemId) else {
+                    return "invalid_receipt_item_id"
+                }
+            }
+
+            for rejectedItem in receiptFrame.rejectedItems {
+                guard Self.isLowerHex64(rejectedItem.itemId) else {
+                    return "invalid_receipt_item_id"
+                }
+                guard rejectedItem.code.utf8.count <= knobs.maxInboundRejectedItemCodeBytes else {
+                    return "receipt_rejected_code_bytes_exceeded"
+                }
+                guard rejectedItem.message.utf8.count <= knobs.maxInboundRejectedItemMessageBytes else {
+                    return "receipt_rejected_message_bytes_exceeded"
+                }
             }
             return nil
         }
@@ -1014,25 +1123,64 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         return ParsedEnvelope(toWayfarerIdHex: Hex.encode(toWayfarer), manifestIdHex: Hex.encode(manifestId))
     }
 
+    private enum ReceiptSetValidation {
+        case valid
+        case duplicateItemIds
+        case violation
+    }
+
     private static func validateReceiptSets(
         status: GossipReceiptStatus,
-        transferItemIds: Set<String>,
-        acceptedItemIds: Set<String>,
-        rejectedItemIds: Set<String>
-    ) -> Bool {
-        guard acceptedItemIds.isSubset(of: transferItemIds) else { return false }
-        guard rejectedItemIds.isSubset(of: transferItemIds) else { return false }
-        guard acceptedItemIds.isDisjoint(with: rejectedItemIds) else { return false }
-        let union = acceptedItemIds.union(rejectedItemIds)
+        transferItemIds: Set<String>?,
+        acceptedItemIds: [String],
+        rejectedItemIds: [String]
+    ) -> ReceiptSetValidation {
+        let acceptedSet = Set(acceptedItemIds)
+        if acceptedSet.count != acceptedItemIds.count {
+            return .duplicateItemIds
+        }
+
+        let rejectedSet = Set(rejectedItemIds)
+        if rejectedSet.count != rejectedItemIds.count {
+            return .duplicateItemIds
+        }
+
+        if !acceptedSet.isDisjoint(with: rejectedSet) {
+            return .duplicateItemIds
+        }
+
+        guard let transferItemIds else {
+            return .valid
+        }
+
+        guard acceptedSet.isSubset(of: transferItemIds) else { return .violation }
+        guard rejectedSet.isSubset(of: transferItemIds) else { return .violation }
+
+        let union = acceptedSet.union(rejectedSet)
 
         switch status {
         case .accepted:
-            return acceptedItemIds == transferItemIds && rejectedItemIds.isEmpty
+            return acceptedSet == transferItemIds && rejectedSet.isEmpty ? .valid : .violation
         case .rejected:
-            return acceptedItemIds.isEmpty && rejectedItemIds == transferItemIds
+            return acceptedSet.isEmpty && rejectedSet == transferItemIds ? .valid : .violation
         case .partial:
-            return !acceptedItemIds.isEmpty && !rejectedItemIds.isEmpty && union == transferItemIds
+            return !acceptedSet.isEmpty && !rejectedSet.isEmpty && union == transferItemIds ? .valid : .violation
         }
+    }
+
+    private static func isValidOpaqueIdentifier(_ value: String, maxLength: Int) -> Bool {
+        guard !value.isEmpty, value.count <= maxLength else {
+            return false
+        }
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 45, 46, 48 ... 57, 58, 65 ... 90, 95, 97 ... 122:
+                continue
+            default:
+                return false
+            }
+        }
+        return true
     }
 
     private static func isLowerHex64(_ value: String) -> Bool {
@@ -1114,6 +1262,10 @@ private enum Base64URL {
     }
 
     static func decode(_ text: String, maxDecodedBytes: Int = Int.max) -> Data? {
+        guard isStrictBase64URL(text) else {
+            return nil
+        }
+
         let estimatedDecodedBytes = estimatedDecodedByteCount(for: text)
         if estimatedDecodedBytes > maxDecodedBytes {
             return nil
@@ -1137,6 +1289,23 @@ private enum Base64URL {
 
     static func estimatedDecodedByteCount(for text: String) -> Int {
         ((text.count + 3) / 4) * 3
+    }
+
+    static func isStrictBase64URL(_ text: String) -> Bool {
+        if text.contains("=") {
+            return false
+        }
+
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 45, 48 ... 57, 65 ... 90, 95, 97 ... 122:
+                continue
+            default:
+                return false
+            }
+        }
+
+        return text.count % 4 != 1
     }
 }
 

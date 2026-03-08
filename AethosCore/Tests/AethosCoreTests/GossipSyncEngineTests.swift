@@ -469,6 +469,305 @@ func gossipSyncRejectsOversizedTransferEnvelopeBeforeDecode() throws {
 }
 
 @Test
+func gossipSyncRejectsOversizedSessionIdBeforeTracking() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+
+    var retryReasons: [String] = []
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: CapturingTransportSender(),
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) })
+    )
+
+    let oversizedSessionId = String(repeating: "a", count: 100_000)
+    let frame = GossipInventorySummaryFrame(
+        sessionId: oversizedSessionId,
+        senderWayfarerId: fixtures.peerAId,
+        page: 1,
+        hasMore: false,
+        inventory: fixtures.inventorySummary.inventory
+    )
+
+    let result = try engine.handleInboundSyncFrame(.inventorySummary(frame), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    #expect(result.disposition == .retryPending)
+    #expect(retryReasons.contains("invalid_session_id"))
+
+    let stats = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+    #expect(stats.trackedFrameCount == 0)
+}
+
+@Test
+func gossipSyncRejectsOversizedReceiptMessageBeforeTracking() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let requestId = "req-large-receipt-message"
+    let transferId = "xfer-large-receipt-message"
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let requestedTransfer = fixtures.transfer.items[0]
+    let payload = GossipTransferPayload(
+        itemId: requestedTransfer.itemId,
+        manifestId: requestedTransfer.manifestId,
+        toWayfarerId: requestedTransfer.toWayfarerId,
+        expiresAtUnixMs: requestedTransfer.expiresAtUnixMs,
+        totalSizeBytes: requestedTransfer.totalSizeBytes,
+        chunkSizeBytes: requestedTransfer.chunkSizeBytes,
+        chunkCount: requestedTransfer.chunkCount,
+        envelopeBytes: try #require(decodeBase64URL(requestedTransfer.envelopeB64))
+    )
+
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerAId,
+        inventoryProvider: StaticInventoryProvider(
+            inventoryByPeer: [fixtures.peerBId: fixtures.inventorySummary.inventory],
+            localItemIds: Set(fixtures.inventorySummary.inventory.map(\.itemId))
+        ),
+        messageLoader: StaticMessageLoader(itemsById: [requestedTransfer.itemId: payload]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        sessionIdFactory: { fixtures.sessionId },
+        transferIdFactory: { transferId }
+    )
+
+    _ = try engine.startSession(with: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let missingRequest = GossipMissingRequestFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        requestId: requestId,
+        inResponseToPage: 1,
+        missingItemIds: [requestedTransfer.itemId],
+        maxTransferItems: fixtures.missingRequest.maxTransferItems,
+        maxTransferBytes: fixtures.missingRequest.maxTransferBytes
+    )
+
+    _ = try engine.handleInboundSyncFrame(.missingRequest(missingRequest), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let statsBeforeReceipt = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerBId))
+
+    let receipt = GossipReceiptFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        receiptId: "rcpt-large-message",
+        inResponseToTransferId: transferId,
+        status: .rejected,
+        acceptedItemIds: [],
+        rejectedItems: [
+            GossipRejectedItem(
+                itemId: requestedTransfer.itemId,
+                code: "ITEM_REJECTED",
+                message: String(repeating: "m", count: 100_000)
+            )
+        ]
+    )
+
+    let receiptResult = try engine.handleInboundSyncFrame(.receipt(receipt), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    #expect(receiptResult.disposition == .retryPending)
+    #expect(retryReasons.contains("receipt_rejected_message_bytes_exceeded"))
+
+    let statsAfterReceipt = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerBId))
+    #expect(statsAfterReceipt.trackedFrameCount == statsBeforeReceipt.trackedFrameCount)
+}
+
+@Test
+func gossipSyncRejectsReceiptDuplicateAcceptedItemIdsBeforeTracking() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let requestId = "req-duplicate-accepted"
+    let transferId = "xfer-duplicate-accepted"
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let requestedTransfer = fixtures.transfer.items[0]
+    let payload = GossipTransferPayload(
+        itemId: requestedTransfer.itemId,
+        manifestId: requestedTransfer.manifestId,
+        toWayfarerId: requestedTransfer.toWayfarerId,
+        expiresAtUnixMs: requestedTransfer.expiresAtUnixMs,
+        totalSizeBytes: requestedTransfer.totalSizeBytes,
+        chunkSizeBytes: requestedTransfer.chunkSizeBytes,
+        chunkCount: requestedTransfer.chunkCount,
+        envelopeBytes: try #require(decodeBase64URL(requestedTransfer.envelopeB64))
+    )
+
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerAId,
+        inventoryProvider: StaticInventoryProvider(
+            inventoryByPeer: [fixtures.peerBId: fixtures.inventorySummary.inventory],
+            localItemIds: Set(fixtures.inventorySummary.inventory.map(\.itemId))
+        ),
+        messageLoader: StaticMessageLoader(itemsById: [requestedTransfer.itemId: payload]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        sessionIdFactory: { fixtures.sessionId },
+        transferIdFactory: { transferId }
+    )
+
+    _ = try engine.startSession(with: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let missingRequest = GossipMissingRequestFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        requestId: requestId,
+        inResponseToPage: 1,
+        missingItemIds: [requestedTransfer.itemId],
+        maxTransferItems: fixtures.missingRequest.maxTransferItems,
+        maxTransferBytes: fixtures.missingRequest.maxTransferBytes
+    )
+
+    _ = try engine.handleInboundSyncFrame(.missingRequest(missingRequest), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let statsBeforeReceipt = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerBId))
+
+    let duplicateAccepted = GossipReceiptFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        receiptId: "rcpt-duplicate-accepted",
+        inResponseToTransferId: transferId,
+        status: .accepted,
+        acceptedItemIds: [requestedTransfer.itemId, requestedTransfer.itemId],
+        rejectedItems: []
+    )
+
+    let receiptResult = try engine.handleInboundSyncFrame(.receipt(duplicateAccepted), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    #expect(receiptResult.disposition == .retryPending)
+    #expect(retryReasons.contains("receipt_duplicate_item_ids"))
+
+    let statsAfterReceipt = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerBId))
+    #expect(statsAfterReceipt.trackedFrameCount == statsBeforeReceipt.trackedFrameCount)
+}
+
+@Test
+func gossipSyncRejectsTransferWithInvalidBase64URLBeforeTracking() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let requestId = "req-base64-strict"
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        requestIdFactory: { requestId }
+    )
+
+    _ = try engine.handleInboundSyncFrame(.inventorySummary(fixtures.inventorySummary), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let statsBeforeTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+
+    let invalidBase64 = fixtures.transfer.items[0].envelopeB64 + "="
+    let invalidTransfer = GossipTransferFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerAId,
+        page: 1,
+        hasMore: false,
+        transferId: "xfer-invalid-base64",
+        inResponseToRequestId: requestId,
+        items: [
+            GossipTransferEntry(
+                itemId: fixtures.transfer.items[0].itemId,
+                manifestId: fixtures.transfer.items[0].manifestId,
+                toWayfarerId: fixtures.transfer.items[0].toWayfarerId,
+                expiresAtUnixMs: fixtures.transfer.items[0].expiresAtUnixMs,
+                totalSizeBytes: fixtures.transfer.items[0].totalSizeBytes,
+                chunkSizeBytes: fixtures.transfer.items[0].chunkSizeBytes,
+                chunkCount: fixtures.transfer.items[0].chunkCount,
+                envelopeB64: invalidBase64
+            )
+        ]
+    )
+
+    let transferResult = try engine.handleInboundSyncFrame(.transfer(invalidTransfer), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    #expect(transferResult.disposition == .retryPending)
+    #expect(retryReasons.contains("invalid_envelope_b64"))
+
+    let statsAfterTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+    #expect(statsAfterTransfer.trackedFrameCount == statsBeforeTransfer.trackedFrameCount)
+}
+
+@Test
+func gossipSyncRejectsTransferWithNonURLBase64AlphabetBeforeTracking() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let requestId = "req-base64-plus"
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        requestIdFactory: { requestId }
+    )
+
+    _ = try engine.handleInboundSyncFrame(.inventorySummary(fixtures.inventorySummary), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let statsBeforeTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+
+    let invalidBase64 = "+" + fixtures.transfer.items[0].envelopeB64
+    let invalidTransfer = GossipTransferFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerAId,
+        page: 1,
+        hasMore: false,
+        transferId: "xfer-invalid-base64-plus",
+        inResponseToRequestId: requestId,
+        items: [
+            GossipTransferEntry(
+                itemId: fixtures.transfer.items[0].itemId,
+                manifestId: fixtures.transfer.items[0].manifestId,
+                toWayfarerId: fixtures.transfer.items[0].toWayfarerId,
+                expiresAtUnixMs: fixtures.transfer.items[0].expiresAtUnixMs,
+                totalSizeBytes: fixtures.transfer.items[0].totalSizeBytes,
+                chunkSizeBytes: fixtures.transfer.items[0].chunkSizeBytes,
+                chunkCount: fixtures.transfer.items[0].chunkCount,
+                envelopeB64: invalidBase64
+            )
+        ]
+    )
+
+    let transferResult = try engine.handleInboundSyncFrame(.transfer(invalidTransfer), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    #expect(transferResult.disposition == .retryPending)
+    #expect(retryReasons.contains("invalid_envelope_b64"))
+
+    let statsAfterTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+    #expect(statsAfterTransfer.trackedFrameCount == statsBeforeTransfer.trackedFrameCount)
+}
+
+@Test
 func gossipSyncEvictsOldTrackedFramesWhenPerSessionCapExceeded() throws {
     let nowUnixMs: UInt64 = 1_767_000_000_000
     let localWayfarerId = makeHex64(0x11)
