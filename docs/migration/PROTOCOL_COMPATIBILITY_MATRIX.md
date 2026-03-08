@@ -100,12 +100,17 @@ Status vocab:
 
 ## Client-Relay Cutover Readiness (2026-03-08)
 
-### Residual exceptions (canonical-only not fully closed)
+### Residual exceptions (verification-only; no known DIVERGES on row)
 
-- `ERR-ERROR-CODE-VOCABULARY`: iOS strict canonical error-code vocabulary handling remains unverified.
-- `ERR-PRE-HELLO-ERROR-PATH`: iOS end-to-end verification for pre-hello canonical error + close-path remains unverified.
-- `RETR-PULL-LIMIT-DEFAULT`: iOS verification for omitted pull.limit defaulting to 50 remains unverified.
+- `CRP-HANDSHAKE-ORDERING`: relay-side verification is still open for pre-`hello_ok` gating and pre-handshake rejection behavior.
+- `ERR-PRE-HELLO-ERROR-PATH`: end-to-end verification for canonical pre-hello error + close-path behavior remains open.
+- `RETR-PULL-LIMIT-DEFAULT`: iOS verification for omitted `pull.limit` defaulting to `50` remains open.
 - `DELIV-RETRY-POLICY`: retry/backoff policy conformance remains unverified on both sides.
+- `RCP-NON-CONFLATION`: iOS verification remains open to confirm device/federation receipt semantics stay non-conflated in runtime behavior.
+
+### Residual divergences (still DIVERGES on row)
+
+- `ERR-ERROR-CODE-VOCABULARY`: relay still diverges from the canonical error-code vocabulary, and iOS strict canonical-code handling is also still unverified.
 
 ## Federation Protocol
 
