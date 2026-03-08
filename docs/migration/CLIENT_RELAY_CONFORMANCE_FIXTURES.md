@@ -17,7 +17,7 @@ Purpose: define fixture families used as objective evidence for compatibility-ma
 | CRF-SEND-TO-MISMATCH | `send.to` vs envelope invariant + `TO_MISMATCH` | `CRP-SEND-TO-MISMATCH-INVARIANTS` |
 | CRF-SEND-OK-TIMESTAMPS | Canonical `send_ok` timestamp fields | `DELIV-TIMESTAMP-FIELD-MAPPING` |
 | CRF-TIMESTAMP-UNITS-SECONDS | Client-relay timestamp unit guardrails (`received_at`/`expires_at` in seconds) | `DELIV-TTL-DEFAULT-3600`, `DELIV-EXPIRED-DELIVERY-BOUNDARY` |
-| CRF-TTL-DEFAULT-3600 | Omitted `ttl_seconds` canonical default behavior | `DELIV-TTL-DEFAULT-3600` |
+| CRF-TTL-DEFAULT-3600 | Omitted `send.ttl_seconds` canonical default behavior | `DELIV-TTL-DEFAULT-3600` |
 | CRF-EXPIRED-DELIVERY-BOUNDARY | Expiry boundary (`now_seconds >= expires_at`) enforcement | `DELIV-EXPIRED-DELIVERY-BOUNDARY` |
 | CRF-ACK-BINDING-PER-DEVICE | Per-device ack suppression boundary | `DELIV-PER-DEVICE-ACK-BINDING` |
 | CRF-ACK-OK-ROUNDTRIP | `ack_ok` await/validation behavior at client boundary | `DELIV-ACK-OK-ROUNDTRIP` |
