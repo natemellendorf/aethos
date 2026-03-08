@@ -828,6 +828,14 @@ Is a signed final-recipient receipt required?
 
 The next concrete actions should be:
 
+## Migration update (2026-03-08)
+
+Client-relay legacy cleanup verification is now far enough along to start the next phase of protocol work: **transport-neutral gossip sync implementation plus LAN discovery integration**.
+
+- Relay-side canonical-only cleanup is largely complete for client-relay wire behavior.
+- iOS has canonical fixture coverage in place, with remaining runtime compatibility tolerances tracked as residual exceptions.
+- The canonical migration scoreboard and residual exceptions are maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` under **Client-Relay Cutover Readiness (2026-03-08)**.
+
 ## Action 1
 Keep this migration plan current in `docs/migration/protocol_update.md`.
 
