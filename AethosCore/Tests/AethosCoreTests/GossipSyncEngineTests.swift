@@ -463,6 +463,118 @@ func gossipSyncRejectsOversizedTransferEnvelopeBeforeDecode() throws {
     #expect(retryReasons.contains("transfer_envelope_bytes_exceeded"))
 }
 
+@Test
+func gossipSyncEvictsOldTrackedFramesWhenPerSessionCapExceeded() throws {
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let localWayfarerId = makeHex64(0x11)
+    let peerWayfarerId = makeHex64(0x22)
+    let sessionId = "sess-evict-tracked"
+
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: localWayfarerId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        knobs: GossipSyncExecutionKnobs(
+            maxInventoryItemsPerSession: 500,
+            maxTransfersPerSession: 64,
+            maxTransferItemsPerFrame: 8,
+            maxTransferBytesPerFrame: 262_144,
+            maxInboundInventoryItemsPerFrame: 500,
+            maxInboundMissingItemIdsPerFrame: 500,
+            maxInboundTransferItemsPerFrame: 64,
+            maxDecodedEnvelopeBytes: 262_144,
+            maxTrackedFramesPerSession: 2,
+            maxAnnouncedInventoryItemsPerSession: 500
+        ),
+        sessionIdFactory: { sessionId }
+    )
+
+    _ = try engine.startSession(with: peerWayfarerId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let requestIds = ["req-evict-1", "req-evict-2", "req-evict-3"]
+    for requestId in requestIds {
+        let frame = GossipMissingRequestFrame(
+            sessionId: sessionId,
+            senderWayfarerId: peerWayfarerId,
+            page: 1,
+            hasMore: false,
+            requestId: requestId,
+            inResponseToPage: 1,
+            missingItemIds: [makeHex64(0x33)],
+            maxTransferItems: 8,
+            maxTransferBytes: 262_144
+        )
+
+        let result = try engine.handleInboundSyncFrame(.missingRequest(frame), from: peerWayfarerId, nowUnixMs: nowUnixMs)
+        #expect(result.disposition == .handled)
+        _ = transport.takeAll()
+    }
+
+    let stats = try #require(engine.debugSessionStats(peerWayfarerId: peerWayfarerId))
+    #expect(stats.trackedFrameCount == 2)
+    #expect(stats.trackedFrameKeysInOrder == [
+        "missing|\(sessionId)|req-evict-2|1",
+        "missing|\(sessionId)|req-evict-3|1"
+    ])
+}
+
+@Test
+func gossipSyncEvictsOldAnnouncedInventoryItemsWhenPerSessionCapExceeded() throws {
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let localWayfarerId = makeHex64(0x44)
+    let peerWayfarerId = makeHex64(0x55)
+    let sessionId = "sess-evict-announced"
+
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: localWayfarerId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        knobs: GossipSyncExecutionKnobs(
+            maxInventoryItemsPerSession: 500,
+            maxTransfersPerSession: 64,
+            maxTransferItemsPerFrame: 8,
+            maxTransferBytesPerFrame: 262_144,
+            maxInboundInventoryItemsPerFrame: 500,
+            maxInboundMissingItemIdsPerFrame: 500,
+            maxInboundTransferItemsPerFrame: 64,
+            maxDecodedEnvelopeBytes: 262_144,
+            maxTrackedFramesPerSession: 64,
+            maxAnnouncedInventoryItemsPerSession: 2
+        )
+    )
+
+    let inventory = [
+        makeInventoryEntry(seed: 0x01, nowUnixMs: nowUnixMs),
+        makeInventoryEntry(seed: 0x02, nowUnixMs: nowUnixMs),
+        makeInventoryEntry(seed: 0x03, nowUnixMs: nowUnixMs)
+    ]
+
+    let frame = GossipInventorySummaryFrame(
+        sessionId: sessionId,
+        senderWayfarerId: peerWayfarerId,
+        page: 1,
+        hasMore: false,
+        inventory: inventory
+    )
+
+    let result = try engine.handleInboundSyncFrame(.inventorySummary(frame), from: peerWayfarerId, nowUnixMs: nowUnixMs)
+    #expect(result.disposition == .handled)
+    _ = transport.takeAll()
+
+    let stats = try #require(engine.debugSessionStats(peerWayfarerId: peerWayfarerId))
+    #expect(stats.announcedInventoryCount == 2)
+    #expect(stats.announcedInventoryItemIdsInOrder == [inventory[1].itemId, inventory[2].itemId])
+}
+
 private struct GossipFixtureCatalog {
     let inventorySummary: GossipInventorySummaryFrame
     let missingRequest: GossipMissingRequestFrame
@@ -609,6 +721,22 @@ private final class ApplyingInboundTransferHandler: GossipInboundTransferApplyin
         onAcceptedItemId?(item.itemId)
         return .accepted
     }
+}
+
+private func makeHex64(_ byte: UInt8) -> String {
+    String(repeating: String(format: "%02x", byte), count: 32)
+}
+
+private func makeInventoryEntry(seed: UInt8, nowUnixMs: UInt64) -> GossipInventoryEntry {
+    GossipInventoryEntry(
+        itemId: makeHex64(seed),
+        manifestId: makeHex64(seed &+ 1),
+        toWayfarerId: makeHex64(seed &+ 2),
+        expiresAtUnixMs: nowUnixMs + 60_000,
+        totalSizeBytes: 1024,
+        chunkSizeBytes: GossipSyncEngine.fixedChunkSizeBytes,
+        chunkCount: 1
+    )
 }
 
 private func decodeBase64URL(_ text: String) -> Data? {
