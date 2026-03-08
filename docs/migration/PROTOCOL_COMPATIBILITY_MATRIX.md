@@ -17,9 +17,9 @@ Related migration references:
 ## Progress Summary
 
 - Total Features: 33
-- Aligned With Spec: 3
-- Diverging From Spec: 17
-- Verification Needed: 5
+- Aligned With Spec: 5
+- Diverging From Spec: 14
+- Verification Needed: 6
 
 Counts are computed per row:
 
@@ -43,20 +43,20 @@ Status vocab:
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CRP-HELLO-DEVICE-ID | `hello.device_id` required | `hello` must include `wayfarer_id` + `device_id` in v1. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`hello` frame under Client -> Relay); Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| CRP-HELLO-DEVICE-ID | `hello.device_id` required | `hello` must include `wayfarer_id` + `device_id` in v1. | OK | OK | both | COMPLETE | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`hello` frame under Client -> Relay); Evidence: relay `dba3f9f` (`internal/api/ws.go`, `tests/compatibility_harness_test.go`), ios `1874fe4`/`e60c471` (`WayfarerApp/CoreBridge/RelayWebSocketClient.swift`, `WayfarerApp/CoreBridgeTests/Fixtures/ClientRelayV1/client_hello_canonical_encode.json`). |
 | CRP-HELLO-WAYFARER-ID-FORMAT | `wayfarer_id` format validation | `wayfarer_id` must be lowercase 64-char hex (`[0-9a-f]{64}`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`; Audit: `relay#confirmed-divergences` |
-| CRP-HELLO-OK-RELAY-ID | `hello_ok.relay_id` required | `hello_ok` must include `relay_id`. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`hello_ok` frame under Relay -> Client); Audit: `relay#confirmed-divergences` |
-| CRP-PAYLOAD-BASE64URL | `payload_b64` canonical encoding | `payload_b64` must be unpadded base64url canonical `EnvelopeV1` bytes. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#1-transport-and-encoding`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| CRP-HELLO-OK-RELAY-ID | `hello_ok.relay_id` required | `hello_ok` must include `relay_id`. | OK | VERIFY | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`hello_ok` frame under Relay -> Client); Evidence: relay `dba3f9f` (`internal/api/ws.go`, `internal/api/ws_test.go`). Residual: iOS canonical-only rejection for missing `relay_id` is not yet verified in runtime tests. |
+| CRP-PAYLOAD-BASE64URL | `payload_b64` canonical encoding | `payload_b64` must be unpadded base64url canonical `EnvelopeV1` bytes. | OK | DIVERGES | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#1-transport-and-encoding`; Evidence: relay `dba3f9f` (`internal/model/payload_b64.go`, `internal/api/ws.go`). Residual: iOS runtime default codec still allows legacy inbound payload forms (`ClientRelayV1Codec` default `.canonicalPreferredLegacyFallback`). |
 | CRP-SEND-TO-MISMATCH-INVARIANTS | Canonical send acceptance invariants | Relay must decode canonical envelope bytes and reject `send.to` mismatches with `TO_MISMATCH`. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#61-send-acceptance`; Audit: `relay#confirmed-divergences` |
-| CRP-HANDSHAKE-ORDERING | Handshake gating before other frames | Client must wait for `hello_ok`; relay must reject pre-handshake non-`hello` frames. | VERIFY | OK | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: `ios#confirmed-matches` |
+| CRP-HANDSHAKE-ORDERING | Handshake gating before other frames | Client must wait for `hello_ok`; relay must reject pre-handshake non-`hello` frames. | OK | OK | both | COMPLETE | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Evidence: relay `dba3f9f` (`internal/api/ws.go` guards on unauthenticated send/pull/ack with canonical `error`), ios `e60c471` (`RelayWebSocketClient.sendHello` readiness boundary). |
 | CRP-ACK-FRAME-SHAPE | Transport ack frame shape | `ack(msg_id)` and `ack_ok(msg_id)` frame fields follow v1 contract. | OK | OK | both | COMPLETE | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`ack` and `ack_ok` frames); Audit: `relay#confirmed-matches` / `ios#confirmed-matches` |
 
 ## Delivery Semantics
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DELIV-TIMESTAMP-FIELD-MAPPING | `at` vs `received_at` / `expires_at` | `message`/`messages` use `received_at`; `send_ok` uses canonical `{type,msg_id}` or optional paired `received_at` + `expires_at`. | OK | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`message`/`messages`/`send_ok` frames), `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Relay emits canonical `received_at`/`expires_at` and keeps legacy `at` alias for transition; iOS accepts canonical `{type,msg_id}` and paired timestamp form, while still tolerating legacy aliasing during migration. |
-| DELIV-PER-DEVICE-ACK-BINDING | Per-device delivery keying | Delivery/ack must bind to `(wayfarer_id, device_id, msg_id)` and not cross-suppress devices. | DIVERGES | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches`; Notes: Relay binds ack to connection delivery identity and prevents cross-device suppression when `device_id` is present. Note: any remaining legacy wayfarer-only suppression compatibility behavior is transitional and must remain gated per `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md` (reject-last + fixture evidence). |
+| DELIV-TIMESTAMP-FIELD-MAPPING | `at` vs `received_at` / `expires_at` | `message`/`messages` use `received_at`; `send_ok` uses canonical `{type,msg_id}` or optional paired `received_at` + `expires_at`. | OK | DIVERGES | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`message`/`messages`/`send_ok` frames), `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Evidence: relay `dba3f9f` canonical emission without legacy `at` (`internal/api/ws.go`, `internal/api/ws_test.go`). Residual: iOS runtime compatibility mode still accepts legacy timestamp aliasing and unpaired timestamp tolerance (`ClientRelayV1Codec`). |
+| DELIV-PER-DEVICE-ACK-BINDING | Per-device delivery keying | Delivery/ack must bind to `(wayfarer_id, device_id, msg_id)` and not cross-suppress devices. | OK | OK | both | COMPLETE | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`; Evidence: relay `dba3f9f` (`internal/api/ws.go`, `internal/storeforward/client.go`, `tests/compatibility_harness_test.go`), ios `e60c471` (client sends device-bound `hello`; relay-side canonical binding asserted). Legacy wayfarer-only suppression fallback removed from relay runtime default path. |
 | DELIV-IDEMPOTENCY-CLIENT-MSG-ID | Idempotent resend support | When `client_msg_id` is present, relay must dedupe and enforce tuple invariants. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#62-retry-and-idempotency`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | DELIV-TTL-DEFAULT-3600 | Default TTL semantics | Omitted `ttl_seconds` defaults to `3600` before max-TTL capping logic. | DIVERGES | OK | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches` |
 | DELIV-EXPIRED-DELIVERY-BOUNDARY | Expired messages must not deliver | Messages with `now_seconds >= expires_at` must not be delivered. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-divergences` |
@@ -67,7 +67,7 @@ Status vocab:
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RETR-PULL-MESSAGES-FIELD-SHAPE | Pull response item schema | `messages[]` entries must include canonical `msg_id`, `from`, `payload_b64`, `received_at` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`messages` frame); Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| RETR-PULL-MESSAGES-FIELD-SHAPE | Pull response item schema | `messages[]` entries must include canonical `msg_id`, `from`, `payload_b64`, `received_at` fields. | OK | DIVERGES | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`messages` frame); Evidence: relay `dba3f9f` canonical `messages[]` emission (`internal/api/ws.go`, `internal/api/ws_test.go`, `tests/testdata/aethos/client_relay_v1/cases/02_canonical_rejections.json`). Residual: iOS parser remains compatibility-tolerant for legacy/non-strict `messages[]` forms in default mode. |
 | RETR-MESSAGES-STRICT-PARSING | Strict required-shape handling | `messages` frame should enforce required array/object shape instead of silently accepting malformed structures. | VERIFY | DIVERGES | aethos-ios | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`messages` frame); Audit: `ios#confirmed-divergences` |
 | RETR-PULL-LIMIT-DEFAULT | Pull limit default behavior | Omitted `pull.limit` defaults to `50`. | OK | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`pull` frame); Audit: `relay#confirmed-matches` |
 
@@ -75,9 +75,28 @@ Status vocab:
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame); Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
-| ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame code set); Audit: `relay#confirmed-divergences` / `ios#verify-items` |
-| ERR-PRE-HELLO-ERROR-PATH | Pre-handshake rejection behavior | Relay should reject non-`hello` pre-handshake frames via canonical error path. | VERIFY | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: none (not yet audited) |
+| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | OK | DIVERGES | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame); Evidence: relay `dba3f9f` (`internal/api/ws.go#sendError`, `tests/compatibility_harness_test.go`). Residual: iOS default runtime keeps legacy fallback parsing (`message -> code -> msg_id`) for migration tolerance. |
+| ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | OK | VERIFY | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame code set); Evidence: relay `dba3f9f` error emissions via `model.ErrorCode*` constants and `sendError`. Residual: iOS-side strict vocabulary handling remains verification-only. |
+| ERR-PRE-HELLO-ERROR-PATH | Pre-handshake rejection behavior | Relay should reject non-`hello` pre-handshake frames via canonical error path. | OK | VERIFY | both | IN_PROGRESS | Bead: aethos-a01 | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Evidence: relay unauthenticated send/pull/ack guards in `internal/api/ws.go` emit canonical `error` frames. Residual: explicit end-to-end pre-hello close-path fixture coverage in iOS client flow remains unverified. |
+
+## Client-Relay Cutover Readiness (2026-03-08)
+
+- **Relay canonical-only cutover:** Substantially complete for handshake identity, canonical `messages`/`send_ok` shapes, canonical `error` frame shape, base64url payload enforcement, and per-device ack binding.
+- **iOS canonical-only runtime cutover:** **Not complete**; canonical fixture scaffolding exists, but runtime default remains compatibility mode for several legacy parse paths.
+- **Go/No-go for next phase:** **GO (conditional)** — enough alignment to begin transport-neutral gossip sync + LAN discovery work, with residual exceptions tracked below.
+
+### Residual exceptions (canonical-only not fully closed)
+
+- `CRP-HELLO-WAYFARER-ID-FORMAT`: relay still accepts non-canonical `wayfarer_id` forms.
+- `CRP-HELLO-OK-RELAY-ID`: iOS strict rejection of missing `relay_id` is not yet verified.
+- `CRP-PAYLOAD-BASE64URL`: iOS runtime still allows legacy inbound payload forms in default mode.
+- `CRP-SEND-TO-MISMATCH-INVARIANTS`: relay invariant enforcement remains incomplete.
+- `DELIV-TIMESTAMP-FIELD-MAPPING`: iOS runtime retains legacy timestamp tolerance in default mode.
+- `DELIV-IDEMPOTENCY-CLIENT-MSG-ID`: relay still lacks full `client_msg_id` idempotency tuple contract.
+- `DELIV-TTL-DEFAULT-3600`: relay default TTL still diverges from canonical 3600-second default.
+- `DELIV-EXPIRED-DELIVERY-BOUNDARY`: relay expiry boundary behavior remains a known divergence.
+- `DELIV-ACK-OK-ROUNDTRIP`: iOS ack flow remains fire-and-forget and does not await/validate `ack_ok`.
+- `RETR-MESSAGES-STRICT-PARSING`: iOS parser still accepts/skips malformed `messages[]` entries in compatibility mode.
 
 ## Client-Relay Cutover Readiness (2026-03-08)
 
@@ -125,6 +144,8 @@ Note: iOS does not implement federation in MVP0. Federation rows use `NOT_IMPLEM
 
 - Relay divergence audit (authoritative): `https://github.com/natemellendorf/aethos-relay/blob/main/docs/PROTOCOL_DIVERGENCES.md`
 - iOS divergence audit (authoritative): `https://github.com/natemellendorf/aethos-ios/blob/main/docs/PROTOCOL_DIVERGENCES.md`
+- Relay canonical cleanup commit: `https://github.com/natemellendorf/aethos-relay/commit/dba3f9f93a5da54f9366da682eee1911076703d4`
+- iOS fixture hardening commits: `https://github.com/natemellendorf/aethos-ios/commit/1874fe4c4b7f0ac68f730e1ed9efb86fdbf334fe`, `https://github.com/natemellendorf/aethos-ios/commit/e60c471f4b6fe02d31a449621c97e5175cc59779`
 - Audit shorthand URL mapping:
   - `relay#<anchor>` -> `https://github.com/natemellendorf/aethos-relay/blob/main/docs/PROTOCOL_DIVERGENCES.md#<anchor>`
   - `ios#<anchor>` -> `https://github.com/natemellendorf/aethos-ios/blob/main/docs/PROTOCOL_DIVERGENCES.md#<anchor>`
