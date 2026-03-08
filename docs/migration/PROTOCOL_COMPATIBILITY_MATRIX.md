@@ -98,6 +98,15 @@ Status vocab:
 - `DELIV-ACK-OK-ROUNDTRIP`: iOS ack flow remains fire-and-forget and does not await/validate `ack_ok`.
 - `RETR-MESSAGES-STRICT-PARSING`: iOS parser still accepts/skips malformed `messages[]` entries in compatibility mode.
 
+## Client-Relay Cutover Readiness (2026-03-08)
+
+### Residual exceptions (canonical-only not fully closed)
+
+- `ERR-ERROR-CODE-VOCABULARY`: iOS strict canonical error-code vocabulary handling remains unverified.
+- `ERR-PRE-HELLO-ERROR-PATH`: iOS end-to-end verification for pre-hello canonical error + close-path remains unverified.
+- `RETR-PULL-LIMIT-DEFAULT`: iOS verification for omitted pull.limit defaulting to 50 remains unverified.
+- `DELIV-RETRY-POLICY`: retry/backoff policy conformance remains unverified on both sides.
+
 ## Federation Protocol
 
 Note: iOS does not implement federation in MVP0. Federation rows use `NOT_IMPLEMENTED` for iOS to encode "not applicable for MVP0" within the allowed status vocabulary.

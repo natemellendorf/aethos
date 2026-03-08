@@ -842,6 +842,13 @@ Keep this migration plan current in `docs/migration/protocol_update.md`.
 ## Action 2
 Create or update `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
+## Migration update (2026-03-08)
+
+- Relay-side canonical-only cleanup is largely complete for client-relay wire behavior.
+- iOS has canonical fixture coverage in place, with remaining runtime compatibility tolerances tracked as residual exceptions.
+- The canonical migration scoreboard and residual exceptions are maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` under **Client-Relay Cutover Readiness (2026-03-08)**.
+- This is not approval to remove legacy acceptance paths yet; canonical-only cutover remains evidence-gated by fixtures + matrix per CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md.
+
 ## Action 3
 Ensure `aethos-relay/docs/PROTOCOL_DIVERGENCES.md` exists.
 
