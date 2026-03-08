@@ -104,6 +104,15 @@ public struct GossipSyncResumeHint: Equatable, Sendable {
     }
 }
 
+struct GossipSyncSessionDebugStats: Equatable, Sendable {
+    let sessionId: String?
+    let state: GossipSyncState
+    let trackedFrameCount: Int
+    let trackedFrameKeysInOrder: [String]
+    let announcedInventoryCount: Int
+    let announcedInventoryItemIdsInOrder: [String]
+}
+
 public struct GossipSyncHooks {
     public let onRetryPending: ((GossipSyncRetryContext) -> Void)?
     public let onResumeAvailable: ((GossipSyncResumeHint) -> Void)?
@@ -212,6 +221,18 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
 
     public func currentState(for peerWayfarerId: String) -> GossipSyncState {
         sessionsByPeerId[peerWayfarerId]?.state ?? .idle
+    }
+
+    func debugSessionStats(peerWayfarerId: String) -> GossipSyncSessionDebugStats? {
+        guard let session = sessionsByPeerId[peerWayfarerId] else { return nil }
+        return GossipSyncSessionDebugStats(
+            sessionId: session.sessionId,
+            state: session.state,
+            trackedFrameCount: session.trackedFrameByIdempotencyKey.count,
+            trackedFrameKeysInOrder: session.trackedFrameOrder,
+            announcedInventoryCount: session.announcedInventoryByItemId.count,
+            announcedInventoryItemIdsInOrder: session.announcedInventoryOrder
+        )
     }
 
     public func startSession(with peerWayfarerId: String, nowUnixMs: UInt64) throws -> String {
