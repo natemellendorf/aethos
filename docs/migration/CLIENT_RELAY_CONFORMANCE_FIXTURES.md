@@ -89,8 +89,9 @@ Each fixture family below defines minimal objective evidence with explicit **MUS
 
 ### CRF-TTL-DEFAULT-3600
 
-- MUST PASS: omitted `send.ttl_seconds` produces persisted `expires_at = received_at + 3600` (before max-TTL capping).
-- MUST FAIL: omitted TTL using a non-3600 default.
+- MUST PASS: omitted `send.ttl_seconds` enforces an effective 3600-second lifetime (before max-TTL capping), validated indirectly by expiry behavior under a controlled clock/time-travel harness (for example: deliverable at `t0+3599`, not deliverable at `t0+3600`).
+- MUST FAIL: omitted TTL using a non-3600 default (observed as too-early or too-late expiry under the same harness).
+- Fixture observability rule: this fixture does **not** require `send_ok` timestamps; it validates effective TTL via delivery/expiry boundary behavior only.
 
 ### CRF-EXPIRED-DELIVERY-BOUNDARY
 
@@ -114,7 +115,9 @@ Each fixture family below defines minimal objective evidence with explicit **MUS
 
 ### CRF-IDEMPOTENCY-TUPLE
 
-- MUST PASS: retry with same `(sender_wayfarer_id, client_msg_id)` and same tuple returns same `send_ok` values.
+- MUST PASS: retry with same `(sender_wayfarer_id, client_msg_id)` and same tuple returns the same `msg_id`.
+- MUST PASS (conditional): if timestamp fields are included in both `send_ok` responses, `received_at` and `expires_at` are identical across retries.
+- Timestamp omission rule: if timestamp fields are omitted, fixture assertions are limited to stable `msg_id` (no timestamp equality requirement).
 - MUST FAIL: same idempotency key with changed tuple is accepted instead of `IDEMPOTENCY_MISMATCH`.
 
 ### CRF-PULL-MESSAGES-SHAPE
