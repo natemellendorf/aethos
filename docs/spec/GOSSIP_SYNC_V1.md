@@ -136,7 +136,7 @@ Pagination/batching behavior:
 Required fields:
 
 - common required fields
-- `transfer_id`: unique per transfer frame
+- `transfer_id`: unique per logical transfer message
 - `in_response_to_request_id`: corresponding `missing_request.request_id`
 - `items`: array of transfer entries
 
@@ -160,13 +160,14 @@ Field semantics:
 
 Versioning expectation:
 
-- `transfer_id` identifies one logical transfer stream and participates in page-level idempotency keys (`(stream_key, page)`).
+- `transfer_id` identifies one logical transfer message and participates in page-level idempotency keys (`(stream_key, page)`).
 
 Pagination/batching behavior:
 
-- `items` MAY be split across pages.
+- For `sync_version=1`, transfer is single-page only.
+- For `sync_version=1`, `transfer.page` MUST be `1` and `transfer.has_more` MUST be `false`.
 - Transfer stream key is `(session_id, transfer_id)`.
-- `has_more=true` means the next page for the same transfer stream key is expected at `page+1`.
+- Multi-page transfer is reserved for future sync versions.
 - Sender SHOULD honor `max_transfer_items` and `max_transfer_bytes` from the corresponding request.
 
 ### 4.4 Receipt (`type = receipt`)
@@ -174,7 +175,7 @@ Pagination/batching behavior:
 Required fields:
 
 - common required fields
-- `receipt_id`: unique per receipt frame
+- `receipt_id`: unique per logical receipt message
 - `in_response_to_transfer_id`: corresponding `transfer.transfer_id`
 - `status`: one of `accepted`, `partial`, `rejected`
 - `accepted_item_ids`: array of `item_id`
@@ -203,13 +204,14 @@ Field semantics:
 
 Versioning expectation:
 
-- `receipt_id` identifies one logical receipt stream and participates in page-level idempotency keys (`(stream_key, page)`).
+- `receipt_id` identifies one logical receipt message and participates in page-level idempotency keys (`(stream_key, page)`).
 
 Pagination/batching behavior:
 
-- Receipts MAY be paged when acknowledging large transfer batches.
+- For `sync_version=1`, receipt is single-page only.
+- For `sync_version=1`, `receipt.page` MUST be `1` and `receipt.has_more` MUST be `false`.
 - Receipt stream key is `(session_id, receipt_id)`.
-- `has_more=true` means the next page for the same receipt stream key is expected at `page+1`.
+- Multi-page receipt is reserved for future sync versions.
 
 ## 5. Versioning Expectations
 
@@ -226,25 +228,29 @@ Pagination is scoped by logical stream key, not only by message type.
 
 - `inventory_summary` stream key: `(session_id, sender_wayfarer_id)` (equivalently `(session_id, type, sender_wayfarer_id)` because `type` is fixed for this stream)
 - `missing_request` stream key: `(session_id, request_id)`
-- `transfer` stream key: `(session_id, transfer_id)`
-- `receipt` stream key: `(session_id, receipt_id)`
+- `transfer` stream key: `(session_id, transfer_id)` (single-page in v1)
+- `receipt` stream key: `(session_id, receipt_id)` (single-page in v1)
 
 ### 6.2 Page ordering and replay
 
-1. Pages are contiguous and 1-based within each stream key.
-2. `has_more=false` marks terminal page for that stream key.
-3. Idempotency key is `(stream_key, page)`.
-4. Replayed frame with same idempotency key MUST be semantically identical.
-5. Out-of-order or gap page numbers for the active stream key MUST be ignored and MUST transition session state to `retry_pending`.
-6. Senders SHOULD cap each frame by item count and byte budget appropriate to transport constraints.
+1. For `inventory_summary` and `missing_request`, pages are contiguous and 1-based within each stream key.
+2. For `inventory_summary` and `missing_request`, `has_more=false` marks terminal page for that stream key.
+3. For `transfer` and `receipt` in `sync_version=1`, `page` MUST be `1` and `has_more` MUST be `false`.
+4. Idempotency key is `(stream_key, page)`.
+5. Replayed frame with same idempotency key MUST be semantically identical.
+6. Out-of-order or gap page numbers on pageable streams (`inventory_summary`, `missing_request`) MUST be ignored and MUST transition session state to `retry_pending`.
+7. Any `transfer`/`receipt` frame in `sync_version=1` with `page != 1` or `has_more != false` MUST be ignored and MUST transition session state to `retry_pending`.
+8. Senders SHOULD cap each frame by item count and byte budget appropriate to transport constraints.
 
 ### 6.3 Session establishment and collisions
 
 1. Session initiator chooses `session_id` and sends the first `inventory_summary`.
 2. Responder MUST echo that `session_id` in all response frames for the active session.
-3. Frames with unknown or non-active `session_id` MUST be ignored and MUST transition local state to `retry_pending`.
-4. Multiple concurrent sessions MUST NOT be interleaved on one peer connection.
-5. If both peers initiate conflicting active sessions on the same connection, both sides MUST transition to `retry_pending` and restart with backoff using a new `session_id`.
+3. In `idle` (no active session), frames with unknown/non-active `session_id` MUST be ignored with no state transition.
+4. Active session states are `inventory_exchanged`, `missing_requested`, `transfer_in_progress`, and `converged`.
+5. In active session states, frames with unknown/different `session_id` MUST be ignored and MUST transition local state to `retry_pending`.
+6. Multiple concurrent sessions MUST NOT be interleaved on one peer connection.
+7. If both peers initiate conflicting active sessions on the same connection, both sides MUST transition to `retry_pending` and restart with backoff using a new `session_id`.
 
 ## 7. Sync Semantics (Expected Exchange)
 
@@ -254,8 +260,8 @@ Expected exchange sequence:
 2. Peer A sends `inventory_summary` pages.
 3. Peer B computes diff and sends `missing_request` pages.
 4. If Peer B has no missing items, Peer B MUST still send `missing_request` with `missing_item_ids=[]`, `page=1`, and `has_more=false`.
-5. Peer A sends `transfer` pages for requested items.
-6. Peer B stores accepted items idempotently and sends `receipt` pages.
+5. Peer A sends `transfer` message(s) for requested items.
+6. Peer B stores accepted items idempotently and sends `receipt` message(s).
 7. Peers repeat from inventory exchange as needed until an empty missing request is exchanged and accepted.
 
 Convergence rule:
@@ -281,8 +287,19 @@ Convergence rule:
 1. Receivers SHOULD retain recently seen `request_id`/`transfer_id`/`receipt_id` values for at least the session lifetime.
 2. Replayed valid frames in-window MUST be idempotent no-ops.
 3. Stale frames from prior sessions (different `session_id`) MUST be ignored.
+4. While in `idle`, stale/unknown-session frames MUST be ignored with no state transition.
+5. While in active session states, stale/unknown-session frames MUST be ignored and MUST transition state to `retry_pending`.
 
-### 8.4 Expiry and TTL
+### 8.4 Violation handling classes (v1)
+
+1. Session mismatch in `idle`: ignore only (no state transition).
+2. Session mismatch in active session states: ignore frame + transition to `retry_pending`.
+3. Page/order violations on pageable streams: ignore frame + transition to `retry_pending`.
+4. `transfer`/`receipt` pagination violations in v1 (`page != 1` or `has_more != false`): ignore frame + transition to `retry_pending`.
+5. Unknown `missing_item_ids` not present in announced inventory: ignore those IDs.
+6. Item content mismatch for existing `item_id`: reject that item with `code=ITEM_ID_MISMATCH`.
+
+### 8.5 Expiry and TTL
 
 1. Expired items (`now_ms >= expires_at_unix_ms`) MUST NOT be requested or transferred.
 2. Sync exchange MUST NOT extend TTL or mutate expiry.
@@ -305,7 +322,7 @@ Transition summary:
 | `idle` | send/receive first `inventory_summary` | `inventory_exchanged` |
 | `inventory_exchanged` | send/receive non-empty `missing_request` | `missing_requested` |
 | `inventory_exchanged` | send/receive empty `missing_request` (`missing_item_ids=[]`, `page=1`, `has_more=false`) | `converged` |
-| `missing_requested` | send/receive first `transfer` page | `transfer_in_progress` |
+| `missing_requested` | send/receive `transfer` (`page=1`, `has_more=false`) | `transfer_in_progress` |
 | `transfer_in_progress` | valid `receipt` processed | `inventory_exchanged` |
 | any active state | timeout, transport failure, unknown/non-active session frame, page/order violation, idempotency mismatch | `retry_pending` |
 | `retry_pending` | retry budget and backoff allow reattempt | `idle` |

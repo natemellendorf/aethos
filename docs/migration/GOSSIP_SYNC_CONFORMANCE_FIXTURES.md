@@ -42,8 +42,10 @@ Future optional fixture representations:
    - Canonical zero-missing convergence request (`missing_item_ids=[]`, `page=1`, `has_more=false`).
 4. `testdata/gossip_sync/v1/transfer.page1.json`
    - Canonical `transfer` carrying one requested item.
+   - v1 single-page invariant: `page=1`, `has_more=false`.
 5. `testdata/gossip_sync/v1/receipt.page1.json`
    - Canonical `receipt` for accepted transfer.
+   - v1 single-page invariant: `page=1`, `has_more=false`.
 
 ### 3.2 Transcript fixture
 
@@ -126,7 +128,8 @@ Implementations validating these fixtures SHOULD verify:
 3. `chunk_size_bytes == 32768` for all transfer/inventory entries.
 4. `item_id == hex_lower(SHA-256(base64url_decode(envelope_b64)))` in fixtures that include `envelope_b64`.
 5. Zero-missing convergence fixture uses `missing_item_ids=[]`, `page=1`, `has_more=false`.
-6. Transcript step ordering/state progression MAY be used for scenario validation but is informative.
+6. Transfer/receipt fixtures use v1 single-page values (`page=1`, `has_more=false`).
+7. Transcript step ordering/state progression MAY be used for scenario validation but is informative.
 
 ## 8. Notes for Conformance Authors
 
