@@ -46,20 +46,39 @@ public struct GossipSyncHandleResult: Equatable, Sendable {
 
 public struct GossipSyncExecutionKnobs: Equatable, Sendable {
     public let maxInventoryItemsPerSession: Int
+    /// Maximum number of transfer frames this engine will send per session.
     public let maxTransfersPerSession: Int
     public let maxTransferItemsPerFrame: Int
     public let maxTransferBytesPerFrame: Int
+    public let maxInboundInventoryItemsPerFrame: Int
+    public let maxInboundMissingItemIdsPerFrame: Int
+    public let maxInboundTransferItemsPerFrame: Int
+    public let maxDecodedEnvelopeBytes: Int
+    public let maxTrackedFramesPerSession: Int
+    public let maxAnnouncedInventoryItemsPerSession: Int
 
     public init(
         maxInventoryItemsPerSession: Int = 500,
         maxTransfersPerSession: Int = 64,
         maxTransferItemsPerFrame: Int = 8,
-        maxTransferBytesPerFrame: Int = 262_144
+        maxTransferBytesPerFrame: Int = 262_144,
+        maxInboundInventoryItemsPerFrame: Int = 500,
+        maxInboundMissingItemIdsPerFrame: Int = 500,
+        maxInboundTransferItemsPerFrame: Int = 64,
+        maxDecodedEnvelopeBytes: Int = 262_144,
+        maxTrackedFramesPerSession: Int = 2_048,
+        maxAnnouncedInventoryItemsPerSession: Int = 500
     ) {
         self.maxInventoryItemsPerSession = max(1, maxInventoryItemsPerSession)
         self.maxTransfersPerSession = max(1, maxTransfersPerSession)
         self.maxTransferItemsPerFrame = max(1, maxTransferItemsPerFrame)
         self.maxTransferBytesPerFrame = max(1, maxTransferBytesPerFrame)
+        self.maxInboundInventoryItemsPerFrame = max(1, maxInboundInventoryItemsPerFrame)
+        self.maxInboundMissingItemIdsPerFrame = max(1, maxInboundMissingItemIdsPerFrame)
+        self.maxInboundTransferItemsPerFrame = max(1, maxInboundTransferItemsPerFrame)
+        self.maxDecodedEnvelopeBytes = max(1, maxDecodedEnvelopeBytes)
+        self.maxTrackedFramesPerSession = max(1, maxTrackedFramesPerSession)
+        self.maxAnnouncedInventoryItemsPerSession = max(1, maxAnnouncedInventoryItemsPerSession)
     }
 }
 
@@ -121,15 +140,21 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
     }
 
     private struct PeerSession {
+        struct RequestedItemSet {
+            let itemIds: Set<String>
+            let inventoryPage: Int
+        }
+
         var sessionId: String?
         var state: GossipSyncState = .idle
-        var expectedInventoryPage: Int = 1
         var announcedInventoryByItemId: [String: GossipInventoryEntry] = [:]
+        var announcedInventoryOrder: [String] = []
         var localAdvertisedByItemId: [String: GossipInventoryEntry] = [:]
-        var requestedItemIdsByRequestId: [String: Set<String>] = [:]
+        var requestedItemSetByRequestId: [String: RequestedItemSet] = [:]
         var transferItemIdsByTransferId: [String: Set<String>] = [:]
         var trackedFrameByIdempotencyKey: [String: Data] = [:]
-        var transfersSentCount: Int = 0
+        var trackedFrameOrder: [String] = []
+        var transferFramesSentCount: Int = 0
         var canceled: Bool = false
     }
 
@@ -216,10 +241,12 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         session.canceled = true
         session.state = .idle
         session.sessionId = nil
-        session.expectedInventoryPage = 1
-        session.requestedItemIdsByRequestId.removeAll()
+        session.requestedItemSetByRequestId.removeAll()
         session.transferItemIdsByTransferId.removeAll()
         session.trackedFrameByIdempotencyKey.removeAll()
+        session.trackedFrameOrder.removeAll()
+        session.announcedInventoryByItemId.removeAll()
+        session.announcedInventoryOrder.removeAll()
         sessionsByPeerId[peerWayfarerId] = session
     }
 
@@ -282,6 +309,12 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
         }
 
+        guard frame.senderWayfarerId == peerWayfarerId else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "sender_peer_mismatch")
+            sessionsByPeerId[peerWayfarerId] = session
+            return GossipSyncHandleResult(peerWayfarerId: peerWayfarerId, state: session.state, disposition: .retryPending, sentFrameCount: 0)
+        }
+
         switch trackFrame(frame, session: &session) {
         case .duplicate:
             sessionsByPeerId[peerWayfarerId] = session
@@ -317,8 +350,13 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         session: inout PeerSession,
         nowUnixMs: UInt64
     ) throws -> Int {
-        guard frame.page == session.expectedInventoryPage else {
-            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "inventory_page_order_violation")
+        guard frame.page == 1, frame.hasMore == false else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "inventory_pagination_violation")
+            return 0
+        }
+
+        guard frame.inventory.count <= knobs.maxInboundInventoryItemsPerFrame else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "inventory_items_exceeded")
             return 0
         }
 
@@ -328,10 +366,9 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
                 return 0
             }
             if nowUnixMs >= entry.expiresAtUnixMs { continue }
-            session.announcedInventoryByItemId[entry.itemId] = entry
+            upsertAnnouncedInventory(entry, session: &session)
         }
 
-        session.expectedInventoryPage += 1
         session.state = .inventoryExchanged
 
         let missing = try computeMissingItemIds(announcedByPeer: session.announcedInventoryByItemId, nowUnixMs: nowUnixMs)
@@ -354,7 +391,10 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             session.state = .converged
         } else {
             session.state = .missingRequested
-            session.requestedItemIdsByRequestId[requestId] = Set(capped)
+            session.requestedItemSetByRequestId[requestId] = PeerSession.RequestedItemSet(
+                itemIds: Set(capped),
+                inventoryPage: frame.page
+            )
         }
         return 1
     }
@@ -365,8 +405,18 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         session: inout PeerSession,
         nowUnixMs: UInt64
     ) throws -> Int {
-        guard frame.page >= 1 else {
-            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_page_invalid")
+        guard frame.page == 1, frame.hasMore == false else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_pagination_violation")
+            return 0
+        }
+
+        guard frame.inResponseToPage == 1 else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_in_response_to_page_invalid")
+            return 0
+        }
+
+        guard frame.missingItemIds.count <= knobs.maxInboundMissingItemIdsPerFrame else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "missing_request_items_exceeded")
             return 0
         }
 
@@ -380,14 +430,13 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return 0
         }
 
-        let remainingSessionTransferBudget = knobs.maxTransfersPerSession - session.transfersSentCount
+        let remainingSessionTransferBudget = knobs.maxTransfersPerSession - session.transferFramesSentCount
         guard remainingSessionTransferBudget > 0 else {
             moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "transfer_budget_exhausted")
             return 0
         }
 
         let allowedItemCount = min(
-            remainingSessionTransferBudget,
             knobs.maxTransferItemsPerFrame,
             frame.maxTransferItems
         )
@@ -437,7 +486,7 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         try transportSender.sendSyncFrame(.transfer(transferFrame), to: peerWayfarerId)
 
         session.transferItemIdsByTransferId[transferId] = Set(transferItems.map(\.itemId))
-        session.transfersSentCount += transferItems.count
+        session.transferFramesSentCount += 1
         session.state = .transferInProgress
         return 1
     }
@@ -453,21 +502,37 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return 0
         }
 
-        guard let requestedIds = session.requestedItemIdsByRequestId[frame.inResponseToRequestId] else {
+        guard frame.items.count <= knobs.maxInboundTransferItemsPerFrame else {
+            moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "transfer_items_exceeded")
+            return 0
+        }
+
+        guard let requestedSet = session.requestedItemSetByRequestId[frame.inResponseToRequestId] else {
             moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "unknown_request_for_transfer")
             return 0
         }
+
+        let requestedIds = requestedSet.itemIds
 
         var accepted: [String] = []
         var rejected: [GossipRejectedItem] = []
 
         for item in frame.items {
+            if Base64URL.estimatedDecodedByteCount(for: item.envelopeB64) > knobs.maxDecodedEnvelopeBytes {
+                moveToRetryPending(peerWayfarerId: peerWayfarerId, session: &session, reason: "transfer_envelope_bytes_exceeded")
+                return 0
+            }
+
             if !requestedIds.contains(item.itemId) {
                 rejected.append(GossipRejectedItem(itemId: item.itemId, code: "UNREQUESTED_ITEM", message: "Item was not requested in active session."))
                 continue
             }
 
-            let validation = Self.validateTransferEntry(item, nowUnixMs: nowUnixMs)
+            let validation = Self.validateTransferEntry(
+                item,
+                nowUnixMs: nowUnixMs,
+                maxDecodedEnvelopeBytes: knobs.maxDecodedEnvelopeBytes
+            )
             switch validation {
             case .invalid(let code, let message):
                 rejected.append(GossipRejectedItem(itemId: item.itemId, code: code, message: message))
@@ -515,7 +580,7 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
 
         try transportSender.sendSyncFrame(.receipt(receiptFrame), to: peerWayfarerId)
 
-        session.requestedItemIdsByRequestId.removeValue(forKey: frame.inResponseToRequestId)
+        session.requestedItemSetByRequestId.removeValue(forKey: frame.inResponseToRequestId)
         session.state = .inventoryExchanged
 
         let missing = try computeMissingItemIds(announcedByPeer: session.announcedInventoryByItemId, nowUnixMs: nowUnixMs)
@@ -527,7 +592,7 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             page: 1,
             hasMore: false,
             requestId: nextRequestId,
-            inResponseToPage: 1,
+            inResponseToPage: requestedSet.inventoryPage,
             missingItemIds: capped,
             maxTransferItems: knobs.maxTransferItemsPerFrame,
             maxTransferBytes: knobs.maxTransferBytesPerFrame
@@ -537,7 +602,10 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             session.state = .converged
         } else {
             session.state = .missingRequested
-            session.requestedItemIdsByRequestId[nextRequestId] = Set(capped)
+            session.requestedItemSetByRequestId[nextRequestId] = PeerSession.RequestedItemSet(
+                itemIds: Set(capped),
+                inventoryPage: requestedSet.inventoryPage
+            )
         }
 
         return 2
@@ -645,13 +713,29 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
 
     private func trackFrame(_ frame: GossipSyncFrame, session: inout PeerSession) -> FrameTrackingVerdict {
         let idempotencyKey = Self.idempotencyKey(for: frame)
-        let fingerprint = Self.frameFingerprint(frame)
+        let fingerprint: Data
+        do {
+            fingerprint = try Self.frameFingerprint(frame)
+        } catch {
+            return .violation("frame_fingerprint_failed")
+        }
 
         if let existing = session.trackedFrameByIdempotencyKey[idempotencyKey] {
             if existing == fingerprint {
                 return .duplicate
             }
             return .violation("idempotency_mismatch")
+        }
+
+        if case .inventorySummary(let inventoryFrame) = frame {
+            if inventoryFrame.page != 1 || inventoryFrame.hasMore {
+                return .violation("inventory_pagination_violation")
+            }
+        }
+        if case .missingRequest(let missingFrame) = frame {
+            if missingFrame.page != 1 || missingFrame.hasMore {
+                return .violation("missing_request_pagination_violation")
+            }
         }
 
         if case .transfer(let transferFrame) = frame {
@@ -666,6 +750,8 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         }
 
         session.trackedFrameByIdempotencyKey[idempotencyKey] = fingerprint
+        session.trackedFrameOrder.append(idempotencyKey)
+        evictOldTrackedFrames(session: &session)
         return .accept
     }
 
@@ -682,10 +768,10 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         }
     }
 
-    private static func frameFingerprint(_ frame: GossipSyncFrame) -> Data {
+    private static func frameFingerprint(_ frame: GossipSyncFrame) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return (try? encoder.encode(frame)) ?? Data()
+        return try encoder.encode(frame)
     }
 
     private static func validateCommonFrameFields(_ frame: GossipSyncFrame) -> Bool {
@@ -710,7 +796,11 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         case invalid(code: String, message: String)
     }
 
-    private static func validateTransferEntry(_ entry: GossipTransferEntry, nowUnixMs: UInt64) -> TransferValidation {
+    private static func validateTransferEntry(
+        _ entry: GossipTransferEntry,
+        nowUnixMs: UInt64,
+        maxDecodedEnvelopeBytes: Int
+    ) -> TransferValidation {
         guard isLowerHex64(entry.itemId) else {
             return .invalid(code: "INVALID_ITEM_ID", message: "item_id must be lowercase 64-char hex.")
         }
@@ -727,7 +817,7 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
             return .invalid(code: "ITEM_EXPIRED", message: "Transfer item is expired.")
         }
 
-        guard let envelopeBytes = Base64URL.decode(entry.envelopeB64) else {
+        guard let envelopeBytes = Base64URL.decode(entry.envelopeB64, maxDecodedBytes: maxDecodedEnvelopeBytes) else {
             return .invalid(code: "INVALID_ENVELOPE_BASE64", message: "envelope_b64 is not valid base64url.")
         }
 
@@ -810,6 +900,25 @@ public final class GossipSyncEngine: GossipSyncInboundFrameHandling {
         }
         return true
     }
+
+    private func upsertAnnouncedInventory(_ entry: GossipInventoryEntry, session: inout PeerSession) {
+        if session.announcedInventoryByItemId[entry.itemId] == nil {
+            session.announcedInventoryOrder.append(entry.itemId)
+        }
+        session.announcedInventoryByItemId[entry.itemId] = entry
+
+        while session.announcedInventoryOrder.count > knobs.maxAnnouncedInventoryItemsPerSession {
+            let evictedItemId = session.announcedInventoryOrder.removeFirst()
+            session.announcedInventoryByItemId.removeValue(forKey: evictedItemId)
+        }
+    }
+
+    private func evictOldTrackedFrames(session: inout PeerSession) {
+        while session.trackedFrameOrder.count > knobs.maxTrackedFramesPerSession {
+            let evictedKey = session.trackedFrameOrder.removeFirst()
+            session.trackedFrameByIdempotencyKey.removeValue(forKey: evictedKey)
+        }
+    }
 }
 
 public enum GossipSyncFrameCodec {
@@ -857,7 +966,12 @@ private enum Base64URL {
             .replacingOccurrences(of: "/", with: "_")
     }
 
-    static func decode(_ text: String) -> Data? {
+    static func decode(_ text: String, maxDecodedBytes: Int = Int.max) -> Data? {
+        let estimatedDecodedBytes = estimatedDecodedByteCount(for: text)
+        if estimatedDecodedBytes > maxDecodedBytes {
+            return nil
+        }
+
         var normalized = text
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
@@ -865,7 +979,17 @@ private enum Base64URL {
         if remainder != 0 {
             normalized += String(repeating: "=", count: 4 - remainder)
         }
-        return Data(base64Encoded: normalized)
+        guard let decoded = Data(base64Encoded: normalized) else {
+            return nil
+        }
+        guard decoded.count <= maxDecodedBytes else {
+            return nil
+        }
+        return decoded
+    }
+
+    static func estimatedDecodedByteCount(for text: String) -> Int {
+        ((text.count + 3) / 4) * 3
     }
 }
 
