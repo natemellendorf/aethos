@@ -436,6 +436,8 @@ func gossipSyncRejectsOversizedTransferEnvelopeBeforeDecode() throws {
     _ = try engine.handleInboundSyncFrame(.inventorySummary(fixtures.inventorySummary), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
     _ = transport.takeAll()
 
+    let statsBeforeTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+
     let hugeEnvelope = String(repeating: "A", count: 250_000)
     let oversizedEnvelopeTransfer = GossipTransferFrame(
         sessionId: fixtures.sessionId,
@@ -461,6 +463,9 @@ func gossipSyncRejectsOversizedTransferEnvelopeBeforeDecode() throws {
     let transferResult = try engine.handleInboundSyncFrame(.transfer(oversizedEnvelopeTransfer), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
     #expect(transferResult.disposition == .retryPending)
     #expect(retryReasons.contains("transfer_envelope_bytes_exceeded"))
+
+    let statsAfterTransfer = try #require(engine.debugSessionStats(peerWayfarerId: fixtures.peerAId))
+    #expect(statsAfterTransfer.trackedFrameCount == statsBeforeTransfer.trackedFrameCount)
 }
 
 @Test
@@ -521,6 +526,7 @@ func gossipSyncEvictsOldTrackedFramesWhenPerSessionCapExceeded() throws {
         "missing|\(sessionId)|req-evict-2|1",
         "missing|\(sessionId)|req-evict-3|1"
     ])
+    #expect(stats.trackedFrameFingerprintByteCountMax == 32)
 }
 
 @Test
