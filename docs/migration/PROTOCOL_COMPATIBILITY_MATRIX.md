@@ -1,12 +1,12 @@
 # Protocol Compatibility Matrix (Migration Scoreboard)
 
-Purpose: track implementation alignment against canonical protocol specs across `aethos-relay` and `aethos-ios`, and map each gap to migration work. Related migration plan: `docs/migration/protocol_update.md`.
+Purpose: track implementation alignment against canonical protocol specs across `aethos-relay` and `aethos-ios`, and map each gap to migration work. Related migration plan: [protocol_update.md](./protocol_update.md).
 
 ## See also
 
-- Legacy cleanup plan: `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`
-- Client-relay conformance fixtures: `docs/migration/CLIENT_RELAY_CONFORMANCE_FIXTURES.md`
-- Migration plan: `docs/migration/protocol_update.md`
+- [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
+- [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
+- [Migration plan](./protocol_update.md)
 
 ## Progress Summary
 
@@ -15,7 +15,12 @@ Purpose: track implementation alignment against canonical protocol specs across 
 - Diverging From Spec: 17
 - Verification Needed: 5
 
-Counts are computed per row: **Aligned** when both Relay and iOS are `OK`; **Diverging** when either side is `DIVERGES`; **Verification Needed** when no side is `DIVERGES` and at least one side is `VERIFY`. Rows with any `NOT_IMPLEMENTED` status are included in **Total Features** but excluded from **Aligned**/**Diverging**/**Verification Needed** totals.
+Counts are computed per row:
+
+- **Aligned** when both Relay and iOS are `OK`.
+- **Diverging** when either side is `DIVERGES`.
+- **Verification Needed** when no side is `DIVERGES` and at least one side is `VERIFY`.
+- Rows with any `NOT_IMPLEMENTED` status are included in **Total Features** but excluded from **Aligned**/**Diverging**/**Verification Needed** totals.
 
 ## Schema
 
@@ -26,25 +31,25 @@ Status vocab:
 
 - Relay/iOS Status: `OK` / `DIVERGES` / `VERIFY` / `NOT_IMPLEMENTED`
 - Migration Status: `TODO` / `IN_PROGRESS` / `COMPLETE`
-- Owner: `aethos-relay` / `aethos-ios` / `both`
+- Owner: `aethos-relay` / `aethos-ios` / `both` (`both` means coordinated rollout and validation are required across repos)
 
 ## Client Relay Protocol
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CRP-HELLO-DEVICE-ID | `hello.device_id` required | `hello` must include `wayfarer_id` + `device_id` in v1. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-hello`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| CRP-HELLO-DEVICE-ID | `hello.device_id` required | `hello` must include `wayfarer_id` + `device_id` in v1. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-client---relay`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
 | CRP-HELLO-WAYFARER-ID-FORMAT | `wayfarer_id` format validation | `wayfarer_id` must be lowercase 64-char hex (`[0-9a-f]{64}`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`; Audit: `relay#confirmed-divergences` |
-| CRP-HELLO-OK-RELAY-ID | `hello_ok.relay_id` required | `hello_ok` must include `relay_id`. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-hello_ok`; Audit: `relay#confirmed-divergences` |
+| CRP-HELLO-OK-RELAY-ID | `hello_ok.relay_id` required | `hello_ok` must include `relay_id`. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-divergences` |
 | CRP-PAYLOAD-BASE64URL | `payload_b64` canonical encoding | `payload_b64` must be unpadded base64url canonical `EnvelopeV1` bytes. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#1-transport-and-encoding`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
 | CRP-SEND-TO-MISMATCH-INVARIANTS | Canonical send acceptance invariants | Relay must decode canonical envelope bytes and reject `send.to` mismatches with `TO_MISMATCH`. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#61-send-acceptance`; Audit: `relay#confirmed-divergences` |
 | CRP-HANDSHAKE-ORDERING | Handshake gating before other frames | Client must wait for `hello_ok`; relay must reject pre-handshake non-`hello` frames. | VERIFY | OK | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: `ios#confirmed-matches` |
-| CRP-ACK-FRAME-SHAPE | Transport ack frame shape | `ack(msg_id)` and `ack_ok(msg_id)` frame fields follow v1 contract. | OK | OK | both | COMPLETE | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-ack`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#ack_ok`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches` |
+| CRP-ACK-FRAME-SHAPE | Transport ack frame shape | `ack(msg_id)` and `ack_ok(msg_id)` frame fields follow v1 contract. | OK | OK | both | COMPLETE | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-client---relay`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches` |
 
 ## Delivery Semantics
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DELIV-TIMESTAMP-FIELD-MAPPING | `at` vs `received_at` / `expires_at` | `message`/`messages` use `received_at`; `send_ok` uses optional paired `received_at` + `expires_at`. | OK | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#send_ok`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#message`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#messages`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Relay emits canonical `received_at`/`expires_at` and keeps legacy `at` alias for transition; iOS prefers canonical fields and tolerates legacy/`msg_id`-only `send_ok` frames. |
+| DELIV-TIMESTAMP-FIELD-MAPPING | `at` vs `received_at` / `expires_at` | `message`/`messages` use `received_at`; `send_ok` uses optional paired `received_at` + `expires_at`. | OK | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Relay emits canonical `received_at`/`expires_at` and keeps legacy `at` alias for transition; iOS prefers canonical fields and tolerates legacy/`msg_id`-only `send_ok` frames. |
 | DELIV-PER-DEVICE-ACK-BINDING | Per-device delivery keying | Delivery/ack must bind to `(wayfarer_id, device_id, msg_id)` and not cross-suppress devices. | DIVERGES | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches`; Notes: Relay binds ack to connection delivery identity and prevents cross-device suppression when `device_id` is present, but still keeps legacy wayfarer-only fallback (and legacy suppression mode by default) for migration compatibility. |
 | DELIV-IDEMPOTENCY-CLIENT-MSG-ID | Idempotent resend support | When `client_msg_id` is present, relay must dedupe and enforce tuple invariants. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#62-retry-and-idempotency`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | DELIV-TTL-DEFAULT-3600 | Default TTL semantics | Omitted `ttl_seconds` defaults to `3600` before max-TTL capping logic. | DIVERGES | OK | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches` |
@@ -56,16 +61,16 @@ Status vocab:
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RETR-PULL-MESSAGES-FIELD-SHAPE | Pull response item schema | `messages[]` entries must include canonical `msg_id`, `from`, `payload_b64`, `received_at` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#messages`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
-| RETR-MESSAGES-STRICT-PARSING | Strict required-shape handling | `messages` frame should enforce required array/object shape instead of silently accepting malformed structures. | VERIFY | DIVERGES | aethos-ios | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#messages`; Audit: `ios#confirmed-divergences` |
-| RETR-PULL-LIMIT-DEFAULT | Pull limit default behavior | Omitted `pull.limit` defaults to `50`. | OK | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-pull`; Audit: `relay#confirmed-matches` |
+| RETR-PULL-MESSAGES-FIELD-SHAPE | Pull response item schema | `messages[]` entries must include canonical `msg_id`, `from`, `payload_b64`, `received_at` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| RETR-MESSAGES-STRICT-PARSING | Strict required-shape handling | `messages` frame should enforce required array/object shape instead of silently accepting malformed structures. | VERIFY | DIVERGES | aethos-ios | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `ios#confirmed-divergences` |
+| RETR-PULL-LIMIT-DEFAULT | Pull limit default behavior | Omitted `pull.limit` defaults to `50`. | OK | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#31-client---relay`; Audit: `relay#confirmed-matches` |
 
 ## Error Handling
 
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-error`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
-| ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-error`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
+| ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
+| ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | ERR-PRE-HELLO-ERROR-PATH | Pre-handshake rejection behavior | Relay should reject non-`hello` pre-handshake frames via canonical error path. | VERIFY | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: none (not yet audited) |
 
 ## Federation Protocol
@@ -90,7 +95,7 @@ Note: iOS does not implement federation in MVP0. Federation rows use `NOT_IMPLEM
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RCP-RECEIPT-WRAPPER-SUPPORT | Receipt wrapper support for mixed scopes | JSON channels carrying mixed scopes require `receipt_scope` + `receipt_v1_b64` wrapper. | DIVERGES | VERIFY | both | TODO | - | Spec: `docs/spec/RECEIPTS.md#41-json-transport-wrapper`; Audit: `relay#confirmed-divergences` |
 | RCP-NON-CONFLATION | Device vs federation non-conflation | `DeviceReceipt` and `FederationReceipt` semantics must remain distinct. | OK | VERIFY | both | TODO | - | Spec: `docs/spec/RECEIPTS.md#3-non-conflation-requirement`; Audit: `relay#confirmed-matches` |
-| RCP-ACK-TRANSPORT-VS-RECEIPT | `ack_ok` transport vs receipt semantics | `ack_ok` transport response semantics must remain separate from `ReceiptV1` semantics. | OK | OK | both | COMPLETE | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/RECEIPTS.md#3-non-conflation-requirement`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#ack_ok`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Both repos keep `ack`/`ack_ok` transport-level and do not treat them as `ReceiptV1`; explicit receipt wrappers remain tracked in `RCP-RECEIPT-WRAPPER-SUPPORT`. |
+| RCP-ACK-TRANSPORT-VS-RECEIPT | `ack_ok` transport vs receipt semantics | `ack_ok` transport response semantics must remain separate from `ReceiptV1` semantics. | OK | OK | both | COMPLETE | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/RECEIPTS.md#3-non-conflation-requirement`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#32-relay---client`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Both repos keep `ack`/`ack_ok` transport-level and do not treat them as `ReceiptV1`; explicit receipt wrappers remain tracked in `RCP-RECEIPT-WRAPPER-SUPPORT`. |
 | RCP-IOS-STATUS-VOCABULARY-MAPPING | Client status vocabulary mapping | Client-facing receipt/delivery vocabulary should align with canonical device-level receipt semantics. | OK | DIVERGES | aethos-ios | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/RECEIPTS.md#2-vocabulary-layer`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#64-receive-acknowledgment`; Audit: `ios#confirmed-divergences`; Notes: iOS app-layer status vocabulary remains local send-state oriented (`queued/sent/failed`) rather than canonical device-receipt vocabulary. |
 
 ## Updating the Matrix
@@ -99,6 +104,7 @@ Note: iOS does not implement federation in MVP0. Federation rows use `NOT_IMPLEM
 - Never delete rows; retain history and update status fields as implementation evolves.
 - Update Relay/iOS status directly from implementation audits, not inferred assumptions.
 - Add the owning migration bead ID in `Alignment Bead` when work is scheduled or in progress.
+- Use fixture evidence from [CLIENT_RELAY_CONFORMANCE_FIXTURES.md](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md) when promoting compatibility rows toward canonical-only completion.
 
 ## Sources
 

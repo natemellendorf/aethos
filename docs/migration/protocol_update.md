@@ -23,9 +23,9 @@ This document defines:
 
 ## See also
 
-- Legacy cleanup plan: `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`
-- Client-relay conformance fixtures: `docs/migration/CLIENT_RELAY_CONFORMANCE_FIXTURES.md`
-- Compatibility matrix: `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+- [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
+- [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
+- [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
 
 ---
 
@@ -432,7 +432,7 @@ Potential examples:
 
 ### Step 3.3 — Normalize payload encoding
 #### Goal
-Align on canonical encoding, likely base64url if that remains the spec decision.
+Align on canonical unpadded base64url encoding per `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#1-transport-and-encoding`.
 
 #### Work
 - relay accepts legacy encoding and canonical encoding during transition
@@ -792,8 +792,8 @@ The following questions should be answered during the migration.
 Should `aethos` host executable shared sync code, or should that live in a new shared runtime module?
 
 ## Q2
-What is the final canonical payload encoding?
-Base64 or base64url?
+Rollout verification question (decision already recorded):
+Confirm all clients and relays have cut over to canonical unpadded base64url payload encoding and remove legacy base64 acceptance.
 
 ## Q3
 What is the exact canonical timestamp vocabulary?
@@ -836,7 +836,7 @@ Ensure `aethos-ios/docs/PROTOCOL_DIVERGENCES.md` exists and includes the already
 - missing device_id in hello
 - field-name differences such as at vs received_at
 - error shape differences
-- base64url vs base64 expectations
+- canonical base64url (no padding) vs legacy base64 compatibility expectations
 
 ## Action 5
 Complete the relay store-and-forward engine extraction bead currently in progress.
