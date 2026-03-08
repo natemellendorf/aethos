@@ -195,7 +195,7 @@ func gossipSyncPageAndSessionViolationsMoveToRetryPending() throws {
     let result1 = try engine.handleInboundSyncFrame(.inventorySummary(badInventoryPage), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
     #expect(result1.disposition == .retryPending)
     #expect(engine.currentState(for: fixtures.peerAId) == .retryPending)
-    #expect(retryReasons.contains("inventory_page_order_violation"))
+    #expect(retryReasons.contains("inventory_pagination_violation"))
 
     engine.cancelSession(with: fixtures.peerAId)
     _ = try engine.startSession(with: fixtures.peerAId, nowUnixMs: nowUnixMs)
@@ -217,6 +217,250 @@ func gossipSyncPageAndSessionViolationsMoveToRetryPending() throws {
     #expect(result2.disposition == .retryPending)
     #expect(engine.currentState(for: fixtures.peerAId) == .retryPending)
     #expect(retryReasons.contains("session_mismatch"))
+}
+
+@Test
+func gossipSyncRejectsSenderSpoofingWithRetryPending() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+
+    var retryReasons: [String] = []
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: CapturingTransportSender(),
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) })
+    )
+
+    let spoofedSender = GossipInventorySummaryFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        inventory: fixtures.inventorySummary.inventory
+    )
+
+    let result = try engine.handleInboundSyncFrame(.inventorySummary(spoofedSender), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    #expect(result.disposition == .retryPending)
+    #expect(engine.currentState(for: fixtures.peerAId) == .retryPending)
+    #expect(retryReasons.contains("sender_peer_mismatch"))
+}
+
+@Test
+func gossipSyncRejectsInventoryPageAfterTerminalPage() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(inventoryByPeer: [:], localItemIds: []),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) })
+    )
+
+    _ = try engine.handleInboundSyncFrame(.inventorySummary(fixtures.inventorySummary), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let pageTwo = GossipInventorySummaryFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerAId,
+        page: 2,
+        hasMore: false,
+        inventory: []
+    )
+    let result = try engine.handleInboundSyncFrame(.inventorySummary(pageTwo), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+
+    #expect(result.disposition == .retryPending)
+    #expect(engine.currentState(for: fixtures.peerAId) == .retryPending)
+    #expect(retryReasons.contains("inventory_pagination_violation"))
+}
+
+@Test
+func gossipSyncRejectsMultiPageMissingRequestInMVP0Mode() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerAId,
+        inventoryProvider: StaticInventoryProvider(
+            inventoryByPeer: [fixtures.peerBId: fixtures.inventorySummary.inventory],
+            localItemIds: Set(fixtures.inventorySummary.inventory.map(\.itemId))
+        ),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        sessionIdFactory: { fixtures.sessionId }
+    )
+
+    _ = try engine.startSession(with: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let multiPage = GossipMissingRequestFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 2,
+        hasMore: false,
+        requestId: fixtures.missingRequest.requestId,
+        inResponseToPage: 1,
+        missingItemIds: fixtures.missingRequest.missingItemIds,
+        maxTransferItems: fixtures.missingRequest.maxTransferItems,
+        maxTransferBytes: fixtures.missingRequest.maxTransferBytes
+    )
+    let result = try engine.handleInboundSyncFrame(.missingRequest(multiPage), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+
+    #expect(result.disposition == .retryPending)
+    #expect(engine.currentState(for: fixtures.peerBId) == .retryPending)
+    #expect(retryReasons.contains("missing_request_pagination_violation"))
+}
+
+@Test
+func gossipSyncAppliesInboundCapsToMissingAndTransferFrames() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerAId,
+        inventoryProvider: StaticInventoryProvider(
+            inventoryByPeer: [fixtures.peerBId: fixtures.inventorySummary.inventory],
+            localItemIds: Set(fixtures.inventorySummary.inventory.map(\.itemId))
+        ),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        knobs: GossipSyncExecutionKnobs(
+            maxInventoryItemsPerSession: 500,
+            maxTransfersPerSession: 64,
+            maxTransferItemsPerFrame: 8,
+            maxTransferBytesPerFrame: 262_144,
+            maxInboundInventoryItemsPerFrame: 500,
+            maxInboundMissingItemIdsPerFrame: 2,
+            maxInboundTransferItemsPerFrame: 1,
+            maxDecodedEnvelopeBytes: 64,
+            maxTrackedFramesPerSession: 64,
+            maxAnnouncedInventoryItemsPerSession: 500
+        ),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        sessionIdFactory: { fixtures.sessionId }
+    )
+
+    _ = try engine.startSession(with: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let tooManyMissing = GossipMissingRequestFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        requestId: "req-over-cap",
+        inResponseToPage: 1,
+        missingItemIds: [
+            fixtures.transfer.items[0].itemId,
+            fixtures.inventorySummary.inventory[0].itemId,
+            fixtures.inventorySummary.inventory[1].itemId
+        ],
+        maxTransferItems: fixtures.missingRequest.maxTransferItems,
+        maxTransferBytes: fixtures.missingRequest.maxTransferBytes
+    )
+    let missingResult = try engine.handleInboundSyncFrame(.missingRequest(tooManyMissing), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+
+    #expect(missingResult.disposition == .retryPending)
+    #expect(retryReasons.contains("missing_request_items_exceeded"))
+
+    engine.cancelSession(with: fixtures.peerBId)
+    _ = try engine.startSession(with: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let tooManyTransferItems = GossipTransferFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerBId,
+        page: 1,
+        hasMore: false,
+        transferId: "xfer-count-cap",
+        inResponseToRequestId: "req-any",
+        items: [fixtures.transfer.items[0], fixtures.transfer.items[0]]
+    )
+    let transferCountResult = try engine.handleInboundSyncFrame(.transfer(tooManyTransferItems), from: fixtures.peerBId, nowUnixMs: nowUnixMs)
+    #expect(transferCountResult.disposition == .retryPending)
+    #expect(retryReasons.contains("transfer_items_exceeded"))
+}
+
+@Test
+func gossipSyncRejectsOversizedTransferEnvelopeBeforeDecode() throws {
+    let fixtures = try GossipFixtureCatalog.load()
+    let nowUnixMs: UInt64 = 1_767_000_000_000
+    let requestId = "req-envelope-cap"
+
+    var retryReasons: [String] = []
+    let transport = CapturingTransportSender()
+    let engine = try GossipSyncEngine(
+        localWayfarerId: fixtures.peerBId,
+        inventoryProvider: StaticInventoryProvider(
+            inventoryByPeer: [:],
+            localItemIds: []
+        ),
+        messageLoader: StaticMessageLoader(itemsById: [:]),
+        receiptRecorder: CapturingReceiptRecorder(),
+        transportSender: transport,
+        inboundTransferHandler: ApplyingInboundTransferHandler(),
+        knobs: GossipSyncExecutionKnobs(
+            maxInventoryItemsPerSession: 500,
+            maxTransfersPerSession: 64,
+            maxTransferItemsPerFrame: 8,
+            maxTransferBytesPerFrame: 262_144,
+            maxInboundInventoryItemsPerFrame: 500,
+            maxInboundMissingItemIdsPerFrame: 500,
+            maxInboundTransferItemsPerFrame: 4,
+            maxDecodedEnvelopeBytes: 64,
+            maxTrackedFramesPerSession: 64,
+            maxAnnouncedInventoryItemsPerSession: 500
+        ),
+        hooks: GossipSyncHooks(onRetryPending: { retryReasons.append($0.reason) }),
+        requestIdFactory: { requestId }
+    )
+
+    _ = try engine.handleInboundSyncFrame(.inventorySummary(fixtures.inventorySummary), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    _ = transport.takeAll()
+
+    let hugeEnvelope = String(repeating: "A", count: 250_000)
+    let oversizedEnvelopeTransfer = GossipTransferFrame(
+        sessionId: fixtures.sessionId,
+        senderWayfarerId: fixtures.peerAId,
+        page: 1,
+        hasMore: false,
+        transferId: "xfer-envelope-cap",
+        inResponseToRequestId: requestId,
+        items: [
+            GossipTransferEntry(
+                itemId: fixtures.transfer.items[0].itemId,
+                manifestId: fixtures.transfer.items[0].manifestId,
+                toWayfarerId: fixtures.transfer.items[0].toWayfarerId,
+                expiresAtUnixMs: fixtures.transfer.items[0].expiresAtUnixMs,
+                totalSizeBytes: fixtures.transfer.items[0].totalSizeBytes,
+                chunkSizeBytes: fixtures.transfer.items[0].chunkSizeBytes,
+                chunkCount: fixtures.transfer.items[0].chunkCount,
+                envelopeB64: hugeEnvelope
+            )
+        ]
+    )
+
+    let transferResult = try engine.handleInboundSyncFrame(.transfer(oversizedEnvelopeTransfer), from: fixtures.peerAId, nowUnixMs: nowUnixMs)
+    #expect(transferResult.disposition == .retryPending)
+    #expect(retryReasons.contains("transfer_envelope_bytes_exceeded"))
 }
 
 private struct GossipFixtureCatalog {
