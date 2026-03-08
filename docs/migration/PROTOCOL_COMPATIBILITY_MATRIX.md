@@ -56,7 +56,7 @@ Status vocab:
 | Feature ID | Feature | Spec Expectation | Relay Status | iOS Status | Owner | Migration Status | Alignment Bead | Spec Reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | DELIV-TIMESTAMP-FIELD-MAPPING | `at` vs `received_at` / `expires_at` | `message`/`messages` use `received_at`; `send_ok` uses canonical `{type,msg_id}` or optional paired `received_at` + `expires_at`. | OK | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`message`/`messages`/`send_ok` frames), `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-matches` / `ios#confirmed-matches`; Notes: Relay emits canonical `received_at`/`expires_at` and keeps legacy `at` alias for transition; iOS accepts canonical `{type,msg_id}` and paired timestamp form, while still tolerating legacy aliasing during migration. |
-| DELIV-PER-DEVICE-ACK-BINDING | Per-device delivery keying | Delivery/ack must bind to `(wayfarer_id, device_id, msg_id)` and not cross-suppress devices. | DIVERGES | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches`; Notes: Relay binds ack to connection delivery identity and prevents cross-device suppression when `device_id` is present, but still keeps legacy wayfarer-only fallback (and legacy suppression mode by default) for migration compatibility. |
+| DELIV-PER-DEVICE-ACK-BINDING | Per-device delivery keying | Delivery/ack must bind to `(wayfarer_id, device_id, msg_id)` and not cross-suppress devices. | DIVERGES | OK | both | IN_PROGRESS | Bead: aethos — Verify and Update Receipt/Ack Status in Compatibility Matrix | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#63-per-device-tracking-and-ack-binding-v1-requirement`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches`; Notes: Relay binds ack to connection delivery identity and prevents cross-device suppression when `device_id` is present. Note: any remaining legacy wayfarer-only suppression compatibility behavior is transitional and must remain gated per `docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md` (reject-last + fixture evidence). |
 | DELIV-IDEMPOTENCY-CLIENT-MSG-ID | Idempotent resend support | When `client_msg_id` is present, relay must dedupe and enforce tuple invariants. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#62-retry-and-idempotency`; Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | DELIV-TTL-DEFAULT-3600 | Default TTL semantics | Omitted `ttl_seconds` defaults to `3600` before max-TTL capping logic. | DIVERGES | OK | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#2-shared-types`, `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-divergences` / `ios#confirmed-matches` |
 | DELIV-EXPIRED-DELIVERY-BOUNDARY | Expired messages must not deliver | Messages with `now_seconds >= expires_at` must not be delivered. | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#7-ttl-semantics-normative`; Audit: `relay#confirmed-divergences` |
@@ -78,6 +78,15 @@ Status vocab:
 | ERR-ERROR-FRAME-SCHEMA | Structured error payload schema | `error` must include `code` and `message` fields. | DIVERGES | DIVERGES | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame); Audit: `relay#confirmed-divergences` / `ios#confirmed-divergences` |
 | ERR-ERROR-CODE-VOCABULARY | Canonical error code set semantics | Error codes should map to canonical vocabulary (for example `TO_MISMATCH`, `INVALID_PAYLOAD`, `AUTH_FAILED`). | DIVERGES | VERIFY | aethos-relay | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#3-frame-types` (`error` frame code set); Audit: `relay#confirmed-divergences` / `ios#verify-items` |
 | ERR-PRE-HELLO-ERROR-PATH | Pre-handshake rejection behavior | Relay should reject non-`hello` pre-handshake frames via canonical error path. | VERIFY | VERIFY | both | TODO | - | Spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md#5-ordering-and-connection-rules`; Audit: none (not yet audited) |
+
+## Client-Relay Cutover Readiness (2026-03-08)
+
+### Residual exceptions (canonical-only not fully closed)
+
+- `ERR-ERROR-CODE-VOCABULARY`: iOS strict canonical error-code vocabulary handling remains unverified.
+- `ERR-PRE-HELLO-ERROR-PATH`: iOS end-to-end verification for pre-hello canonical error + close-path remains unverified.
+- `RETR-PULL-LIMIT-DEFAULT`: iOS verification for omitted pull.limit defaulting to 50 remains unverified.
+- `DELIV-RETRY-POLICY`: retry/backoff policy conformance remains unverified on both sides.
 
 ## Federation Protocol
 
