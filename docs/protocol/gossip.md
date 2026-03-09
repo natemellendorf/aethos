@@ -19,7 +19,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 3. Sender identity MUST come from authenticated envelope data, never transport metadata.
 4. All gossip frames MUST use one shared canonical wire encoding and framing model.
 5. `hop_count` MUST increment by exactly 1 on forward and MUST NOT regress.
-6. Expired objects MUST NOT be forwarded.
+6. Expired objects (`expiry_unix_ms`) MUST NOT be forwarded.
 7. Bloom filter behavior MUST be deterministic across implementations.
 8. Deduplication MUST be by `item_id` only.
 9. `RELAY_INGEST` MUST be authenticated before affecting pruning or replication policy.
@@ -29,7 +29,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 ## 4. Canonical wire encoding and framing
 
-1. All frames MUST use canonical CBOR.
+1. All frames MUST use canonical CBOR with RFC 8949 deterministic encoding.
 2. All frames MUST use the frame envelope in `docs/protocol/frames.md`.
 3. Datagram bearers MUST carry exactly one frame per datagram.
 4. Stream bearers MUST use 32-bit big-endian length-prefixed frame boundaries.
@@ -41,15 +41,16 @@ Gossip object fields:
 
 - `item_id`
 - `envelope_b64`
-- `expiry`
+- `expiry_unix_ms`
 - `hop_count`
 
 Identity derivation:
 
-1. `envelope_bytes` are raw canonical serialized envelope bytes.
-2. `item_id = SHA-256(envelope_bytes)`.
-3. `item_id` representation MUST be lowercase hexadecimal.
-4. `item_id` mismatch MUST cause object rejection.
+1. `envelope_b64` MUST be base64url without padding.
+2. `envelope_bytes` are decoded canonical serialized envelope bytes from `envelope_b64`.
+3. `item_id = SHA-256(envelope_bytes)`.
+4. `item_id` representation MUST be lowercase hexadecimal.
+5. `item_id` mismatch MUST cause object rejection.
 
 ## 6. Deterministic acceptance/rejection
 
@@ -58,6 +59,7 @@ For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates req
 - unknown required frame fields,
 - missing required fields,
 - malformed encoding,
+- malformed base64url envelope encoding,
 - invalid hash derivation,
 - oversize frame/object budgets,
 - expired objects,
@@ -113,7 +115,19 @@ Relay gossip behavior MUST remain idempotent by `item_id`.
 
 The Bloom design parameters and deterministic mapping are defined in encounter and frame documents. All compliant implementations MUST produce identical Bloom bitsets for identical item sets.
 
-## 12. Security considerations
+## 12. Transfer ordering policy (non-normative for wire correctness)
+
+Implementations MAY apply local transfer prioritization during constrained encounters, such as:
+
+1. objects not yet relay-ingested first,
+2. lower `hop_count` first,
+3. earlier `expiry_unix_ms` first,
+4. relay-reachable or higher-utility paths first when locally known,
+5. stable tie-break by `item_id`.
+
+This ordering is local policy only. It MUST NOT change wire validity, interoperability, or acceptance semantics.
+
+## 13. Security considerations
 
 - Enforce authenticated envelope validation prior to trust/use.
 - Reject malformed/oversize frames early.

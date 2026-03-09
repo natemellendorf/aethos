@@ -27,7 +27,7 @@ Aethos uses multi-path replication, not strict custody transfer.
 
 Nodes MUST retain objects unless at least one safety condition holds:
 
-1. verified expiry reached,
+1. verified `expiry_unix_ms` reached,
 2. authenticated relay-ingest durability confirmed,
 3. local storage pressure policy requires pruning.
 
@@ -51,10 +51,16 @@ Propagation horizon is local policy only, not wire behavior.
 Policy inputs MAY include:
 
 - `hop_count`,
-- `expiry`,
+- `expiry_unix_ms`,
 - relay-ingest state.
 
 Policy outputs MUST NOT change wire validity semantics.
+
+## 6.1 Transfer ordering policy under constrained encounters
+
+Implementations MAY prioritize fragile or not-yet-durable replicas first (for example: not relay-ingested objects, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` ordering).
+
+This ordering is local policy only and MUST NOT change frame validity or interoperability.
 
 ## 7. Failure resilience expectations
 

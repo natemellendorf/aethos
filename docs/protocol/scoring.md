@@ -12,7 +12,7 @@ Scoring is strictly local-only optimization state.
 
 1. Scoring MUST NOT affect frame validity decisions.
 2. Scoring MUST NOT affect acceptance semantics for valid non-expired objects.
-3. Scoring MUST NOT alter hash, identity, expiry, or hop-count rules.
+3. Scoring MUST NOT alter hash, identity, `expiry_unix_ms`, or hop-count rules.
 4. Absence of scoring MUST preserve full baseline interoperability.
 
 ## 3. On-wire prohibition
@@ -31,6 +31,12 @@ Scoring MAY influence:
 - relay-proximity prioritization heuristics.
 
 Scoring outputs MUST remain advisory and MUST NOT violate deterministic protocol rules.
+
+## 4.1 Scheduling-policy boundary
+
+Scoring MAY be used to rank transfer candidates during constrained encounters, but this ranking is local policy only.
+
+Scoring-informed scheduling MUST NOT change wire schema, frame validity, acceptance semantics, or interoperability requirements.
 
 ## 5. Cross-platform interoperability
 

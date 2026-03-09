@@ -12,8 +12,8 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 ### 2.1 Encoding
 
-1. All gossip frames **MUST** be encoded as canonical CBOR.
-2. Implementations **MUST** use deterministic map-key ordering per canonical CBOR.
+1. All gossip frames **MUST** be encoded as canonical CBOR using **RFC 8949 deterministic encoding**.
+2. Implementations **MUST** follow RFC 8949 deterministic map key ordering and shortest-form integer encoding.
 3. Floating-point values **MUST NOT** be used in gossip frames.
 4. Integer values **MUST** be encoded as unsigned integers unless explicitly specified otherwise.
 
@@ -32,6 +32,11 @@ All frames **MUST** use this envelope:
 - `payload` **MUST** contain exactly the required fields for that frame type.
 - Unknown top-level envelope keys **MUST** be ignored for forward compatibility.
 - Unknown required payload fields for `GOSSIP_VERSION=1` **MUST** cause frame rejection.
+
+Protocol magic decision for v1:
+
+- A top-level `magic` field is **intentionally omitted** in v1.
+- Implementations **MUST NOT** require `magic` for v1 frame acceptance.
 
 ### 2.3 Frame boundaries by bearer
 
@@ -56,6 +61,7 @@ All frames **MUST** use this envelope:
 - `MAX_TRANSFER_BYTES = 524288`
 - `BLOOM_FILTER_BYTES = 2048`
 - `BLOOM_HASH_COUNT = 4`
+- `CLOCK_SKEW_TOLERANCE_MS = 30000`
 
 Oversize or malformed behavior:
 
@@ -65,7 +71,7 @@ Oversize or malformed behavior:
 
 ## 5. Frame definitions
 
-## 5.1 HELLO (`type="HELLO"`)
+### 5.1 HELLO (`type="HELLO"`)
 
 Required payload fields:
 
@@ -84,7 +90,7 @@ Validation:
 3. `max_want` **MUST** be `1..MAX_WANT_ITEMS`.
 4. `max_transfer` **MUST** be `1..MAX_TRANSFER_ITEMS`.
 
-## 5.2 SUMMARY (`type="SUMMARY"`)
+### 5.2 SUMMARY (`type="SUMMARY"`)
 
 Required payload fields:
 
@@ -96,7 +102,7 @@ Validation:
 1. `bloom_filter` length **MUST** equal `BLOOM_FILTER_BYTES`.
 2. `item_count` **MUST** equal local eligible object count at emission time.
 
-## 5.3 REQUEST (`type="REQUEST"`)
+### 5.3 REQUEST (`type="REQUEST"`)
 
 Required payload fields:
 
@@ -108,26 +114,27 @@ Validation:
 2. `want` entries **MUST** be unique by `item_id`.
 3. Unknown/malformed `item_id` entries **MUST** be rejected.
 
-## 5.4 TRANSFER (`type="TRANSFER"`)
+### 5.4 TRANSFER (`type="TRANSFER"`)
 
 Required payload fields:
 
 - `objects: array<object>` where each object is:
   - `item_id: tstr`
-  - `envelope_b64: tstr`
-  - `expiry: expiry_unix_ms`
+  - `envelope_b64: tstr` (base64url, no padding)
+  - `expiry_unix_ms: uint`
   - `hop_count: uint`
 
 Validation:
 
 1. Object count **MUST** be `<= MAX_TRANSFER_ITEMS`.
 2. Total decoded envelope bytes across `objects` **MUST** be `<= MAX_TRANSFER_BYTES`.
-3. `item_id` **MUST** equal lowercase hex `SHA-256(envelope_bytes)`.
-4. `envelope_b64` **MUST** decode as canonical envelope bytes.
-5. `hop_count` **MUST** be `0..65535`.
-6. Expired objects (`now_ms + CLOCK_SKEW_TOLERANCE_MS >= expiry`) **MUST NOT** be accepted.
+3. `envelope_b64` **MUST** be base64url without padding.
+4. Decoded `envelope_b64` bytes **MUST** be canonical serialized envelope bytes.
+5. `item_id` **MUST** equal lowercase hex `SHA-256(envelope_bytes)` where `envelope_bytes` are decoded from `envelope_b64`.
+6. `hop_count` **MUST** be `0..65535`.
+7. Expired objects (`now_ms + CLOCK_SKEW_TOLERANCE_MS >= expiry_unix_ms`) **MUST NOT** be accepted.
 
-## 5.5 RECEIPT (`type="RECEIPT"`)
+### 5.5 RECEIPT (`type="RECEIPT"`)
 
 Required payload fields:
 
@@ -138,7 +145,7 @@ Validation:
 1. `received` entries **MUST** be unique.
 2. `received` entries **MUST** be subset of the immediately preceding valid `TRANSFER` object IDs in that direction.
 
-## 5.6 RELAY_INGEST (`type="RELAY_INGEST"`)
+### 5.6 RELAY_INGEST (`type="RELAY_INGEST"`)
 
 Required payload fields:
 
@@ -155,7 +162,7 @@ Validation and trust:
 1. Deduplication **MUST** be by `item_id` only.
 2. Unknown frame `type` **MUST** be rejected.
 3. Missing required fields **MUST** be rejected.
-4. Invalid hash, malformed encoding, or expired objects **MUST** be rejected.
+4. Invalid hash, malformed encoding, malformed base64url, or expired objects **MUST** be rejected.
 5. Bearer metadata **MUST NOT** alter acceptance semantics.
 
 ## 7. Forwarding semantics anchor

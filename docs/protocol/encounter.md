@@ -37,9 +37,10 @@ Identity rules:
 ## 5. Session framing expectations
 
 1. Frame envelope and boundaries MUST follow `docs/protocol/frames.md`.
-2. For stream bearers, decoder MUST process exactly one length-prefixed frame at a time.
-3. For datagram bearers, partial frames MUST be rejected.
-4. Bearer re-ordering or duplication MUST be handled through idempotent `item_id` processing.
+2. RFC 8949 deterministic CBOR encoding MUST be used for all frames.
+3. For stream bearers, decoder MUST process exactly one length-prefixed frame at a time.
+4. For datagram bearers, partial frames MUST be rejected.
+5. Bearer re-ordering or duplication MUST be handled through idempotent `item_id` processing.
 
 ## 6. SUMMARY cadence guidance
 
@@ -67,7 +68,7 @@ Initial Bloom buffer MUST be all zero bytes.
 
 ## 7. Expiry semantics and clock skew
 
-1. `expiry` MUST be UTC Unix epoch milliseconds (`expiry_unix_ms`, uint64).
+1. `expiry_unix_ms` MUST be UTC Unix epoch milliseconds (`uint64`).
 2. Receiver MUST evaluate expiry using local UTC clock.
 3. `CLOCK_SKEW_TOLERANCE_MS = 30000` (30s) MUST be applied during acceptance decisions.
 4. Object is expired when `now_ms + CLOCK_SKEW_TOLERANCE_MS >= expiry_unix_ms`.
@@ -85,11 +86,17 @@ Mandatory high-level sequence:
 
 `SUMMARY/REQUEST/TRANSFER/RECEIPT` MAY repeat in-cycle for long sessions, but each frame MUST remain independently valid under frame catalog rules.
 
+## 8.1 Constrained-encounter transfer scheduling (local policy only)
+
+During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` tie-break).
+
+This scheduling guidance MUST NOT alter protocol validity, interoperability, or acceptance semantics.
+
 ## 9. Transport-neutral correctness constraints
 
 1. Bearers MAY differ in discovery and channel setup.
-2. Bearers MUST NOT alter acceptance, rejection, hashing, identity, expiry, or hop-count semantics.
-3. Linux and iOS implementations MUST share identical canonical CBOR and Bloom algorithms.
+2. Bearers MUST NOT alter acceptance, rejection, hashing, identity, `expiry_unix_ms`, or hop-count semantics.
+3. Linux and iOS implementations MUST share identical RFC 8949 deterministic CBOR and Bloom algorithms.
 
 ## 10. Security considerations
 
