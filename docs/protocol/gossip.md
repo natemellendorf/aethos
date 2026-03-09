@@ -1,223 +1,121 @@
 # Gossip Protocol Architecture (Transport-Neutral, Multi-Bearer)
 
-Status: authoritative architecture for encounter gossip behavior in Aethos MVP0.
+Status: authoritative protocol architecture for Aethos gossip upgrade.
 
-## 1. Purpose
+## 1. Normative language
 
-This document defines the transport-neutral gossip protocol used for resilient message propagation across opportunistic encounters. The protocol:
+The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in RFC 2119.
 
-- decouples protocol semantics from bearer implementation,
-- supports multi-path store-carry-forward replication,
-- scales inventory synchronization using Bloom summaries,
-- includes relay-ingestion-aware pruning signals,
-- provides deterministic behavior across Linux and iOS.
+## 2. Authority and scope
 
-## 2. Scope and Invariants
+1. `docs/protocol/frames.md` is the authoritative wire-frame catalog.
+2. This document is the authoritative architecture and invariant contract.
+3. Bearer implementations MUST preserve protocol semantics exactly.
 
-### 2.1 Scope
+## 3. Protocol invariants (frozen for upgrade)
 
-This architecture applies to client/client and client/relay encounter sync where peers exchange gossip frames and object data.
+1. `item_id` MUST be derived from raw canonical serialized envelope bytes and encoded as lowercase hex.
+2. Envelope bytes MUST be immutable after creation.
+3. Sender identity MUST come from authenticated envelope data, never transport metadata.
+4. All gossip frames MUST use one shared canonical wire encoding and framing model.
+5. `hop_count` MUST increment by exactly 1 on forward and MUST NOT regress.
+6. Expired objects MUST NOT be forwarded.
+7. Bloom filter behavior MUST be deterministic across implementations.
+8. Deduplication MUST be by `item_id` only.
+9. `RELAY_INGEST` MUST be authenticated before affecting pruning or replication policy.
+10. Scoring MAY influence preference but MUST NOT affect validity/correctness.
+11. Incompatible protocol versions MUST fail closed and end the encounter gracefully.
+12. Bearer implementations MUST NOT alter protocol semantics.
 
-### 2.2 Frozen MVP0 invariants
+## 4. Canonical wire encoding and framing
 
-- Encoding: CBOR.
-- `item_id` derivation: `SHA256(envelope_bytes)`.
-- Signature family: Ed25519 (inside envelope/authenticated payload model).
-- Fixed chunk size metadata for v1-compatible payloads: 32768 bytes.
-- `toWayfarerId` remains visible in envelope data.
+1. All frames MUST use canonical CBOR.
+2. All frames MUST use the frame envelope in `docs/protocol/frames.md`.
+3. Datagram bearers MUST carry exactly one frame per datagram.
+4. Stream bearers MUST use 32-bit big-endian length-prefixed frame boundaries.
+5. Implementations MUST reject frames larger than `MAX_FRAME_BYTES`.
 
-### 2.3 Safety invariants
+## 5. Deterministic object identity
 
-1. Envelope bytes are immutable in transport.
-2. Sender identity must come from authenticated envelope data, never transport metadata.
-3. Gossip correctness must not depend on scoring or reputation policy.
-4. Transport details must not alter frame meaning.
-
-## 3. Frame Set
-
-Protocol frames:
-
-- `HELLO`
-- `SUMMARY`
-- `REQUEST`
-- `TRANSFER`
-- `RECEIPT`
-- `RELAY_INGEST`
-
-### 3.1 HELLO
-
-```cbor
-{
-  version,
-  node_id,
-  node_pubkey,
-  capabilities,
-  propagation_class,
-  max_want,
-  max_transfer
-}
-```
-
-Semantics:
-
-- Establishes protocol compatibility and per-peer limits.
-- Announces capability hints used for local policy selection.
-- Carries fields required for future local scoring inputs.
-
-### 3.2 SUMMARY
-
-```cbor
-{
-  bloom_filter,
-  item_count
-}
-```
-
-Semantics:
-
-- Compact inventory summary to avoid large explicit inventory lists.
-- `item_count` supports sanity checks and false-positive interpretation.
-
-### 3.3 REQUEST
-
-```cbor
-{
-  want: [ item_id ]
-}
-```
-
-Semantics:
-
-- Requests a bounded set of missing objects.
-- Requesting peer must enforce `max_want` and local resource constraints.
-
-### 3.4 TRANSFER
-
-```cbor
-{
-  objects: [
-    {
-      item_id,
-      envelope_b64,
-      expiry,
-      hop_count
-    }
-  ]
-}
-```
-
-Semantics:
-
-- Transfers immutable object payloads plus propagation metadata.
-- Sender must ensure `item_id == SHA256(base64_decode(envelope_b64))`.
-- `hop_count` represents propagation distance and is incremented on forward.
-
-### 3.5 RECEIPT
-
-```cbor
-{
-  received: [ item_id ]
-}
-```
-
-Semantics:
-
-- Confirms object acceptance at the sync layer.
-- Not an end-recipient delivery receipt.
-
-### 3.6 RELAY_INGEST
-
-```cbor
-{
-  item_ids: [ item_id ]
-}
-```
-
-Semantics:
-
-- Signals relay mesh durability for listed objects.
-- Enables replication de-escalation/pruning policy.
-
-## 4. Gossip Object Definition
-
-Each gossip object contains:
+Gossip object fields:
 
 - `item_id`
 - `envelope_b64`
 - `expiry`
 - `hop_count`
 
-Rules:
+Identity derivation:
 
-1. `item_id` MUST equal `SHA256(envelope_bytes)`.
-2. Envelope bytes MUST be forwarded unchanged.
-3. Expired objects MUST NOT be forwarded.
-4. `hop_count` increments by 1 each forward operation.
+1. `envelope_bytes` are raw canonical serialized envelope bytes.
+2. `item_id = SHA-256(envelope_bytes)`.
+3. `item_id` representation MUST be lowercase hexadecimal.
+4. `item_id` mismatch MUST cause object rejection.
 
-## 5. Synchronization Flow
+## 6. Deterministic acceptance/rejection
 
-Nominal exchange:
+For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates required schema or limits, including:
 
-1. `HELLO`
-2. `SUMMARY`
-3. `REQUEST`
-4. `TRANSFER`
-5. `RECEIPT`
+- unknown required frame fields,
+- missing required fields,
+- malformed encoding,
+- invalid hash derivation,
+- oversize frame/object budgets,
+- expired objects,
+- invalid/overflow `hop_count`.
 
-Operational notes:
+When violations are frame-local and recoverable, receiver MAY continue session; repeated protocol violations SHOULD end session.
 
-- Bloom summaries are compared locally to estimate missing objects.
-- Request sets should be bounded by `max_want`, `MAX_TRANSFER_ITEMS`, and `MAX_TRANSFER_BYTES`.
-- Repeated encounters continue convergence with idempotent object handling.
+## 7. Hop-count monotonicity and regression rules
 
-## 6. Transport Abstraction
+1. Initial `hop_count` at origin MUST be `0`.
+2. Each forwarding action MUST increment `hop_count` by exactly `1`.
+3. Values outside `0..65535` MUST be rejected.
+4. If a node already stores `item_id` at hop `h_existing`, receiving same `item_id` with `h_incoming < h_existing` MUST be rejected as regression.
+5. `h_incoming == h_existing` MAY be accepted as idempotent duplicate.
 
-The protocol is independent from discovery and delivery mechanics.
+## 8. Relay ingest trust model
 
-Transport interface concept:
+1. RELAY_INGEST MUST be accepted for policy changes only on authenticated relay transport.
+2. Nodes MUST NOT prune or de-escalate replication solely on unauthenticated RELAY_INGEST.
+3. Relay systems MUST emit RELAY_INGEST only after durable write in relay persistence.
+4. Relay ingestion handling MUST be idempotent by `item_id`.
 
-```rust
-trait GossipTransport {
-  fn start();
-  fn discover_peers();
-  fn send_frame(peer, frame);
-  fn receive_frame();
-}
-```
+## 9. Frame and transfer budgets
 
-Current transport implementations:
+1. `MAX_TRANSFER_ITEMS = 32` and `MAX_TRANSFER_BYTES = 524288` MUST be enforced.
+2. `MAX_WANT_ITEMS` and `MAX_FRAME_BYTES` from frame catalog MUST be enforced.
+3. Oversize REQUEST/TRANSFER payloads MUST be rejected.
 
-- `lan_mdns_transport`
-- `relay_transport`
+## 10. Transport abstraction
 
-Planned transports:
+Protocol engine and transport adapter MUST be separate.
 
-- `ble_transport`
-- `direct_peer_transport`
+Transport responsibilities:
 
-## 7. Protocol Constants (v1 profile)
+- peer discovery,
+- frame delivery,
+- authenticated channel properties (where applicable).
 
-- `GOSSIP_VERSION = 1`
-- `GOSSIP_PORT = 47655`
-- `SERVICE_NAME = _aethos._udp.local`
-- `MAX_TRANSFER_ITEMS = 32`
-- `MAX_TRANSFER_BYTES = 524288`
-- `BLOOM_FILTER_BYTES = 2048`
-- `BLOOM_HASH_COUNT = 4`
+Transport implementations MUST NOT modify frame semantics, hash derivation, or acceptance behavior.
 
-## 8. Implementation Guidance
+## 10.1 Relay responsibilities
 
-1. Keep protocol state machine and transport adapters in separate modules.
-2. Use a shared, canonical frame codec for Linux and iOS.
-3. Enforce immutable envelope validation before store/write.
-4. Record `hop_count`, `expiry`, and relay-ingest flags in object metadata.
-5. Treat repeated object arrivals as idempotent upserts.
+Relay participants in gossip MUST:
 
-## 9. Security Considerations
+1. preserve envelope immutability,
+2. deduplicate by `item_id`,
+3. emit `RELAY_INGEST` only after durable write,
+4. avoid mutating protocol semantics relative to non-relay peers.
 
-- Authenticate envelope data before trust/use.
-- Reject object/frame size violations.
-- Reject malformed `item_id` / envelope hash mismatches.
-- Limit per-peer request and transfer volume to reduce abuse.
-- Never infer sender identity from IP/transport identity alone.
-- Preserve deterministic acceptance/rejection independent of score.
+Relay gossip behavior MUST remain idempotent by `item_id`.
+
+## 11. Bloom determinism requirement
+
+The Bloom design parameters and deterministic mapping are defined in encounter and frame documents. All compliant implementations MUST produce identical Bloom bitsets for identical item sets.
+
+## 12. Security considerations
+
+- Enforce authenticated envelope validation prior to trust/use.
+- Reject malformed/oversize frames early.
+- Never infer sender identity from bearer metadata alone.
+- Keep deterministic correctness independent of scoring policy.

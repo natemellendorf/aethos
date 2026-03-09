@@ -1,106 +1,98 @@
-# Encounter Lifecycle and Multi-Bearer Behavior
+# Encounter Lifecycle and Deterministic Session Semantics
 
-Status: authoritative guidance for peer encounters under the transport-neutral gossip protocol.
+Status: authoritative encounter behavior for transport-neutral multi-bearer gossip.
 
-## 1. Encounter Model
+## 1. Normative language
 
-An encounter is a temporary communication opportunity between two nodes over any supported bearer. Encounter behavior is protocol-consistent regardless of whether connectivity is LAN mDNS, relay-assisted, or future bearers such as BLE.
+RFC 2119 terms are normative in this document.
 
-Encounter goals:
+## 2. Deterministic encounter model
 
-- quickly determine compatibility and limits,
-- efficiently estimate divergence,
-- exchange missing objects with bounded transfer budgets,
-- preserve message durability via store-carry-forward.
+An encounter is a temporary peer session over any bearer. Session semantics MUST be identical across LAN, relay, and future bearers.
 
-## 2. Encounter State Machine
+Session objectives:
 
-1. **Discovery**: transport advertises or discovers peer.
-2. **Handshake** (`HELLO`): peers exchange protocol version, identity descriptors, and budget hints.
-3. **Summary Exchange** (`SUMMARY`): peers exchange Bloom-based inventory summaries.
-4. **Demand Selection** (`REQUEST`): each side requests missing `item_id`s.
-5. **Object Delivery** (`TRANSFER`): sender transmits bounded object batches.
-6. **Acceptance Ack** (`RECEIPT`): receiver confirms accepted objects.
-7. **Durability Signal** (`RELAY_INGEST`, optional): relay durability info updates replication decisions.
+1. establish version/identity compatibility,
+2. exchange deterministic inventory summary,
+3. request and transfer missing objects within fixed budgets,
+4. converge idempotently across repeated encounters.
 
-The state machine may repeat steps 3–6 within a single encounter when budgets and link quality permit.
+## 3. HELLO and identity derivation
 
-## 3. HELLO Contract and Session Parameters
+HELLO fields are defined in `docs/protocol/frames.md`.
 
-HELLO fields:
+Identity rules:
 
-- `version`: must match `GOSSIP_VERSION`.
-- `node_id`: stable node identity reference.
-- `node_pubkey`: cryptographic key material for future/local trust and scoring policy.
-- `capabilities`: role and transport support hints.
-- `propagation_class`: local propagation policy class announcement.
-- `max_want`: max requested IDs accepted in one request.
-- `max_transfer`: max transfer objects/bytes accepted from peer.
+1. `node_id` MUST equal lowercase hex `SHA-256(node_pubkey_raw_bytes)`.
+2. Node identity SHOULD persist across restarts while key material is unchanged.
+3. If identity rotates (new key), peer MUST treat rotated identity as a new node.
+4. HELLO metadata MUST NOT be used as sole trust decision input.
 
-Session behavior:
+## 4. Version mismatch behavior (fail-closed)
 
-- If version mismatch occurs, peers end encounter gracefully.
-- Budget hints bound request/transfer planning.
-- HELLO fields are metadata, not authorization-by-themselves.
+1. If `HELLO.version != GOSSIP_VERSION`, encounter MUST fail closed.
+2. On mismatch, node MUST stop frame processing for that session.
+3. Session termination SHOULD be graceful (close stream / end datagram exchange cleanly).
 
-## 4. Bloom Summary Exchange
+## 5. Session framing expectations
 
-SUMMARY fields:
+1. Frame envelope and boundaries MUST follow `docs/protocol/frames.md`.
+2. For stream bearers, decoder MUST process exactly one length-prefixed frame at a time.
+3. For datagram bearers, partial frames MUST be rejected.
+4. Bearer re-ordering or duplication MUST be handled through idempotent `item_id` processing.
 
-- `bloom_filter`
-- `item_count`
+## 6. SUMMARY cadence guidance
 
-Recommended parameters:
+1. Node MUST send SUMMARY at session start after HELLO success.
+2. Node SHOULD send a refreshed SUMMARY after significant inventory change during long encounters.
+3. Node SHOULD send SUMMARY after completing a large transfer batch.
+4. Later encounters MUST continue convergence idempotently.
 
-- Bloom filter bytes: 2048
-- Hash functions: 4
-- False positive rate: ~1%
+## 6.1 Bloom filter determinism (mandatory)
 
-Design properties:
+For identical object sets, compliant implementations MUST produce identical `SUMMARY.bloom_filter` bytes.
 
-- O(1) summary size relative to large stores,
-- low encounter startup overhead,
-- acceptable false positives (they may suppress some requests, but future encounters recover missing objects).
+Deterministic mapping rules:
 
-## 5. Demand and Transfer Budgeting
+1. Hash primitive MUST be SHA-256.
+2. For each `item_id` (64-char lowercase hex), derive `item_bytes` by hex-decoding.
+3. For hash index `i` in `[0, BLOOM_HASH_COUNT-1]`, compute `digest_i = SHA-256(item_bytes || uint8(i))`.
+4. Interpret first 8 bytes of `digest_i` as unsigned 64-bit big-endian integer `v_i`.
+5. Compute `bit_index = v_i mod (BLOOM_FILTER_BYTES * 8)`.
+6. Compute `byte_index = bit_index // 8`.
+7. Compute `bit_offset = bit_index % 8` using LSB0 ordering (bit 0 is least-significant bit).
+8. Set `bloom_filter[byte_index] |= (1 << bit_offset)`.
 
-REQUEST contains `want: [item_id]` chosen by local diffing against peer Bloom summary.
+Initial Bloom buffer MUST be all zero bytes.
 
-Bounded transfer expectations:
+## 7. Expiry semantics and clock skew
 
-- `MAX_TRANSFER_ITEMS = 32`
-- `MAX_TRANSFER_BYTES = 524288`
+1. `expiry` MUST be UTC Unix epoch milliseconds (`expiry_unix_ms`, uint64).
+2. Receiver MUST evaluate expiry using local UTC clock.
+3. `CLOCK_SKEW_TOLERANCE_MS = 30000` (30s) MUST be applied during acceptance decisions.
+4. Object is expired when `now_ms + CLOCK_SKEW_TOLERANCE_MS >= expiry_unix_ms`.
+5. Expired objects MUST NOT be requested, accepted, or forwarded.
 
-Operational guidance:
+## 8. Deterministic encounter flow
 
-- prioritize unexpired objects,
-- prioritize lower-hop and not-yet-relay-ingested objects when under pressure,
-- split large wants into deterministic batches.
+Mandatory high-level sequence:
 
-## 6. Error Handling and Retry
+1. `HELLO`
+2. `SUMMARY`
+3. `REQUEST`
+4. `TRANSFER`
+5. `RECEIPT`
 
-Encounter resilience rules:
+`SUMMARY/REQUEST/TRANSFER/RECEIPT` MAY repeat in-cycle for long sessions, but each frame MUST remain independently valid under frame catalog rules.
 
-- frame decode/validation errors are scoped to current encounter,
-- invalid objects are rejected and not persisted,
-- partial completion is acceptable; later encounters continue convergence,
-- no single encounter is treated as exclusive custody transfer.
+## 9. Transport-neutral correctness constraints
 
-This preserves liveness under intermittent connectivity and peer churn.
+1. Bearers MAY differ in discovery and channel setup.
+2. Bearers MUST NOT alter acceptance, rejection, hashing, identity, expiry, or hop-count semantics.
+3. Linux and iOS implementations MUST share identical canonical CBOR and Bloom algorithms.
 
-## 7. Cross-Platform Compatibility Guidance
+## 10. Security considerations
 
-To keep Linux and iOS behavior compatible:
-
-1. Share canonical CBOR schema and validation rules.
-2. Use identical hash derivation and byte normalization.
-3. Keep Bloom parameter constants aligned.
-4. Keep hop-count increment and expiry checks deterministic.
-5. Ensure transport adapters are thin wrappers around the same protocol engine.
-
-## 8. Security Considerations
-
-- Authenticate and validate frame structure before acting.
-- Rate-limit encounter attempts and malformed frame sources.
-- Do not couple trust to bearer-specific metadata.
-- Keep peer scoring local-only; never transmit scores or trust labels.
+- Session admission policy is local, but protocol correctness is global.
+- Rate-limiting and abuse controls SHOULD be local policy layers.
+- Scoring data MUST remain local-only and MUST NOT be transmitted.

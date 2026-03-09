@@ -1,98 +1,53 @@
-# Future Peer Scoring and Propagation Control Architecture
+# Future Peer Scoring and Propagation Policy Hooks
 
-Status: design guidance for future optimization hooks; non-normative for protocol correctness.
+Status: authoritative policy-boundary guidance; scoring is non-authoritative for correctness.
 
-## 1. Principle
+## 1. Normative boundary
 
-Peer scoring is allowed as a local optimization layer, but must never alter deterministic protocol correctness.
+RFC 2119 terms are normative.
 
-Hard boundary:
+Scoring is strictly local-only optimization state.
 
-- protocol validity decisions are frame/data-rule based,
-- scoring influences preference/priority only,
-- scores are never transmitted over the network.
+## 2. Hard correctness separation
 
-## 2. Available Protocol Inputs
+1. Scoring MUST NOT affect frame validity decisions.
+2. Scoring MUST NOT affect acceptance semantics for valid non-expired objects.
+3. Scoring MUST NOT alter hash, identity, expiry, or hop-count rules.
+4. Absence of scoring MUST preserve full baseline interoperability.
 
-HELLO provides fields intended to support local policy calculations:
+## 3. On-wire prohibition
 
-- `node_pubkey`
-- `node_id`
-- `capabilities`
-- `propagation_class`
+1. Peer scores MUST NOT be transmitted on-wire.
+2. Trust labels or reputation buckets MUST NOT appear in gossip frames.
+3. HELLO metadata MAY inform local scoring, but is not an authoritative trust verdict.
 
-Transfer metadata also offers policy inputs:
+## 4. Allowed influence surface
 
-- `hop_count`
-- `expiry`
-- relay-ingest state
+Scoring MAY influence:
 
-## 3. Example Local Scoring Factors
+- peer connection preference,
+- transfer scheduling order,
+- replication budget allocation under bandwidth constraints,
+- relay-proximity prioritization heuristics.
 
-Implementations may evaluate peers using factors such as:
+Scoring outputs MUST remain advisory and MUST NOT violate deterministic protocol rules.
 
-- historical transfer reliability,
-- relay/internet connectivity hints,
-- observed bandwidth behavior,
-- storage reliability (e.g., low rejection/eviction patterns),
-- contribution to propagation success.
+## 5. Cross-platform interoperability
 
-None of these factors are protocol fields with on-wire authority.
+1. Linux/iOS implementations with different scoring models MUST still interoperate.
+2. Implementations without scoring MUST remain fully protocol-compliant.
+3. Wire behavior MUST remain identical for equivalent valid inputs.
 
-## 4. Policy Influence Surface
+## 6. Security and privacy
 
-Scoring may affect:
+- Scores SHOULD be stored as local private state.
+- Implementations SHOULD defend against score poisoning with authenticated observations.
+- Conservative defaults SHOULD avoid starvation of new/unknown peers.
 
-- peer connection priority,
-- scheduling order for request/transfer budgets,
-- replication aggressiveness under constrained bandwidth,
-- selection of peers likely to reach relay quickly.
+## 7. Implementation layering
 
-Scoring must not affect:
+Recommended architecture:
 
-- frame validity,
-- hash/identity validation,
-- acceptance semantics for well-formed non-expired objects.
-
-## 5. Propagation Horizon and Scoring Interplay
-
-Propagation horizon determines replication intensity over distance/time.
-
-A scoring-aware policy can combine:
-
-- horizon bucket derived from `hop_count`,
-- urgency from `expiry` proximity,
-- durability state from relay-ingest confirmation,
-- per-peer local score.
-
-Example approach:
-
-1. classify object urgency/horizon,
-2. rank candidate peers by local score,
-3. allocate limited transfer budget to maximize durability gain.
-
-## 6. Determinism and Interoperability Constraints
-
-To preserve Linux/iOS compatibility:
-
-1. Keep wire frame schema unchanged by scoring features.
-2. Keep required field semantics identical regardless of score.
-3. Ensure score absence does not break baseline propagation.
-4. Ensure fallback behavior is deterministic and standards-compliant.
-
-## 7. Privacy and Security Considerations
-
-- Scores must remain local state and should not be exposed in frames.
-- Avoid deriving persistent sensitive labels that could leak user behavior patterns.
-- Defend against score poisoning by requiring authenticated/validated observations.
-- Keep conservative defaults to prevent starvation of unknown peers.
-
-## 8. Implementation Guidance
-
-Recommended layering:
-
-- **Protocol Engine**: parse/validate frames, execute deterministic sync semantics.
-- **Replication Policy Layer**: selects what/when to propagate.
-- **Scoring Module (optional)**: produces local ranking inputs consumed by policy.
-
-This separation allows incremental optimization without protocol fragmentation.
+1. Protocol engine (deterministic validation/acceptance).
+2. Replication policy layer (budget and ordering decisions).
+3. Optional scoring module (local ranking signal only).
