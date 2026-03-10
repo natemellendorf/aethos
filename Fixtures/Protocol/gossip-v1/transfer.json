@@ -1,0 +1,16 @@
+{
+  "objects": [
+    {
+      "envelope_b64": "oWF4AQ",
+      "expiry_unix_ms": 4102444800000,
+      "hop_count": 0,
+      "item_id": "2956b2cee8e54663cef11aac45368e3a869c862ed7a6fd2dba3a408017ce3e0e"
+    },
+    {
+      "envelope_b64": "oWF4Ag",
+      "expiry_unix_ms": 4102444800000,
+      "hop_count": 1,
+      "item_id": "9cb48014d8de9f85816453e08fbf3c494c01399bc4250f937f59bd671defbd90"
+    }
+  ]
+}
