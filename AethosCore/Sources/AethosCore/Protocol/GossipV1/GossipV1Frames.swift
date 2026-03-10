@@ -107,6 +107,10 @@ public struct GossipV1HelloFrame: Equatable, Sendable {
         GossipV1Base64URL.encode(nodePublicKeyRawBytes)
     }
 
+    /// Constructs an outbound HELLO.
+    ///
+    /// - Important: Outbound HELLO construction must be strict; callers cannot build a HELLO
+    ///   with an unsupported protocol version.
     public init(
         version: UInt64,
         nodeID: GossipV1NodeID,
@@ -116,6 +120,59 @@ public struct GossipV1HelloFrame: Equatable, Sendable {
         maxWant: UInt64,
         maxTransfer: UInt64
     ) throws {
+        try self.init(
+            decodedVersion: version,
+            enforceVersion: true,
+            nodeID: nodeID,
+            nodePublicKeyRawBytes: nodePublicKeyRawBytes,
+            capabilities: capabilities,
+            propagationClass: propagationClass,
+            maxWant: maxWant,
+            maxTransfer: maxTransfer
+        )
+    }
+
+    /// Decoder-only initializer.
+    ///
+    /// This captures any decoded version without failing solely due to version mismatch.
+    /// Version gating is enforced at the encounter engine boundary.
+    internal init(
+        decodedVersion: UInt64,
+        nodeID: GossipV1NodeID,
+        nodePublicKeyRawBytes: Data,
+        capabilities: [String],
+        propagationClass: String,
+        maxWant: UInt64,
+        maxTransfer: UInt64
+    ) throws {
+        try self.init(
+            decodedVersion: decodedVersion,
+            enforceVersion: false,
+            nodeID: nodeID,
+            nodePublicKeyRawBytes: nodePublicKeyRawBytes,
+            capabilities: capabilities,
+            propagationClass: propagationClass,
+            maxWant: maxWant,
+            maxTransfer: maxTransfer
+        )
+    }
+
+    private init(
+        decodedVersion: UInt64,
+        enforceVersion: Bool,
+        nodeID: GossipV1NodeID,
+        nodePublicKeyRawBytes: Data,
+        capabilities: [String],
+        propagationClass: String,
+        maxWant: UInt64,
+        maxTransfer: UInt64
+    ) throws {
+        if enforceVersion {
+            guard decodedVersion == GossipV1.GOSSIP_VERSION else {
+                throw GossipV1FrameError.invalidVersion(expected: GossipV1.GOSSIP_VERSION, actual: decodedVersion)
+            }
+        }
+
         guard nodePublicKeyRawBytes.count == 32 else {
             throw GossipV1FrameError.invalidNodePubKeyByteCount(expected: 32, actual: nodePublicKeyRawBytes.count)
         }
@@ -130,7 +187,7 @@ public struct GossipV1HelloFrame: Equatable, Sendable {
             throw GossipV1FrameError.invalidRange(field: "max_transfer")
         }
 
-        self.version = version
+        version = decodedVersion
         self.nodeID = nodeID
         self.nodePublicKeyRawBytes = nodePublicKeyRawBytes
         self.capabilities = capabilities
@@ -445,7 +502,7 @@ private extension GossipV1HelloFrame {
         let capabilities: [String] = try capabilitiesValue.map { try GossipV1CBOR.requireText($0, field: "capabilities") }
 
         return try GossipV1HelloFrame(
-            version: version,
+            decodedVersion: version,
             nodeID: nodeID,
             nodePublicKeyRawBytes: pubKeyRaw,
             capabilities: capabilities,

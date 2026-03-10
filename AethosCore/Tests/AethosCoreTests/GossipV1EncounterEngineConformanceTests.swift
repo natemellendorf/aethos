@@ -16,8 +16,8 @@ func gossipV1_engine_requiresHelloFirst_andFailsClosedOnVersionMismatch() throws
 
     // Version mismatch should terminate encounter and stop processing.
     // HELLO must still be decodable so the engine (not framing) can fail-closed.
-    let badHello = try makeHello(version: GossipV1.GOSSIP_VERSION + 1)
-    let badHelloDatagram = badHello.encode()
+    // Outbound HELLO construction is strict, so craft the mismatch at the CBOR level.
+    let badHelloDatagram = try makeHelloDatagramWithVersion(GossipV1.GOSSIP_VERSION + 1)
     #expect(throws: GossipV1EncounterEngine.ValidationError.invalidHelloVersion(expected: GossipV1.GOSSIP_VERSION, actual: GossipV1.GOSSIP_VERSION + 1)) {
         _ = try engine.ingestInboundDatagram(badHelloDatagram, clock: clock, store: store)
     }
@@ -388,6 +388,28 @@ private func makeHello(version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt
         maxWant: maxWant,
         maxTransfer: maxTransfer
     )
+}
+
+private func makeHelloDatagramWithVersion(_ version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt64 = 16) throws -> Data {
+    let pubKey = Data(repeating: 0x01, count: 32)
+    let nodeID = GossipV1NodeID.derive(fromPublicKeyRawBytes: pubKey)
+
+    let payload: CanonicalCBORValue = .map([
+        .init(key: .text("version"), value: .unsigned(version)),
+        .init(key: .text("node_id"), value: .text(nodeID.hex)),
+        .init(key: .text("node_pubkey"), value: .text(GossipV1Base64URL.encode(pubKey))),
+        .init(key: .text("capabilities"), value: .array([.text("store")])),
+        .init(key: .text("propagation_class"), value: .text("direct")),
+        .init(key: .text("max_want"), value: .unsigned(maxWant)),
+        .init(key: .text("max_transfer"), value: .unsigned(maxTransfer)),
+    ])
+
+    let env: CanonicalCBORValue = .map([
+        .init(key: .text("type"), value: .text(GossipV1FrameType.HELLO.rawValue)),
+        .init(key: .text("payload"), value: payload),
+    ])
+
+    return try CanonicalCBOREncoder().encode(env)
 }
 
 private struct FixedClock: GossipV1EncounterEngine.Clock {
