@@ -67,6 +67,44 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         )
     }
 
+    func testHelloVersionMismatch_emitsStateChangeBeforeEncounterError() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let events = Locked<[GossipV1StreamAdapter.Event]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                events.withLock { $0.append(event) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let mismatchFrameBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello_version_mismatch.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(mismatchFrameBytes)
+        try adapter.receiveBytes(streamBytes)
+
+        let snapshot = events.withLock { $0 }
+        let stateIdx = snapshot.firstIndex { event in
+            if case .didChangeState = event { return true }
+            return false
+        }
+        let errorIdx = snapshot.firstIndex { event in
+            if case .didEncounterError = event { return true }
+            return false
+        }
+        XCTAssertNotNil(stateIdx)
+        XCTAssertNotNil(errorIdx)
+        XCTAssertLessThan(stateIdx!, errorIdx!)
+    }
+
     func testReceiveBytes_twoFramesInOneBuffer_firstInvalidSecondValid_secondStillProcessedWhenFirstNonFatal() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
         let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
@@ -203,14 +241,14 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         }
     }
 
-    func testReceiveBytes_relayIngestPath_validationErrorThrownDuringEngineRelayIngest_isMappedToRelayIngestValidationTransportError() throws {
+    func testReceiveBytes_relayIngestObserverThrowingValidationError_isMappedToRelayIngestValidationTransportError_andDoesNotTerminateEncounter() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
         let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
 
         let thrown: GossipV1EncounterEngine.ValidationError = .encounterTerminated
-        // NOTE: The engine's relay-ingest path only throws if its observer throws.
-        // This observer is an intentional test seam to force a ValidationError and
-        // verify the adapter maps it into the relay-ingest transport error domain.
+        // NOTE: Relay-ingest validation errors are not produced by the engine today.
+        // This observer is an intentional seam to force a ValidationError and verify the
+        // adapter maps it into the relay-ingest transport error domain.
         let observer = RelayIngestValidationErrorSeamObserver(error: thrown)
 
         let errors = Locked<[GossipV1TransportError]>([])
@@ -237,9 +275,12 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         try adapter.receiveBytes(streamBytes)
 
         XCTAssertEqual(errors.withLock { $0 }, [.relayIngestValidation(thrown)])
+
+        // Observer errors must not change encounter state.
+        XCTAssertEqual(adapter.state, .awaitingHello)
     }
 
-    func testReceiveBytes_relayIngestObserverErrorEmitsStateChangeBeforeError() throws {
+    func testReceiveBytes_relayIngestObserverNonCancellationError_emitsErrorEvent_andContinuesProcessingFutureFrames() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
         let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
 
@@ -265,27 +306,26 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
         let ingest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
-        let streamBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
-        try adapter.receiveBytes(streamBytes)
+        let relayBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
+        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let helloStreamBytes = try GossipV1Framing.encodeStreamFrame(helloBytes)
+
+        // Relay ingest observer error must not stop processing subsequent frames.
+        try adapter.receiveBytes(relayBytes + helloStreamBytes)
 
         let snapshot = events.withLock { $0 }
-        let stateIdx = snapshot.firstIndex { event in
-            if case .didChangeState = event { return true }
+        XCTAssertTrue(snapshot.contains { event in
+            if case .didEncounterError(.unexpected) = event { return true }
             return false
-        }
-        let errorIdx = snapshot.firstIndex { event in
-            if case .didEncounterError = event { return true }
+        })
+        XCTAssertTrue(snapshot.contains { event in
+            if case .didReceiveFrame(.hello) = event { return true }
             return false
-        }
-        XCTAssertNotNil(stateIdx)
-        XCTAssertNotNil(errorIdx)
-        XCTAssertLessThan(stateIdx!, errorIdx!)
-
-        // Sanity: the state change should be awaitingHello -> terminated.
-        if let idx = stateIdx, case .didChangeState(from: let from, to: let to) = snapshot[idx] {
-            XCTAssertEqual(from, .awaitingHello)
-            guard case .terminated = to else { return XCTFail("Expected terminated state") }
-        }
+        })
+        XCTAssertTrue(snapshot.contains { event in
+            if case .didChangeState(from: .awaitingHello, to: .active) = event { return true }
+            return false
+        })
     }
 }
 

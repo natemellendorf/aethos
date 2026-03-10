@@ -128,6 +128,25 @@ public struct GossipV1StreamAdapter: Sendable {
         }
     }
 
+    private func emitTerminationEventsIfNeeded(
+        previousState: GossipV1EncounterEngine.State,
+        error: GossipV1TransportError
+    ) {
+        guard previousState != engine.state else {
+            hooks.onEvent(.didEncounterError(error))
+            return
+        }
+
+        if case .terminated = engine.state {
+            hooks.onEvent(.didChangeState(from: previousState, to: engine.state))
+            hooks.onEvent(.didEncounterError(error))
+        } else {
+            // Non-termination state transitions may interleave with errors.
+            hooks.onEvent(.didEncounterError(error))
+            hooks.onEvent(.didChangeState(from: previousState, to: engine.state))
+        }
+    }
+
     /// Signals end-of-stream; rejects truncated frames.
     public mutating func finish() throws {
         do {
@@ -168,8 +187,6 @@ public struct GossipV1StreamAdapter: Sendable {
                 hooks.onApplicationFrame?(frame)
             }
 
-            let before = engine.state
-            var emittedStateChange = false
             do {
                 try engine.handleRelayIngest(
                     ingest,
@@ -180,20 +197,9 @@ public struct GossipV1StreamAdapter: Sendable {
             } catch let error as CancellationError {
                 throw error
             } catch {
-                if before != engine.state {
-                    hooks.onEvent(.didChangeState(from: before, to: engine.state))
-                    emittedStateChange = true
-                }
+                // Per contract: observer non-cancellation errors are local app errors.
+                // Emit an error event and continue processing future frames.
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
-            }
-
-            if !emittedStateChange, before != engine.state {
-                hooks.onEvent(.didChangeState(from: before, to: engine.state))
-            }
-
-            // Defensive: if relay-ingest ever terminates the encounter, stop immediately.
-            if case .terminated = engine.state {
-                return .stopProcessing
             }
             return .continueProcessing
         }
@@ -215,10 +221,7 @@ public struct GossipV1StreamAdapter: Sendable {
             throw error
         } catch {
             // Engine validation errors can terminate encounters; callers should close the transport.
-            hooks.onEvent(.didEncounterError(.from(error)))
-            if previousState != engine.state {
-                hooks.onEvent(.didChangeState(from: previousState, to: engine.state))
-            }
+            emitTerminationEventsIfNeeded(previousState: previousState, error: .from(error))
         }
 
         if case .terminated = engine.state {

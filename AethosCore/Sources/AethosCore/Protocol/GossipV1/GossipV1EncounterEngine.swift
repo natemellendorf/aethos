@@ -201,7 +201,7 @@ public struct GossipV1EncounterEngine: Sendable {
 
     // MARK: - Relay ingest trust boundary
 
-    public mutating func handleRelayIngest(
+    public func handleRelayIngest(
         _ frame: GossipV1RelayIngestFrame,
         isAuthenticatedRelayTransport: Bool,
         clock: some Clock,
@@ -213,15 +213,9 @@ public struct GossipV1EncounterEngine: Sendable {
         }
         guard let observer else { return }
 
-        do {
-            try observer.noteAuthenticatedRelayIngest(itemIDs: frame.itemIDs, nowMs: clock.nowUnixMs())
-        } catch let error as CancellationError {
-            throw error
-        } catch {
-            // Relay-ingest observer failures are fatal to the encounter; callers should close.
-            state = .terminated(reason: .protocolViolation("relay_ingest_observer_error"))
-            throw error
-        }
+        // Observer errors are surfaced to the transport adapter as local application errors.
+        // They MUST NOT change encounter state.
+        try observer.noteAuthenticatedRelayIngest(itemIDs: frame.itemIDs, nowMs: clock.nowUnixMs())
     }
 
     // MARK: - Hop forwarding helper
