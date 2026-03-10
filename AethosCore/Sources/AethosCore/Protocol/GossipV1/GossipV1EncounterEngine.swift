@@ -23,6 +23,9 @@ public struct GossipV1EncounterEngine: Sendable {
         case helloRequiredFirst
         case invalidHelloVersion(expected: UInt64, actual: UInt64)
 
+        /// Peer caps were not established, but outbound builders were used.
+        case peerCapsUnknown
+
         case wantTooManyItems(max: Int, actual: Int)
 
         case transferTooManyObjects(max: Int, actual: Int)
@@ -109,12 +112,30 @@ public struct GossipV1EncounterEngine: Sendable {
     }
 
     public func buildRequest(want: [GossipV1ItemID]) throws -> GossipV1Frame {
+        switch state {
+        case .terminated:
+            throw ValidationError.encounterTerminated
+        case .awaitingHello:
+            throw ValidationError.helloRequiredFirst
+        case .active:
+            break
+        }
+        guard peerCaps != nil else { throw ValidationError.peerCapsUnknown }
         let validated = try validateOutboundWantAgainstPeer(want)
         return .request(try GossipV1RequestFrame(want: validated))
     }
 
     /// Builds an outbound TRANSFER and records it as the last outbound transfer.
     public mutating func buildTransfer(objects: [GossipV1TransferFrame.Object]) throws -> GossipV1Frame {
+        switch state {
+        case .terminated:
+            throw ValidationError.encounterTerminated
+        case .awaitingHello:
+            throw ValidationError.helloRequiredFirst
+        case .active:
+            break
+        }
+        guard peerCaps != nil else { throw ValidationError.peerCapsUnknown }
         let maxObjects = maxOutboundTransferObjectsAllowed()
         guard objects.count <= maxObjects else {
             throw ValidationError.transferTooManyObjects(max: maxObjects, actual: objects.count)
@@ -169,32 +190,13 @@ public struct GossipV1EncounterEngine: Sendable {
     }
 
     /// Convenience boundary: decode + ingest a single datagram frame.
-    ///
-    /// This exists to support HELLO version-mismatch fail-closed behavior even when
-    /// frame decoding rejects invalid HELLO payloads.
     public mutating func ingestInboundDatagram(
         _ datagram: Data,
         clock: some Clock,
         store: some Store
     ) throws -> InboundResult {
-        do {
-            let frame = try GossipV1Framing.decodeDatagram(datagram)
-            return try ingestInboundFrame(frame, clock: clock, store: store)
-        } catch let err as GossipV1FramingError {
-            if case .invalidDatagramFrame(let underlying) = err,
-               case .invalidVersion(let expected, let actual) = underlying
-            {
-                state = .terminated(reason: .helloVersionMismatch(expected: expected, actual: actual))
-                throw ValidationError.invalidHelloVersion(expected: expected, actual: actual)
-            }
-            throw err
-        } catch let err as GossipV1FrameError {
-            if case .invalidVersion(let expected, let actual) = err {
-                state = .terminated(reason: .helloVersionMismatch(expected: expected, actual: actual))
-                throw ValidationError.invalidHelloVersion(expected: expected, actual: actual)
-            }
-            throw err
-        }
+        let frame = try GossipV1Framing.decodeDatagram(datagram)
+        return try ingestInboundFrame(frame, clock: clock, store: store)
     }
 
     // MARK: - Relay ingest trust boundary
@@ -227,6 +229,16 @@ public struct GossipV1EncounterEngine: Sendable {
             state = .terminated(reason: .helloVersionMismatch(expected: GossipV1.GOSSIP_VERSION, actual: hello.version))
             throw ValidationError.invalidHelloVersion(expected: GossipV1.GOSSIP_VERSION, actual: hello.version)
         }
+
+        guard (1...GossipV1.MAX_WANT_ITEMS).contains(Int(hello.maxWant)) else {
+            state = .terminated(reason: .protocolViolation("invalid max_want"))
+            throw ValidationError.encounterTerminated
+        }
+        guard (1...GossipV1.MAX_TRANSFER_ITEMS).contains(Int(hello.maxTransfer)) else {
+            state = .terminated(reason: .protocolViolation("invalid max_transfer"))
+            throw ValidationError.encounterTerminated
+        }
+
         peerCaps = PeerCaps(maxWant: Int(hello.maxWant), maxTransfer: Int(hello.maxTransfer))
         state = .active
     }

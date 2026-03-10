@@ -15,17 +15,9 @@ func gossipV1_engine_requiresHelloFirst_andFailsClosedOnVersionMismatch() throws
     }
 
     // Version mismatch should terminate encounter and stop processing.
-    // We craft an invalid HELLO datagram that decodes, but fails HELLO validation.
-    let payload: CanonicalCBORValue = .map([
-        .init(key: .text("version"), value: .unsigned(GossipV1.GOSSIP_VERSION + 1)),
-        .init(key: .text("node_id"), value: .text(String(repeating: "0", count: 64))),
-        .init(key: .text("node_pubkey"), value: .text(GossipV1Base64URL.encode(Data(repeating: 0x01, count: 32)))),
-        .init(key: .text("capabilities"), value: .array([.text("store")])),
-        .init(key: .text("propagation_class"), value: .text("direct")),
-        .init(key: .text("max_want"), value: .unsigned(128)),
-        .init(key: .text("max_transfer"), value: .unsigned(16)),
-    ])
-    let badHelloDatagram = GossipV1CBOR.encodeEnvelope(type: .HELLO, payload: payload)
+    // HELLO must still be decodable so the engine (not framing) can fail-closed.
+    let badHello = try makeHello(version: GossipV1.GOSSIP_VERSION + 1)
+    let badHelloDatagram = badHello.encode()
     #expect(throws: GossipV1EncounterEngine.ValidationError.invalidHelloVersion(expected: GossipV1.GOSSIP_VERSION, actual: GossipV1.GOSSIP_VERSION + 1)) {
         _ = try engine.ingestInboundDatagram(badHelloDatagram, clock: clock, store: store)
     }

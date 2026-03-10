@@ -116,9 +116,6 @@ public struct GossipV1HelloFrame: Equatable, Sendable {
         maxWant: UInt64,
         maxTransfer: UInt64
     ) throws {
-        guard version == GossipV1.GOSSIP_VERSION else {
-            throw GossipV1FrameError.invalidVersion(expected: GossipV1.GOSSIP_VERSION, actual: version)
-        }
         guard nodePublicKeyRawBytes.count == 32 else {
             throw GossipV1FrameError.invalidNodePubKeyByteCount(expected: 32, actual: nodePublicKeyRawBytes.count)
         }
