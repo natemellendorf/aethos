@@ -28,7 +28,7 @@ final class GossipV1NegativeFixtureVectorsTests: XCTestCase {
             return XCTFail("Expected relay ingest frame")
         }
 
-        let engine = GossipV1EncounterEngine(config: .init(localHello: try makeHello(version: GossipV1.GOSSIP_VERSION)))
+        var engine = GossipV1EncounterEngine(config: .init(localHello: try makeHello(version: GossipV1.GOSSIP_VERSION)))
         let clock = FixedClock(nowMs: 123)
         let observer = InMemoryRelayIngestObserver()
 

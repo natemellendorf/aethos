@@ -169,6 +169,7 @@ public struct GossipV1StreamAdapter: Sendable {
             }
 
             let before = engine.state
+            var emittedStateChange = false
             do {
                 try engine.handleRelayIngest(
                     ingest,
@@ -179,16 +180,18 @@ public struct GossipV1StreamAdapter: Sendable {
             } catch let error as CancellationError {
                 throw error
             } catch {
+                if before != engine.state {
+                    hooks.onEvent(.didChangeState(from: before, to: engine.state))
+                    emittedStateChange = true
+                }
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
             }
 
-            if before != engine.state {
+            if !emittedStateChange, before != engine.state {
                 hooks.onEvent(.didChangeState(from: before, to: engine.state))
             }
 
-            // Defensive: RELAY_INGEST is designed to have no encounter state effect,
-            // but if that ever changes (including termination), stop processing immediately
-            // to align with the stop-immediately semantics of non-relay frames.
+            // Defensive: if relay-ingest ever terminates the encounter, stop immediately.
             if case .terminated = engine.state {
                 return .stopProcessing
             }

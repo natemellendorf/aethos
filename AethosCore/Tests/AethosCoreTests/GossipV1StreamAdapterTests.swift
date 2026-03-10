@@ -238,6 +238,55 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         XCTAssertEqual(errors.withLock { $0 }, [.relayIngestValidation(thrown)])
     }
+
+    func testReceiveBytes_relayIngestObserverErrorEmitsStateChangeBeforeError() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let thrown = FixtureError()
+        let observer = ThrowingRelayObserver(error: thrown)
+
+        let events = Locked<[GossipV1StreamAdapter.Event]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                events.withLock { $0.append(event) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            relayObserver: observer,
+            isAuthenticatedRelayTransport: { true },
+            hooks: hooks
+        )
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
+        let ingest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
+        try adapter.receiveBytes(streamBytes)
+
+        let snapshot = events.withLock { $0 }
+        let stateIdx = snapshot.firstIndex { event in
+            if case .didChangeState = event { return true }
+            return false
+        }
+        let errorIdx = snapshot.firstIndex { event in
+            if case .didEncounterError = event { return true }
+            return false
+        }
+        XCTAssertNotNil(stateIdx)
+        XCTAssertNotNil(errorIdx)
+        XCTAssertLessThan(stateIdx!, errorIdx!)
+
+        // Sanity: the state change should be awaitingHello -> terminated.
+        if let idx = stateIdx, case .didChangeState(from: let from, to: let to) = snapshot[idx] {
+            XCTAssertEqual(from, .awaitingHello)
+            guard case .terminated = to else { return XCTFail("Expected terminated state") }
+        }
+    }
 }
 
 // MARK: - Minimal test helpers (scoped to this file)
@@ -303,6 +352,20 @@ private final class RelayIngestValidationErrorSeamObserver: @unchecked Sendable,
     let error: GossipV1EncounterEngine.ValidationError
 
     init(error: GossipV1EncounterEngine.ValidationError) {
+        self.error = error
+    }
+
+    func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws {
+        throw error
+    }
+}
+
+private struct FixtureError: Swift.Error, Equatable {}
+
+private final class ThrowingRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
+    let error: any Swift.Error
+
+    init(error: any Swift.Error) {
         self.error = error
     }
 

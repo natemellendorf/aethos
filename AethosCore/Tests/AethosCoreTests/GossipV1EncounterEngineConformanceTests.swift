@@ -369,7 +369,7 @@ func gossipV1_engine_enforcesReceiptSubsetRule() throws {
 @Test
 func gossipV1_relayIngest_unauthenticated_hasNoEffect() throws {
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
-    let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
     let clock = FixedClock(nowMs: 0)
     let observer = InMemoryRelayIngestObserver()
 
@@ -383,7 +383,7 @@ func gossipV1_relayIngest_unauthenticated_hasNoEffect() throws {
 @Test
 func gossipV1_relayIngest_authenticated_callsObserver() throws {
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
-    let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
     let clock = FixedClock(nowMs: 123)
     let observer = InMemoryRelayIngestObserver()
 
