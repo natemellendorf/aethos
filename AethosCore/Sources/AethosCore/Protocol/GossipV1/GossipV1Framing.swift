@@ -85,6 +85,10 @@ public enum GossipV1Framing {
             return try GossipV1Frame.decode(decodedValue: decodedValue)
         } catch let err as GossipV1FrameError {
             throw GossipV1FramingError.invalidDatagramFrame(underlying: err)
+        } catch {
+            // Future-proofing: keep this API throwing only GossipV1FramingError
+            // even if an internal implementation detail starts throwing a new error type.
+            throw GossipV1FramingError.invalidDatagramFrame(underlying: .invalidScalar(field: "frame"))
         }
     }
 }

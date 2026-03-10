@@ -153,9 +153,10 @@ public struct GossipV1SummaryFrame: Equatable, Sendable {
 
     public init(bloomFilter: Data, itemCount: UInt64) throws {
         guard bloomFilter.count == GossipV1.BLOOM_FILTER_BYTES else {
-            // Keep legacy scalar error surface for API stability.
-            // Frame decoding bridges this back into `GossipV1FrameError`.
-            throw GossipV1Error.invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: bloomFilter.count)
+            throw GossipV1FrameError.invalidBloomByteCount(
+                expected: GossipV1.BLOOM_FILTER_BYTES,
+                actual: bloomFilter.count
+            )
         }
         self.bloomFilter = bloomFilter
         self.itemCount = itemCount
@@ -467,16 +468,7 @@ private extension GossipV1SummaryFrame {
         let bloom = try GossipV1CBOR.requireBytes(dict["bloom_filter"]!, field: "bloom_filter")
         let itemCount = try GossipV1CBOR.requireUnsigned(dict["item_count"]!, field: "item_count")
 
-        do {
-            return try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: itemCount)
-        } catch let err as GossipV1Error {
-            switch err {
-            case .invalidBloomByteCount(let expected, let actual):
-                throw GossipV1FrameError.invalidBloomByteCount(expected: expected, actual: actual)
-            default:
-                throw GossipV1FrameError.invalidScalar(field: "bloom_filter", underlying: err)
-            }
-        }
+        return try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: itemCount)
     }
 }
 

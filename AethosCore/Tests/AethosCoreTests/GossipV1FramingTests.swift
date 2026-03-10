@@ -175,6 +175,30 @@ final class GossipV1FramingTests: XCTestCase {
             return XCTFail("Expected request frame")
         }
     }
+
+    func testDatagramInvalidSummaryBloomByteCountIsWrappedAsFramingFrameError() throws {
+        let bytes = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("type"), value: .text(GossipV1FrameType.SUMMARY.rawValue)),
+                .init(key: .text("payload"), value: .map([
+                    .init(key: .text("bloom_filter"), value: .bytes(Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES - 1))),
+                    .init(key: .text("item_count"), value: .unsigned(0)),
+                ])),
+            ])
+        )
+
+        XCTAssertThrowsError(try GossipV1Framing.decodeDatagram(bytes)) { err in
+            XCTAssertEqual(
+                err as? GossipV1FramingError,
+                .invalidDatagramFrame(
+                    underlying: .invalidBloomByteCount(
+                        expected: GossipV1.BLOOM_FILTER_BYTES,
+                        actual: GossipV1.BLOOM_FILTER_BYTES - 1
+                    )
+                )
+            )
+        }
+    }
 }
 
 private extension GossipV1FramingTests {
