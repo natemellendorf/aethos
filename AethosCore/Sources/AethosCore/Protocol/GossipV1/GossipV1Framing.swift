@@ -59,6 +59,10 @@ public enum GossipV1Framing {
         guard datagram.count <= GossipV1.MAX_FRAME_BYTES else {
             throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: datagram.count)
         }
+
+        // Enforce datagram invariant: exactly one CBOR item (the frame envelope) with no trailing bytes.
+        // CanonicalCBORDecoder.decode(_:) is strict and throws on trailing bytes.
+        _ = try CanonicalCBORDecoder().decode(datagram)
         return datagram
     }
 }

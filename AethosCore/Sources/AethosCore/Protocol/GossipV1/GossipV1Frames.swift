@@ -465,6 +465,10 @@ private extension GossipV1TransferFrame {
 
         let objectsValue = try GossipV1CBOR.requireArray(dict["objects"]!, field: "objects")
 
+        if objectsValue.count > GossipV1.MAX_TRANSFER_ITEMS {
+            throw GossipV1FrameError.transferTooManyObjects(max: GossipV1.MAX_TRANSFER_ITEMS, actual: objectsValue.count)
+        }
+
         var objects: [Object] = []
         objects.reserveCapacity(objectsValue.count)
 

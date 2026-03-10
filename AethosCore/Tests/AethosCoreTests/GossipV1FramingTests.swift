@@ -112,17 +112,12 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
-    func testDatagramTrailingBytesAllowedAtFramingLayer() throws {
+    func testDatagramTrailingBytesRejected() throws {
         let frameBytes = try makeCanonicalFrameBytes()
         var datagram = frameBytes
         datagram.append(0x00)
 
-        // Datagram framing only enforces basic size constraints; CBOR canonicality
-        // and trailing-byte rejection are enforced by GossipV1Frame.decode(bytes:).
-        let out = try GossipV1Framing.decodeDatagramFrame(datagram)
-        XCTAssertEqual(out, datagram)
-
-        XCTAssertThrowsError(try GossipV1Frame.decode(bytes: out))
+        XCTAssertThrowsError(try GossipV1Framing.decodeDatagramFrame(datagram))
     }
 }
 
