@@ -17,6 +17,12 @@ public enum GossipV1Framing {
         } catch let err as CanonicalCBORDecoder.Error {
             // Normalize CBOR decoder failures to a single framing error domain.
             throw GossipV1FramingError.invalidDatagramCBOR(problem: .from(err))
+        } catch {
+            // Defensive: keep this API throwing only GossipV1FramingError, even if a future
+            // implementation detail starts throwing a different error type.
+            //
+            // Intentionally do not surface the underlying error outside the framing domain.
+            throw GossipV1FramingError.invalidDatagramCBOR(problem: .internalError)
         }
     }
 
@@ -110,6 +116,9 @@ public enum GossipV1DatagramCBORProblem: Equatable, Sendable {
     case invalidUTF8
     case duplicateMapKey
     case nonCanonicalMapKeyOrder
+
+    /// A catch-all for unexpected decoder failures.
+    case internalError
 
     static func from(_ err: CanonicalCBORDecoder.Error) -> GossipV1DatagramCBORProblem {
         switch err {

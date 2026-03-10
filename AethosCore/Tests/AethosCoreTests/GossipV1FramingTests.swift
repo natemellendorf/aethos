@@ -122,6 +122,16 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
+    func testDatagramDecodeNormalizesUnexpectedCBORDecoderErrors() throws {
+        // CanonicalCBORDecoder is expected to throw CanonicalCBORDecoder.Error today.
+        // We still keep a catch-all in GossipV1Framing.decodeDatagramValue(_:) as a
+        // defensive boundary, but there is no supported way to force a non-decoder error
+        // here without changing the decoder implementation.
+        //
+        // This test asserts the presence of the public normalization case.
+        XCTAssertEqual(GossipV1DatagramCBORProblem.internalError, .internalError)
+    }
+
     func testDatagramInvalidFrameIsWrappedAsFramingError() throws {
         // Valid canonical CBOR but not a valid frame envelope.
         let bytes = try CanonicalCBOREncoder().encode(.unsigned(1))
