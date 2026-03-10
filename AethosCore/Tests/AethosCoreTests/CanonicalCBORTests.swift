@@ -83,3 +83,86 @@ func canonicalCBORSimple24ReportsActualSimpleValueRead() throws {
         _ = try CanonicalCBORDecoder().decode(bytes)
     }
 }
+
+@Test
+func canonicalCBORDecoderRejectsNonCanonicalUnsignedIntegerEncoding() throws {
+    // Integer 1 must be encoded as single byte 0x01, not 0x18 0x01.
+    let bytes = Data([0x18, 0x01])
+    #expect(throws: CanonicalCBORDecoder.Error.nonCanonicalIntegerEncoding) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsNonCanonicalLengthEncoding() throws {
+    // Byte string length 1 must be encoded as 0x41, not 0x58 0x01.
+    let bytes = Data([0x58, 0x01, 0x00])
+    #expect(throws: CanonicalCBORDecoder.Error.nonCanonicalLengthEncoding) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsFloats() throws {
+    // Half-precision float 0.0
+    let bytes = Data([0xF9, 0x00, 0x00])
+    #expect(throws: CanonicalCBORDecoder.Error.floatsNotSupported) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsIndefiniteLengthArray() throws {
+    let bytes = Data([0x9F])
+    #expect(throws: CanonicalCBORDecoder.Error.indefiniteLengthNotSupported) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsIndefiniteLengthMap() throws {
+    let bytes = Data([0xBF])
+    #expect(throws: CanonicalCBORDecoder.Error.indefiniteLengthNotSupported) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsIndefiniteLengthTextString() throws {
+    let bytes = Data([0x7F])
+    #expect(throws: CanonicalCBORDecoder.Error.indefiniteLengthNotSupported) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsIndefiniteLengthByteString() throws {
+    let bytes = Data([0x5F])
+    #expect(throws: CanonicalCBORDecoder.Error.indefiniteLengthNotSupported) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderRejectsDuplicateMapKeys() throws {
+    // map(2) {"x": null, "x": null}
+    let bytes = Data([0xA2, 0x61, 0x78, 0xF6, 0x61, 0x78, 0xF6])
+    #expect(throws: CanonicalCBORDecoder.Error.duplicateMapKey) {
+        _ = try CanonicalCBORDecoder().decode(bytes)
+    }
+}
+
+@Test
+func canonicalCBORDecoderMapKeyOrderingIsLexicographicWhenSameLength() throws {
+    // Both keys are one-byte encodings; ordering must be lexicographic.
+    // Non-canonical: key 2 (0x02) appears before key 1 (0x01).
+    let nonCanonical = Data([0xA2, 0x02, 0xF6, 0x01, 0xF6])
+    #expect(throws: CanonicalCBORDecoder.Error.nonCanonicalMapKeyOrder) {
+        _ = try CanonicalCBORDecoder().decode(nonCanonical)
+    }
+
+    let canonical = Data([0xA2, 0x01, 0xF6, 0x02, 0xF6])
+    let decoded = try CanonicalCBORDecoder().decode(canonical)
+    guard case .map(let entries) = decoded else { Issue.record("expected map"); return }
+    #expect(entries.map(\.key) == [.unsigned(1), .unsigned(2)])
+}

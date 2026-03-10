@@ -11,10 +11,8 @@ struct CanonicalCBOREncoder {
     /// Convenience for call sites that structurally cannot produce duplicate keys.
     ///
     /// Prefer `encode(_:)` in any context where the input is not fully controlled.
-    func encodeAssumingNoDuplicateMapKeys(_ value: CanonicalCBORValue) -> Data {
-        // We intentionally crash here rather than silently producing bad bytes.
-        // Duplicate key rejection is exercised through the throwing API.
-        try! encode(value)
+    func encodeAssumingNoDuplicateMapKeys(_ value: CanonicalCBORValue) throws -> Data {
+        try encode(value)
     }
 
     private func append(_ value: CanonicalCBORValue, into out: inout Data) throws {

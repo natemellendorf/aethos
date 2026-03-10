@@ -8,6 +8,29 @@ import Foundation
 /// - non-canonical integer/length encodings (not shortest form)
 /// - duplicate map keys
 struct CanonicalCBORDecoder {
+    struct Limits: Sendable, Equatable {
+        /// Maximum allowed array element count.
+        var maxArrayElements: Int
+        /// Maximum allowed map pair count.
+        var maxMapPairs: Int
+        /// Maximum allowed byte string length.
+        var maxByteStringBytes: Int
+        /// Maximum allowed text string UTF-8 byte length.
+        var maxTextStringBytes: Int
+
+        static var `default`: Limits {
+            // Canonical CBOR is typically transported inside a bounded frame.
+            // Keep defaults conservative and frame-derived.
+            let maxBytes = GossipV1.MAX_FRAME_BYTES
+            return Limits(
+                maxArrayElements: min(65_536, maxBytes),
+                maxMapPairs: min(65_536, maxBytes),
+                maxByteStringBytes: maxBytes,
+                maxTextStringBytes: maxBytes
+            )
+        }
+    }
+
     enum Error: Swift.Error, Equatable {
         case truncated
         case trailingBytes
@@ -15,6 +38,7 @@ struct CanonicalCBORDecoder {
         case unsupportedSimpleValue(UInt8)
         case invalidAdditionalInfo(UInt8)
         case lengthTooLarge
+        case bytesTooLarge(max: Int, actual: Int)
         case collectionTooLarge
         case nestingTooDeep
         case floatsNotSupported
@@ -30,6 +54,8 @@ struct CanonicalCBORDecoder {
     ///
     /// Depth is counted per container boundary.
     var maxDepth: Int = 64
+
+    var limits: Limits = .default
 
     func decode(_ data: Data) throws -> CanonicalCBORValue {
         var reader = CBORByteReader(data)
@@ -53,22 +79,21 @@ struct CanonicalCBORDecoder {
 
         case 2:
             let len = try reader.readCanonicalUnsigned(additionalInfo: head.additionalInfo, kind: .length)
-            let byteCount = try safeByteCount(len)
+            let byteCount = try safeByteCount(len, limit: limits.maxByteStringBytes)
             let bytes = try reader.readBytes(count: byteCount)
             return .bytes(bytes)
 
         case 3:
             let len = try reader.readCanonicalUnsigned(additionalInfo: head.additionalInfo, kind: .length)
-            let byteCount = try safeByteCount(len)
+            let byteCount = try safeByteCount(len, limit: limits.maxTextStringBytes)
             let bytes = try reader.readBytes(count: byteCount)
             guard let s = String(data: bytes, encoding: .utf8) else { throw Error.invalidUTF8 }
             return .text(s)
 
         case 4:
             let len = try reader.readCanonicalUnsigned(additionalInfo: head.additionalInfo, kind: .length)
-            let itemCount = try safeCollectionCount(len)
+            let itemCount = try safeCollectionCount(len, limit: limits.maxArrayElements)
             var items: [CanonicalCBORValue] = []
-            items.reserveCapacity(itemCount)
             for _ in 0..<itemCount {
                 items.append(try decodeItem(from: &reader, depth: depth + 1))
             }
@@ -76,11 +101,9 @@ struct CanonicalCBORDecoder {
 
         case 5:
             let len = try reader.readCanonicalUnsigned(additionalInfo: head.additionalInfo, kind: .length)
-            let pairCount = try safeCollectionCount(len)
+            let pairCount = try safeCollectionCount(len, limit: limits.maxMapPairs)
             var pairs: [CanonicalCBORValue.MapEntry] = []
-            pairs.reserveCapacity(pairCount)
 
-            var seenKeyEncodings = Set<Data>()
             var previousKeyEncoding: Data?
 
             let encoder = CanonicalCBOREncoder()
@@ -90,14 +113,12 @@ struct CanonicalCBORDecoder {
 
                 let keyEncoding = try encoder.encode(key)
 
-                if !seenKeyEncodings.insert(keyEncoding).inserted {
-                    throw Error.duplicateMapKey
-                }
-
                 if let previousKeyEncoding {
+                    if previousKeyEncoding == keyEncoding {
+                        throw Error.duplicateMapKey
+                    }
                     let cmp = DataLexicographic.compareLengthFirstThenLexicographic(previousKeyEncoding, keyEncoding)
                     if cmp != .orderedAscending {
-                        // Equal keys are handled above as duplicates. Descending order is non-canonical.
                         throw Error.nonCanonicalMapKeyOrder
                     }
                 }
@@ -154,14 +175,18 @@ struct CanonicalCBORDecoder {
         }
     }
 
-    private func safeByteCount(_ length: UInt64) throws -> Int {
+    private func safeByteCount(_ length: UInt64, limit: Int) throws -> Int {
         guard length <= UInt64(Int.max) else { throw Error.lengthTooLarge }
-        return Int(length)
+        let count = Int(length)
+        guard count <= limit else { throw Error.bytesTooLarge(max: limit, actual: count) }
+        return count
     }
 
-    private func safeCollectionCount(_ length: UInt64) throws -> Int {
+    private func safeCollectionCount(_ length: UInt64, limit: Int) throws -> Int {
         guard length <= UInt64(Int.max) else { throw Error.collectionTooLarge }
-        return Int(length)
+        let count = Int(length)
+        guard count <= limit else { throw Error.collectionTooLarge }
+        return count
     }
 }
 
