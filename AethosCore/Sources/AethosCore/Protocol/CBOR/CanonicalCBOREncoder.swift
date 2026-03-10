@@ -37,8 +37,8 @@ struct CanonicalCBOREncoder {
 
         case .map(let pairs):
             // Ensure deterministic output regardless of caller insertion order.
-            // Deterministic ordering (RFC 8949): sort by encoded key byte length,
-            // then bytewise lexicographic.
+            // Deterministic ordering (RFC 8949 §4.2.1): sort by bytewise lexicographic
+            // order of the deterministic encodings of the keys.
             var keyed: [(keyBytes: Data, key: CanonicalCBORValue, value: CanonicalCBORValue)] = []
             keyed.reserveCapacity(pairs.count)
             for entry in pairs {
@@ -48,7 +48,7 @@ struct CanonicalCBOREncoder {
             }
 
             keyed.sort {
-                DataLexicographic.compareLengthFirstThenLexicographic($0.keyBytes, $1.keyBytes) == .orderedAscending
+                DataLexicographic.compareDeterministicEncodedKeyBytes($0.keyBytes, $1.keyBytes) == .orderedAscending
             }
 
             // Duplicate keys are illegal in canonical CBOR; fail loud.

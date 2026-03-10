@@ -18,13 +18,11 @@ enum DataLexicographic {
         return lhs.count < rhs.count ? .orderedAscending : .orderedDescending
     }
 
-    /// RFC 8949 deterministic map key ordering.
+    /// RFC 8949 deterministic CBOR map key ordering (§4.2.1).
     ///
-    /// Compare by encoded byte length first, then bytewise lexicographic.
-    static func compareLengthFirstThenLexicographic(_ lhs: Data, _ rhs: Data) -> ComparisonResult {
-        if lhs.count != rhs.count {
-            return lhs.count < rhs.count ? .orderedAscending : .orderedDescending
-        }
-        return compare(lhs, rhs)
+    /// Keys are sorted by the bytewise lexicographic order of their deterministic encodings.
+    /// (This is *not* the RFC 7049 compatibility mode that compares by length first.)
+    static func compareDeterministicEncodedKeyBytes(_ lhs: Data, _ rhs: Data) -> ComparisonResult {
+        compare(lhs, rhs)
     }
 }

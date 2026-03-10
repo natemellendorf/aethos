@@ -3,15 +3,14 @@ import Testing
 @testable import AethosCore
 
 @Test
-func canonicalCBORMapKeyOrderingIsLengthFirstThenLexicographic() throws {
+func canonicalCBORMapKeyOrderingIsLexicographicOnDeterministicEncodedKeyBytes() throws {
     // Key encodings:
-    // - .unsigned(1) encodes to 0x01 (length 1)
+    // - .bool(false) encodes to 0xF4 (length 1)
     // - .unsigned(24) encodes to 0x18 0x18 (length 2)
-    // Lexicographically, 0x18 < 0x01 would put 24 before 1 if you sort only by bytes.
-    // Deterministic ordering requires length-first, so 1 must come before 24.
+    // Lexicographically, 0x18 < 0xF4, so 24 must come before false.
     let v: CanonicalCBORValue = .map([
+        .init(key: .bool(false), value: .null),
         .init(key: .unsigned(24), value: .null),
-        .init(key: .unsigned(1), value: .null),
     ])
 
     let bytes = try CanonicalCBOREncoder().encode(v)
@@ -20,11 +19,12 @@ func canonicalCBORMapKeyOrderingIsLengthFirstThenLexicographic() throws {
     // The encoder must canonicalize insertion order.
     guard case .map(let entries) = decoded else { Issue.record("expected map"); return }
     guard entries.count == 2 else { Issue.record("expected 2 entries"); return }
-    #expect(entries[0].key == .unsigned(1))
-    #expect(entries[1].key == .unsigned(24))
+    #expect(entries[0].key == .unsigned(24))
+    #expect(entries[1].key == .bool(false))
 
     // And a non-canonically ordered encoding must be rejected.
-    let nonCanonical: Data = Data([0xA2, 0x18, 0x18, 0xF6, 0x01, 0xF6])
+    // Non-canonical: key false (0xF4) appears before key 24 (0x18 0x18).
+    let nonCanonical: Data = Data([0xA2, 0xF4, 0xF6, 0x18, 0x18, 0xF6])
     #expect(throws: CanonicalCBORDecoder.Error.nonCanonicalMapKeyOrder) {
         _ = try CanonicalCBORDecoder().decode(nonCanonical)
     }

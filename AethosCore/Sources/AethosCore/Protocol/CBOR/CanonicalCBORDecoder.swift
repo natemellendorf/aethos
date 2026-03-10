@@ -117,7 +117,7 @@ struct CanonicalCBORDecoder {
                     if previousKeyEncoding == keyEncoding {
                         throw Error.duplicateMapKey
                     }
-                    let cmp = DataLexicographic.compareLengthFirstThenLexicographic(previousKeyEncoding, keyEncoding)
+                    let cmp = DataLexicographic.compareDeterministicEncodedKeyBytes(previousKeyEncoding, keyEncoding)
                     if cmp != .orderedAscending {
                         throw Error.nonCanonicalMapKeyOrder
                     }

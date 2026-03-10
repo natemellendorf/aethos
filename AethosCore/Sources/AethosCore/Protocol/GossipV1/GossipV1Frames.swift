@@ -66,6 +66,15 @@ public enum GossipV1Frame: Equatable, Sendable {
 
         let env = try GossipV1DecodedEnvelope.decode(bytes: bytes)
 
+        return try decode(envelope: env)
+    }
+
+    internal static func decode(decodedValue: CanonicalCBORValue) throws -> GossipV1Frame {
+        let env = try GossipV1DecodedEnvelope.decode(value: decodedValue)
+        return try decode(envelope: env)
+    }
+
+    private static func decode(envelope env: GossipV1DecodedEnvelope) throws -> GossipV1Frame {
         switch env.type {
         case .HELLO:
             return .hello(try GossipV1HelloFrame.decodePayload(env.payload))
@@ -257,7 +266,14 @@ internal struct GossipV1DecodedEnvelope: Equatable, Sendable {
 
     static func decode(bytes: Data) throws -> GossipV1DecodedEnvelope {
         let decoded = try CanonicalCBORDecoder().decode(bytes)
-        guard case .map(let entries) = decoded else { throw GossipV1FrameError.envelopeNotAMap }
+        return try decode(value: decoded)
+    }
+
+    /// Parses a decoded CBOR value into an envelope.
+    ///
+    /// - Important: This does not (and must not) re-decode bytes.
+    static func decode(value: CanonicalCBORValue) throws -> GossipV1DecodedEnvelope {
+        guard case .map(let entries) = value else { throw GossipV1FrameError.envelopeNotAMap }
         let dict = GossipV1CBOR.envelopeTextKeyedMapIgnoringNonTextKeys(entries)
 
         guard let typeValue = dict["type"] else { throw GossipV1FrameError.envelopeMissingKey("type") }

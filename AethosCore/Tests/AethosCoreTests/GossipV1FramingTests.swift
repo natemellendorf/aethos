@@ -117,7 +117,20 @@ final class GossipV1FramingTests: XCTestCase {
         var datagram = frameBytes
         datagram.append(0x00)
 
-        XCTAssertThrowsError(try GossipV1Framing.decodeDatagramFrame(datagram))
+        XCTAssertThrowsError(try GossipV1Framing.decodeDatagram(datagram)) { err in
+            XCTAssertEqual(err as? GossipV1FramingError, .invalidDatagramCBOR)
+        }
+    }
+
+    func testDatagramDecodeReturnsParsedFrame() throws {
+        let bytes = try makeCanonicalFrameBytes(seed: 0xAB)
+        let frame = try GossipV1Framing.decodeDatagram(bytes)
+
+        // If decodeDatagram returned bytes, callers would need to CBOR-decode again.
+        // Instead, we return a parsed frame.
+        guard case .request = frame else {
+            return XCTFail("Expected request frame")
+        }
     }
 }
 

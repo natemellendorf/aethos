@@ -4,6 +4,22 @@ import Foundation
 ///
 /// Spec source of truth: `docs/protocol/frames.md`.
 public enum GossipV1Framing {
+    private static func decodeDatagramValue(_ datagram: Data) throws -> CanonicalCBORValue {
+        guard !datagram.isEmpty else { throw GossipV1FramingError.emptyDatagram }
+        guard datagram.count <= GossipV1.MAX_FRAME_BYTES else {
+            throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: datagram.count)
+        }
+
+        do {
+            // Enforce datagram invariant: exactly one CBOR item (the frame envelope) with no trailing bytes.
+            // CanonicalCBORDecoder.decode(_:) is strict and throws on trailing bytes.
+            return try CanonicalCBORDecoder().decode(datagram)
+        } catch is CanonicalCBORDecoder.Error {
+            // Normalize CBOR decoder failures to a single framing error domain.
+            throw GossipV1FramingError.invalidDatagramCBOR
+        }
+    }
+
     /// Encodes a single frame for stream bearers as:
     /// `[uint32be frame_len][frame_len bytes frameBytes]`.
     public static func encodeStreamFrame(_ frameBytes: Data) throws -> Data {
@@ -55,15 +71,17 @@ public enum GossipV1Framing {
     ///
     /// Datagram bearers MUST carry exactly one complete frame per datagram.
     public static func decodeDatagramFrame(_ datagram: Data) throws -> Data {
-        guard !datagram.isEmpty else { throw GossipV1FramingError.emptyDatagram }
-        guard datagram.count <= GossipV1.MAX_FRAME_BYTES else {
-            throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: datagram.count)
-        }
-
-        // Enforce datagram invariant: exactly one CBOR item (the frame envelope) with no trailing bytes.
-        // CanonicalCBORDecoder.decode(_:) is strict and throws on trailing bytes.
-        _ = try CanonicalCBORDecoder().decode(datagram)
+        _ = try decodeDatagramValue(datagram)
         return datagram
+    }
+
+    /// Decodes and parses a single Gossip v1 frame from a datagram bearer.
+    ///
+    /// This enforces the datagram invariant (exactly one complete frame per datagram)
+    /// and performs CBOR decoding exactly once.
+    public static func decodeDatagram(_ datagram: Data) throws -> GossipV1Frame {
+        let decodedValue = try decodeDatagramValue(datagram)
+        return try GossipV1Frame.decode(decodedValue: decodedValue)
     }
 }
 
@@ -73,6 +91,7 @@ public enum GossipV1FramingError: Swift.Error, Equatable, Sendable {
     case frameTooLarge(max: Int, actual: Int)
     case emptyFrame
     case emptyDatagram
+    case invalidDatagramCBOR
 }
 
 // MARK: - Internal byte helpers
