@@ -134,6 +134,37 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
+    func testDatagramScalarParseErrorsAreWrappedAsFramingErrors() throws {
+        // Valid canonical CBOR envelope shape, but invalid base64url in TRANSFER object.
+        // This must surface as GossipV1FramingError, never GossipV1Error.
+        let bytes = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("type"), value: .text(GossipV1FrameType.TRANSFER.rawValue)),
+                .init(key: .text("payload"), value: .map([
+                    .init(key: .text("objects"), value: .array([
+                        .map([
+                            .init(key: .text("item_id"), value: .text(String(repeating: "a", count: 64))),
+                            .init(key: .text("envelope_b64"), value: .text("Zg==")),
+                            .init(key: .text("expiry_unix_ms"), value: .unsigned(0)),
+                            .init(key: .text("hop_count"), value: .unsigned(0)),
+                        ]),
+                    ])),
+                ])),
+            ])
+        )
+
+        XCTAssertThrowsError(try GossipV1Framing.decodeDatagram(bytes)) { err in
+            guard case .invalidDatagramFrame(let underlying) = (err as? GossipV1FramingError) else {
+                return XCTFail("Unexpected error: \(err)")
+            }
+            guard case .invalidScalar(field: let field, underlying: let scalarErr) = underlying else {
+                return XCTFail("Unexpected underlying error: \(underlying)")
+            }
+            XCTAssertEqual(field, "envelope_b64")
+            XCTAssertEqual(scalarErr, .invalidBase64URLPadding)
+        }
+    }
+
     func testDatagramDecodeReturnsParsedFrame() throws {
         let bytes = try makeCanonicalFrameBytes(seed: 0xAB)
         let frame = try GossipV1Framing.decodeDatagram(bytes)

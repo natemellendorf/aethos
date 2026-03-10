@@ -34,10 +34,10 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case transferTotalEnvelopeBytesTooLarge(max: Int, actual: Int)
     case transferEnvelopeNotCanonical
     case transferItemIDMismatch
-    case transferExpiredObject
 
     case duplicateItemID
     case invalidScalar(field: String)
+    case invalidScalar(field: String, underlying: GossipV1Error)
 }
 
 // MARK: - Frames
@@ -153,7 +153,9 @@ public struct GossipV1SummaryFrame: Equatable, Sendable {
 
     public init(bloomFilter: Data, itemCount: UInt64) throws {
         guard bloomFilter.count == GossipV1.BLOOM_FILTER_BYTES else {
-            throw GossipV1FrameError.invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: bloomFilter.count)
+            // Keep legacy scalar error surface for API stability.
+            // Frame decoding bridges this back into `GossipV1FrameError`.
+            throw GossipV1Error.invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: bloomFilter.count)
         }
         self.bloomFilter = bloomFilter
         self.itemCount = itemCount
@@ -217,6 +219,14 @@ public struct GossipV1TransferFrame: Equatable, Sendable {
         let ids = objects.map { $0.itemID }
         guard Set(ids).count == ids.count else {
             throw GossipV1FrameError.duplicateItemID
+        }
+
+        var totalEnvelopeBytes = 0
+        for obj in objects {
+            totalEnvelopeBytes += obj.envelopeBytes.count
+            if totalEnvelopeBytes > GossipV1.MAX_TRANSFER_BYTES {
+                throw GossipV1FrameError.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: totalEnvelopeBytes)
+            }
         }
         self.objects = objects
     }
@@ -361,6 +371,30 @@ internal enum GossipV1CBOR {
         guard case .map(let entries) = value else { throw GossipV1FrameError.invalidScalar(field: field) }
         return try textKeyedMap(entries)
     }
+
+    static func parseNodeID(hex: String, field: String) throws -> GossipV1NodeID {
+        do {
+            return try GossipV1NodeID(hex: hex)
+        } catch let err as GossipV1Error {
+            throw GossipV1FrameError.invalidScalar(field: field, underlying: err)
+        }
+    }
+
+    static func parseItemID(hex: String, field: String) throws -> GossipV1ItemID {
+        do {
+            return try GossipV1ItemID(hex: hex)
+        } catch let err as GossipV1Error {
+            throw GossipV1FrameError.invalidScalar(field: field, underlying: err)
+        }
+    }
+
+    static func parseBase64URL(_ s: String, field: String) throws -> Data {
+        do {
+            return try GossipV1Base64URL.decode(s)
+        } catch let err as GossipV1Error {
+            throw GossipV1FrameError.invalidScalar(field: field, underlying: err)
+        }
+    }
 }
 
 // MARK: - Payload encode/decode
@@ -400,8 +434,8 @@ private extension GossipV1HelloFrame {
         let maxWant = try GossipV1CBOR.requireUnsigned(dict["max_want"]!, field: "max_want")
         let maxTransfer = try GossipV1CBOR.requireUnsigned(dict["max_transfer"]!, field: "max_transfer")
 
-        let nodeID = try GossipV1NodeID(hex: nodeIDHex)
-        let pubKeyRaw = try GossipV1Base64URL.decode(pubKeyB64)
+        let nodeID = try GossipV1CBOR.parseNodeID(hex: nodeIDHex, field: "node_id")
+        let pubKeyRaw = try GossipV1CBOR.parseBase64URL(pubKeyB64, field: "node_pubkey")
         let capabilities: [String] = try capabilitiesValue.map { try GossipV1CBOR.requireText($0, field: "capabilities") }
 
         return try GossipV1HelloFrame(
@@ -432,7 +466,17 @@ private extension GossipV1SummaryFrame {
 
         let bloom = try GossipV1CBOR.requireBytes(dict["bloom_filter"]!, field: "bloom_filter")
         let itemCount = try GossipV1CBOR.requireUnsigned(dict["item_count"]!, field: "item_count")
-        return try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: itemCount)
+
+        do {
+            return try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: itemCount)
+        } catch let err as GossipV1Error {
+            switch err {
+            case .invalidBloomByteCount(let expected, let actual):
+                throw GossipV1FrameError.invalidBloomByteCount(expected: expected, actual: actual)
+            default:
+                throw GossipV1FrameError.invalidScalar(field: "bloom_filter", underlying: err)
+            }
+        }
     }
 }
 
@@ -460,7 +504,7 @@ private extension GossipV1RequestFrame {
         seen.reserveCapacity(wantValues.count)
         for v in wantValues {
             let hex = try GossipV1CBOR.requireText(v, field: "want")
-            let id = try GossipV1ItemID(hex: hex)
+            let id = try GossipV1CBOR.parseItemID(hex: hex, field: "want")
             guard seen.insert(id).inserted else { throw GossipV1FrameError.duplicateItemID }
             want.append(id)
         }
@@ -498,7 +542,6 @@ private extension GossipV1TransferFrame {
             if totalEnvelopeBytes > GossipV1.MAX_TRANSFER_BYTES {
                 throw GossipV1FrameError.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: totalEnvelopeBytes)
             }
-            try rejectIfExpired(expiryUnixMs: obj.expiryUnixMs)
             objects.append(obj)
         }
 
@@ -515,16 +558,7 @@ private extension GossipV1TransferFrame {
         }
     }
 
-    static func rejectIfExpired(expiryUnixMs: UInt64, nowUnixMs: UInt64 = nowUnixMs()) throws {
-        let cutoff = nowUnixMs &+ GossipV1.CLOCK_SKEW_TOLERANCE_MS
-        if cutoff >= expiryUnixMs {
-            throw GossipV1FrameError.transferExpiredObject
-        }
-    }
-
-    static func nowUnixMs() -> UInt64 {
-        UInt64(Date().timeIntervalSince1970 * 1000)
-    }
+    // Expiry semantics are validated at the engine boundary with an injected clock.
 }
 
 private extension GossipV1TransferFrame.Object {
@@ -551,8 +585,8 @@ private extension GossipV1TransferFrame.Object {
             throw GossipV1FrameError.invalidRange(field: "hop_count")
         }
 
-        let itemID = try GossipV1ItemID(hex: itemHex)
-        let envelopeBytes = try GossipV1Base64URL.decode(envelopeB64)
+        let itemID = try GossipV1CBOR.parseItemID(hex: itemHex, field: "item_id")
+        let envelopeBytes = try GossipV1CBOR.parseBase64URL(envelopeB64, field: "envelope_b64")
         return try GossipV1TransferFrame.Object(
             itemID: itemID,
             envelopeBytes: envelopeBytes,
@@ -582,7 +616,7 @@ private extension GossipV1ReceiptFrame {
         seen.reserveCapacity(values.count)
         for v in values {
             let hex = try GossipV1CBOR.requireText(v, field: "received")
-            let id = try GossipV1ItemID(hex: hex)
+            let id = try GossipV1CBOR.parseItemID(hex: hex, field: "received")
             guard seen.insert(id).inserted else { throw GossipV1FrameError.duplicateItemID }
             received.append(id)
         }
@@ -610,7 +644,7 @@ private extension GossipV1RelayIngestFrame {
         seen.reserveCapacity(values.count)
         for v in values {
             let hex = try GossipV1CBOR.requireText(v, field: "item_ids")
-            let id = try GossipV1ItemID(hex: hex)
+            let id = try GossipV1CBOR.parseItemID(hex: hex, field: "item_ids")
             guard seen.insert(id).inserted else { throw GossipV1FrameError.duplicateItemID }
             itemIDs.append(id)
         }
