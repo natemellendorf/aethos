@@ -202,6 +202,39 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             XCTAssertTrue(error is CancellationError)
         }
     }
+
+    func testRelayIngest_authenticated_validationErrorFromObserver_emitsRelayIngestValidationEventError() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let thrown: GossipV1EncounterEngine.ValidationError = .encounterTerminated
+        let observer = ValidationErrorThrowingRelayObserver(error: thrown)
+
+        let errors = Locked<[GossipV1TransportError]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                guard case .didEncounterError(let err) = event else { return }
+                errors.withLock { $0.append(err) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            relayObserver: observer,
+            isAuthenticatedRelayTransport: { true },
+            hooks: hooks
+        )
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
+        let relayIngest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(relayIngest).encode())
+        try adapter.receiveBytes(streamBytes)
+
+        XCTAssertEqual(errors.withLock { $0 }, [.relayIngestValidation(thrown)])
+    }
 }
 
 // MARK: - Minimal test helpers (scoped to this file)
@@ -260,5 +293,17 @@ private final class InMemoryGossipStore: @unchecked Sendable, GossipV1EncounterE
 private final class CancellationThrowingRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
     func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws {
         throw CancellationError()
+    }
+}
+
+private final class ValidationErrorThrowingRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
+    let error: GossipV1EncounterEngine.ValidationError
+
+    init(error: GossipV1EncounterEngine.ValidationError) {
+        self.error = error
+    }
+
+    func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws {
+        throw error
     }
 }

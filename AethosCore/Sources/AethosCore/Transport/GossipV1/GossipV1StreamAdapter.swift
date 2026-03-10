@@ -180,6 +180,9 @@ public struct GossipV1StreamAdapter: Sendable {
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
             }
             // RELAY_INGEST has no encounter state effect.
+            if case .terminated = engine.state {
+                return .stopProcessing
+            }
             return .continueProcessing
         }
 
