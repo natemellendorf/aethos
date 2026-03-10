@@ -18,6 +18,15 @@ func gossipV1_engine_requiresHelloFirst_andFailsClosedOnVersionMismatch() throws
     // HELLO must still be decodable so the engine (not framing) can fail-closed.
     // Outbound HELLO construction is strict, so craft the mismatch at the CBOR level.
     let badHelloDatagram = try makeHelloDatagramWithVersion(GossipV1.GOSSIP_VERSION + 1)
+
+    // First, assert that framing/decoding is permissive and yields a HELLO with a mismatched version.
+    let decodedBadHelloFrame = try GossipV1Framing.decodeDatagram(badHelloDatagram)
+    guard case .hello(let decodedBadHello) = decodedBadHelloFrame else {
+        throw GossipV1EncounterEngineConformanceTestError.expectedHello
+    }
+    #expect(decodedBadHello.version != GossipV1.GOSSIP_VERSION)
+    #expect(decodedBadHello.version == GossipV1.GOSSIP_VERSION + 1)
+
     #expect(throws: GossipV1EncounterEngine.ValidationError.invalidHelloVersion(expected: GossipV1.GOSSIP_VERSION, actual: GossipV1.GOSSIP_VERSION + 1)) {
         _ = try engine.ingestInboundDatagram(badHelloDatagram, clock: clock, store: store)
     }
@@ -26,6 +35,10 @@ func gossipV1_engine_requiresHelloFirst_andFailsClosedOnVersionMismatch() throws
     #expect(throws: GossipV1EncounterEngine.ValidationError.encounterTerminated) {
         _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
     }
+}
+
+private enum GossipV1EncounterEngineConformanceTestError: Swift.Error {
+    case expectedHello
 }
 
 @Test

@@ -71,6 +71,19 @@ public enum GossipV1Frame: Equatable, Sendable {
         return try decode(envelope: env)
     }
 
+    /// Decodes a frame and enforces Gossip v1 HELLO version.
+    ///
+    /// This is intended for callers that decode frames outside the encounter engine and want
+    /// strict fail-fast semantics.
+    ///
+    /// - Important: `decode(bytes:)` intentionally remains permissive for inbound HELLO frames so
+    ///   the encounter engine can fail-closed on version mismatch.
+    public static func decodeStrict(bytes: Data) throws -> GossipV1Frame {
+        let frame = try decode(bytes: bytes)
+        try enforceStrictHelloVersion(frame)
+        return frame
+    }
+
     internal static func decode(decodedValue: CanonicalCBORValue) throws -> GossipV1Frame {
         let env = try GossipV1DecodedEnvelope.decode(value: decodedValue)
         return try decode(envelope: env)
@@ -90,6 +103,13 @@ public enum GossipV1Frame: Equatable, Sendable {
             return .receipt(try GossipV1ReceiptFrame.decodePayload(env.payload))
         case .RELAY_INGEST:
             return .relayIngest(try GossipV1RelayIngestFrame.decodePayload(env.payload))
+        }
+    }
+
+    private static func enforceStrictHelloVersion(_ frame: GossipV1Frame) throws {
+        guard case .hello(let hello) = frame else { return }
+        guard hello.version == GossipV1.GOSSIP_VERSION else {
+            throw GossipV1FrameError.invalidVersion(expected: GossipV1.GOSSIP_VERSION, actual: hello.version)
         }
     }
 }
