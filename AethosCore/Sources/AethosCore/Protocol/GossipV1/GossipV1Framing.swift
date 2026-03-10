@@ -4,7 +4,11 @@ import Foundation
 ///
 /// Spec source of truth: `docs/protocol/frames.md`.
 public enum GossipV1Framing {
-    private static func decodeDatagramValue(_ datagram: Data) throws -> CanonicalCBORValue {
+    /// Internal seam for tests to exercise normalization behavior.
+    internal static func decodeDatagramValue(
+        _ datagram: Data,
+        decodeCBOR: (Data) throws -> CanonicalCBORValue = { try CanonicalCBORDecoder().decode($0) }
+    ) throws -> CanonicalCBORValue {
         guard !datagram.isEmpty else { throw GossipV1FramingError.emptyDatagram }
         guard datagram.count <= GossipV1.MAX_FRAME_BYTES else {
             throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: datagram.count)
@@ -13,7 +17,10 @@ public enum GossipV1Framing {
         do {
             // Enforce datagram invariant: exactly one CBOR item (the frame envelope) with no trailing bytes.
             // CanonicalCBORDecoder.decode(_:) is strict and throws on trailing bytes.
-            return try CanonicalCBORDecoder().decode(datagram)
+            return try decodeCBOR(datagram)
+        } catch let error as CancellationError {
+            // Never swallow task cancellation at framing boundaries.
+            throw error
         } catch let err as CanonicalCBORDecoder.Error {
             // Normalize CBOR decoder failures to a single framing error domain.
             throw GossipV1FramingError.invalidDatagramCBOR(problem: .from(err))
@@ -22,7 +29,10 @@ public enum GossipV1Framing {
             // implementation detail starts throwing a different error type.
             //
             // Intentionally do not surface the underlying error outside the framing domain.
-            throw GossipV1FramingError.invalidDatagramCBOR(problem: .internalError)
+            //
+            // We intentionally map truly-unexpected failures into an existing problem case to avoid
+            // source-breaking public enum expansion in this error surface.
+            throw GossipV1FramingError.invalidDatagramCBOR(problem: .truncated)
         }
     }
 
@@ -89,6 +99,9 @@ public enum GossipV1Framing {
         let decodedValue = try decodeDatagramValue(datagram)
         do {
             return try GossipV1Frame.decode(decodedValue: decodedValue)
+        } catch let error as CancellationError {
+            // Never swallow task cancellation at framing boundaries.
+            throw error
         } catch let err as GossipV1FrameError {
             throw GossipV1FramingError.invalidDatagramFrame(underlying: err)
         } catch {
@@ -116,9 +129,6 @@ public enum GossipV1DatagramCBORProblem: Equatable, Sendable {
     case invalidUTF8
     case duplicateMapKey
     case nonCanonicalMapKeyOrder
-
-    /// A catch-all for unexpected decoder failures.
-    case internalError
 
     static func from(_ err: CanonicalCBORDecoder.Error) -> GossipV1DatagramCBORProblem {
         switch err {
