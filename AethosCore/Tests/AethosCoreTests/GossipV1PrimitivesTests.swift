@@ -46,6 +46,16 @@ final class GossipV1PrimitivesTests: XCTestCase {
         }
     }
 
+    func testBase64URLRejectsLengthMod4Equals1() {
+        // Base64URL length 1 mod 4 is impossible under RFC 4648.
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("a")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLLength)
+        }
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("abcde")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLLength)
+        }
+    }
+
     func testBase64URLRoundTripNoPadding() throws {
         let data = Data([0x66]) // "f"
         let encoded = GossipV1Base64URL.encode(data)
@@ -68,6 +78,45 @@ final class GossipV1PrimitivesTests: XCTestCase {
         let expectedHex = expectedBloomHexVector
         XCTAssertEqual(expectedHex.count, 2_048 * 2)
         XCTAssertEqual(Hex.encode(bloom), expectedHex)
+    }
+
+    func testHexDigestRejectsInvalidLength() {
+        let sixtyThree = String(repeating: "a", count: 63)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: sixtyThree)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexDigest(expectedChars: 64, actualChars: 63))
+        }
+
+        let sixtyFive = String(repeating: "a", count: 65)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: sixtyFive)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexDigest(expectedChars: 64, actualChars: 65))
+        }
+    }
+
+    func testHexDigestRejectsUppercase() {
+        let uppercase = String(repeating: "A", count: 64)
+        XCTAssertThrowsError(try GossipV1NodeID(hex: uppercase)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexCharacter)
+        }
+    }
+
+    func testHexDigestRejectsNonHex() {
+        let bad = String(repeating: "g", count: 64)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: bad)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexCharacter)
+        }
+    }
+
+    func testBloomOrderIndependenceAndDuplicateInvariance() throws {
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x00, count: 32))
+        let b = try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32))
+        let c = try GossipV1ItemID(bytes: Data(repeating: 0x22, count: 32))
+
+        let bloomABC = GossipV1BloomFilter.build(for: [a, b, c])
+        let bloomCBA = GossipV1BloomFilter.build(for: [c, b, a])
+        XCTAssertEqual(bloomABC, bloomCBA)
+
+        let bloomWithDuplicates = GossipV1BloomFilter.build(for: [a, b, b, c, a])
+        XCTAssertEqual(bloomABC, bloomWithDuplicates)
     }
 }
 

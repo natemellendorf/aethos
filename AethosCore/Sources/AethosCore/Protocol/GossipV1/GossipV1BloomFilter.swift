@@ -8,15 +8,22 @@ public enum GossipV1BloomFilter {
         var bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
         let bitCount = GossipV1.BLOOM_FILTER_BYTES * 8
 
+        // Fixed 33-byte buffer: 32 digest bytes + 1 byte index.
+        // Avoids inner-loop `Data + Data` allocations while keeping the algorithm identical.
+        var hashInput = Data(repeating: 0, count: 33)
+
         for itemID in itemIDs {
-            precondition(itemID.bytes.count == 32, "GossipV1ItemID must be 32 bytes")
+            // Copy 32 digest bytes once per item.
+            hashInput.replaceSubrange(0..<32, with: itemID.bytes)
             for i in 0..<GossipV1.BLOOM_HASH_COUNT {
-                let digest = AethosIDs.sha256(itemID.bytes + Data([UInt8(i)]))
+                hashInput[32] = UInt8(i)
+
+                let digest = AethosIDs.sha256(hashInput)
                 let v = uint64BE(digest.prefix(8))
                 let bitIndex = Int(v % UInt64(bitCount))
                 let byteIndex = bitIndex / 8
                 let bitOffset = bitIndex % 8 // LSB0
-                bloom[byteIndex] |= (1 << bitOffset)
+                bloom[byteIndex] |= (UInt8(1) << bitOffset)
             }
         }
 
@@ -24,7 +31,6 @@ public enum GossipV1BloomFilter {
     }
 
     private static func uint64BE(_ bytes: Data.SubSequence) -> UInt64 {
-        precondition(bytes.count == 8, "Expected 8 bytes for uint64")
         var v: UInt64 = 0
         for b in bytes {
             v = (v << 8) | UInt64(b)

@@ -3,11 +3,11 @@ import Foundation
 /// Lowercase hex SHA-256 digest scalar utilities for gossip v1.
 ///
 /// Both `item_id` and `node_id` share the same encoding: `[0-9a-f]{64}`.
-public enum GossipV1Scalars {
+enum GossipV1Scalars {
     private static let digestByteCount = 32
     private static let digestHexChars = 64
 
-    public static func isValidLowercaseHexDigest(_ s: String) -> Bool {
+    static func isValidLowercaseHexDigest(_ s: String) -> Bool {
         let bytes = s.utf8
         guard bytes.count == digestHexChars else { return false }
         for c in bytes {
@@ -21,7 +21,7 @@ public enum GossipV1Scalars {
         return true
     }
 
-    public static func decodeLowercaseHexDigest(_ s: String) throws -> Data {
+    static func decodeLowercaseHexDigest(_ s: String) throws -> Data {
         let bytes = Array(s.utf8)
         guard bytes.count == digestHexChars else {
             throw GossipV1Error.invalidHexDigest(expectedChars: digestHexChars, actualChars: bytes.count)
@@ -53,7 +53,13 @@ public enum GossipV1Scalars {
 }
 
 public struct GossipV1ItemID: Hashable, Sendable {
-    public let bytes: Data
+    // Internal representation is fixed 32 bytes (SHA-256).
+    internal let bytes: Data
+
+    /// Raw SHA-256 digest bytes.
+    ///
+    /// Prefer `hex` for human-facing usage.
+    public func rawBytes() -> Data { bytes }
 
     public var hex: String {
         // Hex.encode is lowercase by construction.
@@ -72,7 +78,7 @@ public struct GossipV1ItemID: Hashable, Sendable {
     }
 
     internal init(unsafeDigestBytes bytes: Data) {
-        precondition(bytes.count == 32, "SHA-256 must be 32 bytes")
+        assert(bytes.count == 32, "SHA-256 must be 32 bytes")
         self.bytes = bytes
     }
 
@@ -82,7 +88,13 @@ public struct GossipV1ItemID: Hashable, Sendable {
 }
 
 public struct GossipV1NodeID: Hashable, Sendable {
-    public let bytes: Data
+    // Internal representation is fixed 32 bytes (SHA-256).
+    internal let bytes: Data
+
+    /// Raw SHA-256 digest bytes.
+    ///
+    /// Prefer `hex` for human-facing usage.
+    public func rawBytes() -> Data { bytes }
 
     public var hex: String {
         Hex.encode(bytes)
@@ -100,7 +112,7 @@ public struct GossipV1NodeID: Hashable, Sendable {
     }
 
     internal init(unsafeDigestBytes bytes: Data) {
-        precondition(bytes.count == 32, "SHA-256 must be 32 bytes")
+        assert(bytes.count == 32, "SHA-256 must be 32 bytes")
         self.bytes = bytes
     }
 
