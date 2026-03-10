@@ -213,6 +213,14 @@ public struct GossipV1TransferFrame: Equatable, Sendable {
 
     public let objects: [Object]
 
+    /// Unsafe constructor for tests/fuzzing only.
+    ///
+    /// This bypasses invariant checks performed by `init(objects:)`.
+    /// Production code MUST NOT use this.
+    internal init(unsafeObjects: [Object]) {
+        objects = unsafeObjects
+    }
+
     public init(objects: [Object]) throws {
         guard objects.count <= GossipV1.MAX_TRANSFER_ITEMS else {
             throw GossipV1FrameError.transferTooManyObjects(max: GossipV1.MAX_TRANSFER_ITEMS, actual: objects.count)
