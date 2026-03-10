@@ -16,14 +16,20 @@ final class GossipV1StreamSessionTests: XCTestCase {
         )
 
         let outbound = await session.outboundBytes()
-        let readTask = Task { () -> Data? in
+        let readTask = Task { () -> GossipV1Frame? in
             var it = outbound.makeAsyncIterator()
-            return await it.next()
+            guard let produced = await it.next() else { return nil }
+            let frameBytes = try GossipV1Framing.decodeSingleStreamFrame(from: produced)
+            let decodedValue = try GossipV1Framing.decodeDatagramValue(frameBytes)
+            return try GossipV1Frame.decode(decodedValue: decodedValue)
         }
 
         await session.sendHello()
-        let produced = await readTask.value
-        XCTAssertNotNil(produced)
+        let producedFrame = try await withTimeout(seconds: 1) { try await readTask.value }
+        guard case .hello(let decodedHello)? = producedFrame else {
+            return XCTFail("Expected HELLO frame")
+        }
+        XCTAssertEqual(decodedHello.version, GossipV1.GOSSIP_VERSION)
     }
 
     func testInboundBytesDriveDecodingAndEmitEvents() async throws {
@@ -58,6 +64,63 @@ final class GossipV1StreamSessionTests: XCTestCase {
             return false
         })
     }
+
+    func testRunInboundCancellationClosesOutboundPromptly() async throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let session = GossipV1StreamSession(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            relayIngest: .init(observer: nil, isAuthenticatedTransport: { false }),
+            onEvent: { _ in }
+        )
+
+        let outbound = await session.outboundBytes()
+        let outboundFinished = Task {
+            var it = outbound.makeAsyncIterator()
+            while await it.next() != nil {}
+        }
+
+        let neverEndingInbound = AsyncStream<Data> { _ in }
+        let runTask = Task {
+            try await session.runInbound(bytes: neverEndingInbound)
+        }
+
+        runTask.cancel()
+        try await withTimeout(seconds: 1) {
+            _ = try? await runTask.value
+        }
+        try await withTimeout(seconds: 1) {
+            _ = await outboundFinished.value
+        }
+    }
+
+    func testCloseFinishesOutboundAndPreventsFurtherYields() async throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let session = GossipV1StreamSession(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            relayIngest: .init(observer: nil, isAuthenticatedTransport: { false }),
+            onEvent: { _ in }
+        )
+
+        let outbound = await session.outboundBytes()
+        let nextTask = Task { () -> Data? in
+            var it = outbound.makeAsyncIterator()
+            return await it.next()
+        }
+
+        await session.close()
+        await session.sendHello()
+
+        let next = try await withTimeout(seconds: 1) { await nextTask.value }
+        XCTAssertNil(next)
+    }
 }
 
 // MARK: - Minimal helpers (scoped to this file)
@@ -74,6 +137,21 @@ private final class Locked<T>: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return body(&value)
+    }
+}
+
+private struct TimeoutError: Swift.Error {}
+
+private func withTimeout<T: Sendable>(seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await body() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError()
+        }
+        let value = try await group.next()!
+        group.cancelAll()
+        return value
     }
 }
 

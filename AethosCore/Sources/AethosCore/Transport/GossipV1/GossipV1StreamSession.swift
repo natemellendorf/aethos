@@ -13,16 +13,22 @@ public actor GossipV1StreamSession {
     private let outboundContinuation: AsyncStream<Data>.Continuation
     private let outboundStream: AsyncStream<Data>
 
+    private var outboundStreamClaimed = false
+    private var isClosed = false
+
+    private let outboundYieldGate = OutboundYieldGate()
+
     public init<Clock: GossipV1EncounterEngine.Clock, Store: GossipV1EncounterEngine.Store>(
         engine: GossipV1EncounterEngine,
         clock: Clock,
         store: Store,
         relayIngest: GossipV1StreamAdapter.RelayIngestConfig,
+        outboundBufferLimit: Int = 256,
         onEvent: @escaping @Sendable (GossipV1StreamAdapter.Event) -> Void,
         onApplicationFrame: (@Sendable (GossipV1Frame) -> Void)? = nil
     ) {
         var continuation: AsyncStream<Data>.Continuation?
-        self.outboundStream = AsyncStream<Data> { c in
+        self.outboundStream = AsyncStream<Data>(bufferingPolicy: .bufferingOldest(outboundBufferLimit)) { c in
             continuation = c
         }
         guard let continuation else {
@@ -31,8 +37,20 @@ public actor GossipV1StreamSession {
         self.outboundContinuation = continuation
 
         let hooks = GossipV1StreamAdapter.Hooks(
-            onSend: { [outboundContinuation] bytes in
-                outboundContinuation.yield(bytes)
+            onSend: { [outboundContinuation, outboundYieldGate] bytes in
+                guard outboundYieldGate.shouldYield else { return }
+                switch outboundContinuation.yield(bytes) {
+                case .enqueued:
+                    break
+                case .dropped:
+                    // Backpressure policy decided to drop; keep going.
+                    break
+                case .terminated:
+                    // Stream is finished; stop yielding.
+                    outboundYieldGate.markTerminated()
+                @unknown default:
+                    break
+                }
             },
             onEvent: onEvent,
             onApplicationFrame: onApplicationFrame
@@ -52,8 +70,30 @@ public actor GossipV1StreamSession {
     }
 
     /// Outbound stream of length-prefixed Gossip v1 bytes.
+    ///
+    /// - Important: This stream is single-consumer. Do not create multiple active iterators.
+    /// - Important: This method may only be called once.
     public func outboundBytes() -> AsyncStream<Data> {
-        outboundStream
+        precondition(!outboundStreamClaimed, "outboundBytes() may only be called once; the stream is single-consumer")
+        outboundStreamClaimed = true
+        return outboundStream
+    }
+
+    /// Closes the session and finishes the outbound stream.
+    ///
+    /// Idempotent.
+    public func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        outboundYieldGate.markTerminated()
+        outboundContinuation.finish()
+        do {
+            try adapter.finish()
+        } catch is CancellationError {
+            // Cancellation should surface via runInbound; nothing to do here.
+        } catch {
+            // finish() reports errors via adapter events; ignore.
+        }
     }
 
     public func sendFrame(_ frame: GossipV1Frame) {
@@ -71,15 +111,41 @@ public actor GossipV1StreamSession {
     /// Drive inbound processing by consuming an async sequence of byte chunks.
     ///
     /// - Important: cancellation is preserved; `CancellationError` is not swallowed.
+    /// - Important: prompt cancellation depends on the inbound sequence being cancellation-aware.
+    ///   This session will always attempt to `close()` when cancellation is requested.
     public func runInbound<S: AsyncSequence>(bytes: S) async throws where S.Element == Data {
-        do {
-            for try await chunk in bytes {
-                try Task.checkCancellation()
-                try adapter.receiveBytes(chunk)
+        try await withTaskCancellationHandler {
+            do {
+                for try await chunk in bytes {
+                    try Task.checkCancellation()
+                    try adapter.receiveBytes(chunk)
+                }
+                close()
+            } catch let error as CancellationError {
+                close()
+                throw error
+            } catch {
+                close()
             }
-            try adapter.finish()
-        } catch let error as CancellationError {
-            throw error
+        } onCancel: {
+            Task { await self.close() }
         }
+    }
+}
+
+private final class OutboundYieldGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var terminated = false
+
+    var shouldYield: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !terminated
+    }
+
+    func markTerminated() {
+        lock.lock()
+        terminated = true
+        lock.unlock()
     }
 }
