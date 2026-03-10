@@ -137,6 +137,9 @@ public struct GossipV1StreamAdapter: Sendable {
             return
         }
 
+        // Ordering guarantee: when the encounter transitions into `.terminated`, we emit
+        // `.didChangeState(..., to: .terminated)` before emitting `.didEncounterError`.
+        // Non-termination transitions may interleave with errors.
         if case .terminated = engine.state {
             hooks.onEvent(.didChangeState(from: previousState, to: engine.state))
             hooks.onEvent(.didEncounterError(error))
@@ -182,6 +185,10 @@ public struct GossipV1StreamAdapter: Sendable {
         // Relay ingest is a trust-boundary: always decode + surface raw frame,
         // but only forward it to application hooks when authenticated.
         if case .relayIngest(let ingest) = frame {
+            #if DEBUG
+            let stateBeforeRelayIngest = engine.state
+            #endif
+
             let isAuthenticated = relayIngest.isAuthenticatedTransport()
             if isAuthenticated {
                 hooks.onApplicationFrame?(frame)
@@ -197,10 +204,15 @@ public struct GossipV1StreamAdapter: Sendable {
             } catch let error as CancellationError {
                 throw error
             } catch {
-                // Per contract: observer non-cancellation errors are local app errors.
+                // Per contract: observer non-cancellation errors are surfaced as local app errors.
+                // Cancellation is rethrown.
                 // Emit an error event and continue processing future frames.
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
             }
+
+            #if DEBUG
+            assert(engine.state == stateBeforeRelayIngest, "Relay ingest observer MUST NOT mutate encounter state")
+            #endif
             return .continueProcessing
         }
 

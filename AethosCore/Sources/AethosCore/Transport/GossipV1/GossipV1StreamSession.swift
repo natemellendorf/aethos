@@ -10,13 +10,25 @@ import Foundation
 public actor GossipV1StreamSession {
     private var adapter: GossipV1StreamAdapter
 
+    /// Outbound stream of length-prefixed Gossip v1 bytes.
+    ///
+    /// - Important: This stream is intended to be single-consumer. Creating multiple
+    ///   active iterators is not supported and may lead to lost or reordered bytes.
+    public nonisolated let outboundBytes: AsyncStream<Data>
     private let outboundContinuation: AsyncStream<Data>.Continuation
-    private let outboundStream: AsyncStream<Data>
 
-    private var outboundStreamClaimed = false
+    /// Transport-layer events emitted by the underlying `GossipV1StreamAdapter`.
+    ///
+    /// Events are best-effort, but this stream is finished deterministically on `close()`.
+    public nonisolated let events: AsyncStream<GossipV1StreamAdapter.Event>
+    private let eventsContinuation: AsyncStream<GossipV1StreamAdapter.Event>.Continuation
+
     private var isClosed = false
 
     private let outboundYieldGate = OutboundYieldGate()
+
+    private let closeSignal: AsyncStream<Void>
+    private let closeSignalContinuation: AsyncStream<Void>.Continuation
 
     public init<Clock: GossipV1EncounterEngine.Clock, Store: GossipV1EncounterEngine.Store>(
         engine: GossipV1EncounterEngine,
@@ -27,24 +39,52 @@ public actor GossipV1StreamSession {
         onEvent: @escaping @Sendable (GossipV1StreamAdapter.Event) -> Void,
         onApplicationFrame: (@Sendable (GossipV1Frame) -> Void)? = nil
     ) {
-        var continuation: AsyncStream<Data>.Continuation?
-        self.outboundStream = AsyncStream<Data>(bufferingPolicy: .bufferingOldest(outboundBufferLimit)) { c in
-            continuation = c
+        var outboundContinuation: AsyncStream<Data>.Continuation?
+        self.outboundBytes = AsyncStream<Data>(bufferingPolicy: .bufferingOldest(outboundBufferLimit)) { c in
+            outboundContinuation = c
         }
-        guard let continuation else {
-            preconditionFailure("AsyncStream builder did not supply a continuation")
+        guard let outboundContinuation else {
+            preconditionFailure("AsyncStream builder did not supply an outbound continuation")
         }
-        self.outboundContinuation = continuation
+        self.outboundContinuation = outboundContinuation
+
+        var eventsContinuation: AsyncStream<GossipV1StreamAdapter.Event>.Continuation?
+        self.events = AsyncStream<GossipV1StreamAdapter.Event>(bufferingPolicy: .unbounded) { c in
+            eventsContinuation = c
+        }
+        guard let eventsContinuation else {
+            preconditionFailure("AsyncStream builder did not supply an events continuation")
+        }
+        self.eventsContinuation = eventsContinuation
+
+        var closeSignalContinuation: AsyncStream<Void>.Continuation?
+        self.closeSignal = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { c in
+            closeSignalContinuation = c
+        }
+        guard let closeSignalContinuation else {
+            preconditionFailure("AsyncStream builder did not supply a close-signal continuation")
+        }
+        self.closeSignalContinuation = closeSignalContinuation
+
+        let emitEvent: @Sendable (GossipV1StreamAdapter.Event) -> Void = { [eventsContinuation] event in
+            _ = eventsContinuation.yield(event)
+            onEvent(event)
+        }
 
         let hooks = GossipV1StreamAdapter.Hooks(
-            onSend: { [outboundContinuation, outboundYieldGate] bytes in
+            onSend: { [outboundContinuation, outboundYieldGate, closeSignalContinuation, emitEvent] bytes in
                 guard outboundYieldGate.shouldYield else { return }
                 switch outboundContinuation.yield(bytes) {
                 case .enqueued:
                     break
                 case .dropped:
-                    // Backpressure policy decided to drop; keep going.
-                    break
+                    // Buffering policy decided to drop a frame. This is fatal: we cannot
+                    // silently lose transport bytes.
+                    outboundYieldGate.markTerminated()
+                    outboundContinuation.finish()
+                    emitEvent(.didEncounterError(.from(OutboundBufferOverflowError())))
+                    _ = closeSignalContinuation.yield(())
+                    closeSignalContinuation.finish()
                 case .terminated:
                     // Stream is finished; stop yielding.
                     outboundYieldGate.markTerminated()
@@ -52,7 +92,7 @@ public actor GossipV1StreamSession {
                     break
                 }
             },
-            onEvent: onEvent,
+            onEvent: emitEvent,
             onApplicationFrame: onApplicationFrame
         )
 
@@ -63,20 +103,20 @@ public actor GossipV1StreamSession {
             relayIngest: relayIngest,
             hooks: hooks
         )
+
+        let closeSignal = self.closeSignal
+        Task { [weak self] in
+            guard let self else { return }
+            for await _ in closeSignal {
+                await self.close()
+            }
+        }
     }
 
     deinit {
         outboundContinuation.finish()
-    }
-
-    /// Outbound stream of length-prefixed Gossip v1 bytes.
-    ///
-    /// - Important: This stream is single-consumer. Do not create multiple active iterators.
-    /// - Important: This method may only be called once.
-    public func outboundBytes() -> AsyncStream<Data> {
-        precondition(!outboundStreamClaimed, "outboundBytes() may only be called once; the stream is single-consumer")
-        outboundStreamClaimed = true
-        return outboundStream
+        eventsContinuation.finish()
+        closeSignalContinuation.finish()
     }
 
     /// Closes the session and finishes the outbound stream.
@@ -86,14 +126,18 @@ public actor GossipV1StreamSession {
         guard !isClosed else { return }
         isClosed = true
         outboundYieldGate.markTerminated()
-        outboundContinuation.finish()
+        closeSignalContinuation.finish()
         do {
             try adapter.finish()
         } catch is CancellationError {
             // Cancellation should surface via runInbound; nothing to do here.
         } catch {
-            // finish() reports errors via adapter events; ignore.
+            // Defensive: if finish() ever throws non-cancellation, surface via events.
+            _ = eventsContinuation.yield(.didEncounterError(.from(error)))
         }
+
+        outboundContinuation.finish()
+        eventsContinuation.finish()
     }
 
     public func sendFrame(_ frame: GossipV1Frame) {
@@ -126,6 +170,7 @@ public actor GossipV1StreamSession {
                 throw error
             } catch {
                 close()
+                throw error
             }
         } onCancel: {
             Task { await self.close() }
@@ -148,4 +193,8 @@ private final class OutboundYieldGate: @unchecked Sendable {
         terminated = true
         lock.unlock()
     }
+}
+
+private struct OutboundBufferOverflowError: Swift.Error, Sendable {
+    // Map to `GossipV1TransportError.unexpected` via `.from(_)`.
 }

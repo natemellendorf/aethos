@@ -213,8 +213,9 @@ public struct GossipV1EncounterEngine: Sendable {
         }
         guard let observer else { return }
 
-        // Observer errors are surfaced to the transport adapter as local application errors.
-        // They MUST NOT change encounter state.
+        // Observer non-cancellation errors are surfaced to the transport adapter as local application errors.
+        // Cancellation is propagated by rethrowing.
+        // Observer errors MUST NOT change encounter state.
         try observer.noteAuthenticatedRelayIngest(itemIDs: frame.itemIDs, nowMs: clock.nowUnixMs())
     }
 
