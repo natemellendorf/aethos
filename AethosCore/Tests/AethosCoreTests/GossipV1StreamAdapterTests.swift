@@ -66,6 +66,142 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             .encounterValidation(.invalidHelloVersion(expected: GossipV1.GOSSIP_VERSION, actual: GossipV1.GOSSIP_VERSION + 1))
         )
     }
+
+    func testReceiveBytes_twoFramesInOneBuffer_firstInvalidSecondValid_secondStillProcessedWhenFirstNonFatal() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let errorEvents = Locked<[GossipV1TransportError]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                switch event {
+                case .didReceiveFrame(let frame):
+                    receivedFrames.withLock { $0.append(frame) }
+                case .didEncounterError(let err):
+                    errorEvents.withLock { $0.append(err) }
+                default:
+                    break
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        // This fixture exceeds MAX_FRAME_BYTES and should fail framing as non-fatal.
+        let invalidFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("transfer_oversize_bytes.cbor"))
+        let validSecond = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
+
+        try adapter.receiveBytes(streamBytes)
+
+        let frames = receivedFrames.withLock { $0 }
+        XCTAssertEqual(frames.count, 1)
+        guard case .hello(let decodedHello)? = frames.first else {
+            return XCTFail("Expected HELLO frame")
+        }
+        XCTAssertEqual(decodedHello.version, localHello.version)
+
+        let errors = errorEvents.withLock { $0 }
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertEqual(errors.first, .invalidFrame(.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_294)))
+    }
+
+    func testReceiveBytes_stopImmediatelyAfterTermination_remainingFramesInSameBufferNotProcessed() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                if case .didReceiveFrame(let frame) = event {
+                    receivedFrames.withLock { $0.append(frame) }
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let terminatingHello = try Data(contentsOf: fixturesDir().appendingPathComponent("hello_version_mismatch.cbor"))
+        let secondHello = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(terminatingHello) + GossipV1Framing.encodeStreamFrame(secondHello)
+
+        try adapter.receiveBytes(streamBytes)
+
+        // Only the first frame should be decoded/emitted; termination stops further processing.
+        XCTAssertEqual(receivedFrames.withLock { $0 }.count, 1)
+    }
+
+    func testRelayIngestUnauthenticated_emitsDidReceiveFrame_butDoesNotCallOnApplicationFrame() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let didReceive = Locked<[GossipV1Frame]>([])
+        let onApplicationFrames = Locked<[GossipV1Frame]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                if case .didReceiveFrame(let frame) = event {
+                    didReceive.withLock { $0.append(frame) }
+                }
+            },
+            onApplicationFrame: { frame in
+                onApplicationFrames.withLock { $0.append(frame) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let relayIngestBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("relay_ingest_unauthenticated.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(relayIngestBytes)
+        try adapter.receiveBytes(streamBytes)
+
+        XCTAssertEqual(didReceive.withLock { $0 }.count, 1)
+        XCTAssertEqual(onApplicationFrames.withLock { $0 }.count, 0)
+    }
+
+    func testReceiveBytes_relayIngestObserverThrowingCancellationError_isRethrown() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let observer = CancellationThrowingRelayObserver()
+        let hooks = GossipV1StreamAdapter.Hooks(onSend: { _ in }, onEvent: { _ in })
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            relayObserver: observer,
+            isAuthenticatedRelayTransport: { true },
+            hooks: hooks
+        )
+
+        let relayIngestBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("relay_ingest.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(relayIngestBytes)
+
+        XCTAssertThrowsError(try adapter.receiveBytes(streamBytes)) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
 }
 
 // MARK: - Minimal test helpers (scoped to this file)
@@ -119,4 +255,10 @@ private final class InMemoryGossipStore: @unchecked Sendable, GossipV1EncounterE
     func fetch(_: GossipV1ItemID) throws -> (envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16)? { nil }
     func existingHopCount(_: GossipV1ItemID) throws -> UInt16? { nil }
     func ingest(_: GossipV1ItemID, envelopeBytes _: Data, expiryUnixMs _: UInt64, hopCount _: UInt16) throws {}
+}
+
+private final class CancellationThrowingRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
+    func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws {
+        throw CancellationError()
+    }
 }

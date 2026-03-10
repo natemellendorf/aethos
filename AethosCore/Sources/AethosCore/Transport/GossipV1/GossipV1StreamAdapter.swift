@@ -5,6 +5,10 @@ import Foundation
 /// Scope: boundary framing, canonical CBOR decode/encode via GossipV1Framing/Frames,
 /// validation via GossipV1EncounterEngine, and dispatch hooks.
 public struct GossipV1StreamAdapter: Sendable {
+    private enum IngestOutcome {
+        case continueProcessing
+        case stopProcessing
+    }
     public struct RelayIngestConfig: Sendable {
         public var observer: (any GossipV1EncounterEngine.RelayIngestObserving)?
         public var isAuthenticatedTransport: @Sendable () -> Bool
@@ -112,7 +116,10 @@ public struct GossipV1StreamAdapter: Sendable {
         do {
             let frameBytesList = try framer.append(bytes)
             for frameBytes in frameBytesList {
-                try ingestCompleteFrameBytes(frameBytes)
+                let outcome = try ingestCompleteFrameBytes(frameBytes)
+                if outcome == .stopProcessing {
+                    return
+                }
             }
         } catch let error as CancellationError {
             throw error
@@ -132,27 +139,51 @@ public struct GossipV1StreamAdapter: Sendable {
         }
     }
 
-    private mutating func ingestCompleteFrameBytes(_ frameBytes: Data) throws {
+    private mutating func ingestCompleteFrameBytes(_ frameBytes: Data) throws -> IngestOutcome {
+        // Stop-immediately semantics for already-terminated encounters.
+        if case .terminated = engine.state {
+            return .stopProcessing
+        }
+
         let previousState = engine.state
 
-        let frame = try decodeFrameBytes(frameBytes)
-        hooks.onEvent(.didReceiveFrame(frame))
-        hooks.onApplicationFrame?(frame)
+        let frame: GossipV1Frame
+        do {
+            frame = try decodeFrameBytes(frameBytes)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            hooks.onEvent(.didEncounterError(.from(error)))
+            return .continueProcessing
+        }
 
+        // Always emit raw decoded frames.
+        hooks.onEvent(.didReceiveFrame(frame))
+
+        // Relay ingest is a trust-boundary: always decode + surface raw frame,
+        // but only forward it to application hooks when authenticated.
         if case .relayIngest(let ingest) = frame {
+            let isAuthenticated = relayIngest.isAuthenticatedTransport()
+            if isAuthenticated {
+                hooks.onApplicationFrame?(frame)
+            }
             do {
                 try engine.handleRelayIngest(
                     ingest,
-                    isAuthenticatedRelayTransport: relayIngest.isAuthenticatedTransport(),
+                    isAuthenticatedRelayTransport: isAuthenticated,
                     clock: clockBox,
                     observer: relayObserverBox
                 )
+            } catch let error as CancellationError {
+                throw error
             } catch {
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
             }
             // RELAY_INGEST has no encounter state effect.
-            return
+            return .continueProcessing
         }
+
+        hooks.onApplicationFrame?(frame)
 
         do {
             let result = try engine.ingestInboundFrame(frame, clock: clockBox, store: storeBox)
@@ -168,12 +199,17 @@ public struct GossipV1StreamAdapter: Sendable {
         } catch let error as CancellationError {
             throw error
         } catch {
-            // Engine validation errors terminate/close encounters; callers should close the transport.
+            // Engine validation errors can terminate encounters; callers should close the transport.
             hooks.onEvent(.didEncounterError(.from(error)))
             if previousState != engine.state {
                 hooks.onEvent(.didChangeState(from: previousState, to: engine.state))
             }
         }
+
+        if case .terminated = engine.state {
+            return .stopProcessing
+        }
+        return .continueProcessing
     }
 
     private func decodeFrameBytes(_ frameBytes: Data) throws -> GossipV1Frame {
