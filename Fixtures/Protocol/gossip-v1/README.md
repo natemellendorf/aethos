@@ -1,23 +1,38 @@
 # Gossip v1 fixtures
 
-This directory is for downstream client interoperability fixtures for the Aethos gossip protocol **v1**.
+This directory contains interoperability fixtures for the Aethos **Gossip Protocol v1**.
 
-## Directory contents
+## Canonical bytes (authoritative)
 
-- `hello.cbor` / `summary.cbor` / `request.cbor` / `transfer.cbor` / `receipt.cbor` / `relay_ingest.cbor`
-  - Intended to contain the canonical CBOR bytes for a single frame envelope (see `docs/protocol/frames.md`).
-  - Currently empty (0-byte) placeholders until canonical CBOR encoding is finalized.
-  - **Important:** these 0-byte `.cbor` files are intentional placeholders and are **not valid CBOR**. Downstream tooling must not attempt to decode them yet.
+All `*.cbor` files in this directory are the **authoritative canonical CBOR bytes** for their corresponding fixture.
 
-- `bloom_filter.bin`
-  - Intended to contain exactly 2048 bloom bytes for a deterministic item set.
-  - Currently empty (0-byte) placeholder.
-  - **Important:** this 0-byte `.bin` file is an intentional placeholder and does not contain a bloom vector yet.
+- Encoding MUST be canonical (RFC 8949 deterministic encoding).
+- These bytes are the wire contract: downstream implementations should decode and re-encode against these bytes to detect drift.
 
-- `item_id_derivation.json`
-  - Intended to pin `item_id = sha256(envelope_bytes)` derivations for canonical test vectors.
-  - Placeholder JSON file (human-readable), not a binary fixture.
+## Fixture shapes
 
-## Notes
+### Positive vectors
 
-Binary fixture files in this directory should be either canonical bytes or empty placeholders. Avoid storing human text in files with binary extensions (e.g. `.cbor`).
+Files like `hello.cbor`, `summary.cbor`, `request.cbor`, `transfer.cbor`, `receipt.cbor`, and `relay_ingest.cbor` are valid frame envelopes (see `docs/protocol/frames.md`).
+
+### Negative vectors
+
+Some fixtures are intentionally *invalid at the frame/engine boundary*.
+
+- A negative vector may still be a valid canonical CBOR value, but it is crafted to be rejected by:
+  - bearer framing (`GossipV1Framing`), or
+  - frame parsing (`GossipV1Frame.decode`), or
+  - encounter/engine validation (`GossipV1EncounterEngine`).
+
+For example, `transfer_oversize_bytes.cbor` is valid canonical CBOR, but it must be rejected as an invalid datagram frame because it exceeds the maximum transfer envelope byte budget.
+
+Some negative vectors are defined only by JSON metadata when the raw bytes would be too large to store in-repo (e.g. a datagram exceeding `MAX_FRAME_BYTES` is generated deterministically in tests).
+
+## JSON metadata files
+
+Each `*.json` file is metadata describing the expected result when consuming the corresponding vector (expected error domain/type, or expected effect). Runtime behavior is authoritative; JSON metadata must match the intended boundary and the tests.
+
+## Other files
+
+- `bloom_filter.bin` is a deterministic bloom filter byte vector.
+- `item_id_derivation.json` pins `item_id = sha256(envelope_bytes)` derivations for the canonical transfer fixture objects.

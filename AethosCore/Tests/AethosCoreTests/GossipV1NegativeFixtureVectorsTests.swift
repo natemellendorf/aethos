@@ -32,11 +32,25 @@ final class GossipV1NegativeFixtureVectorsTests: XCTestCase {
         let clock = FixedClock(nowMs: 123)
         let observer = InMemoryRelayIngestObserver()
 
+        let expectedItemIDs = ingest.itemIDs
+        let expectedNowMs = clock.nowMs
+
         try engine.handleRelayIngest(ingest, isAuthenticatedRelayTransport: false, clock: clock, observer: observer)
+
+        // Unauthenticated MUST have zero effect beyond "observer not called".
+        // This trust boundary should not throw and should not invoke side-effect hooks.
         XCTAssertEqual(observer.calls, 0)
+        XCTAssertEqual(observer.lastItemIDs, nil)
+        XCTAssertEqual(observer.lastNowMs, nil)
+
+        // Engine should remain unchanged; relay ingest is a pure trust-boundary hook.
+        XCTAssertEqual(engine.state, .awaitingHello)
+        XCTAssertEqual(engine.peerCaps, nil)
 
         try engine.handleRelayIngest(ingest, isAuthenticatedRelayTransport: true, clock: clock, observer: observer)
         XCTAssertEqual(observer.calls, 1)
+        XCTAssertEqual(observer.lastItemIDs, expectedItemIDs)
+        XCTAssertEqual(observer.lastNowMs, expectedNowMs)
     }
 }
 
@@ -255,7 +269,12 @@ private extension GossipV1NegativeFixtureVectorsTests {
     }
 
     func loadFixtureBytes(_ name: String) throws -> Data {
-        try Data(contentsOf: fixturesDir().appendingPathComponent(name))
+        // Avoid storing multi-megabyte fixtures in-repo.
+        // Keep the JSON fixture as the vector definition; generate bytes deterministically in tests.
+        if name == "datagram_frame_too_large.cbor" {
+            return Data(repeating: 0x00, count: GossipV1.MAX_FRAME_BYTES + 1)
+        }
+        return try Data(contentsOf: fixturesDir().appendingPathComponent(name))
     }
 }
 
@@ -319,7 +338,14 @@ private final class InMemoryGossipStore: @unchecked Sendable, GossipV1EncounterE
 
 private final class InMemoryRelayIngestObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
     private(set) var calls: Int = 0
-    func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws { calls += 1 }
+    private(set) var lastItemIDs: [GossipV1ItemID]?
+    private(set) var lastNowMs: UInt64?
+
+    func noteAuthenticatedRelayIngest(itemIDs: [GossipV1ItemID], nowMs: UInt64) throws {
+        calls += 1
+        lastItemIDs = itemIDs
+        lastNowMs = nowMs
+    }
 }
 
 private func extractSingleTransferItemID(from transferDatagram: Data) throws -> GossipV1ItemID? {

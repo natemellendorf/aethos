@@ -1,8 +1,8 @@
 {
   "expected_error": {
-    "actual": 1048577,
     "domain": "framing",
+    "type": "frameTooLarge",
     "max": 1048576,
-    "type": "frameTooLarge"
+    "actual": 1048577
   }
 }
