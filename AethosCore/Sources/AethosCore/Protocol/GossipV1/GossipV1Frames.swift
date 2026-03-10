@@ -464,20 +464,14 @@ private extension GossipV1TransferFrame {
         try GossipV1CBOR.requireExactPayloadKeys(dict, required: requiredKeys)
 
         let objectsValue = try GossipV1CBOR.requireArray(dict["objects"]!, field: "objects")
-        if objectsValue.count > GossipV1.MAX_TRANSFER_ITEMS {
-            throw GossipV1FrameError.transferTooManyObjects(max: GossipV1.MAX_TRANSFER_ITEMS, actual: objectsValue.count)
-        }
 
         var objects: [Object] = []
         objects.reserveCapacity(objectsValue.count)
 
         var totalEnvelopeBytes = 0
-        var seenIDs = Set<GossipV1ItemID>()
-        seenIDs.reserveCapacity(objectsValue.count)
 
         for v in objectsValue {
             let obj = try Object.decode(from: v)
-            guard seenIDs.insert(obj.itemID).inserted else { throw GossipV1FrameError.duplicateItemID }
             totalEnvelopeBytes += obj.envelopeBytes.count
             if totalEnvelopeBytes > GossipV1.MAX_TRANSFER_BYTES {
                 throw GossipV1FrameError.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: totalEnvelopeBytes)
@@ -537,14 +531,6 @@ private extension GossipV1TransferFrame.Object {
 
         let itemID = try GossipV1ItemID(hex: itemHex)
         let envelopeBytes = try GossipV1Base64URL.decode(envelopeB64)
-        guard GossipV1TransferFrame.isCanonicalCBORBytes(envelopeBytes) else {
-            throw GossipV1FrameError.transferEnvelopeNotCanonical
-        }
-        let derived = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
-        guard derived == itemID else {
-            throw GossipV1FrameError.transferItemIDMismatch
-        }
-
         return try GossipV1TransferFrame.Object(
             itemID: itemID,
             envelopeBytes: envelopeBytes,

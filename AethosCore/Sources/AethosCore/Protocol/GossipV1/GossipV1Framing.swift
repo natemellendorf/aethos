@@ -59,9 +59,6 @@ public enum GossipV1Framing {
         guard datagram.count <= GossipV1.MAX_FRAME_BYTES else {
             throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: datagram.count)
         }
-
-        // Enforce: exactly one canonical CBOR item per datagram.
-        _ = try CanonicalCBORDecoder().decode(datagram)
         return datagram
     }
 }
@@ -85,9 +82,13 @@ private extension Data {
     func readUInt32BE(at offset: Int) -> UInt32 {
         precondition(offset >= 0)
         precondition(count >= offset + 4)
-        return subdata(in: offset..<(offset + 4)).withUnsafeBytes {
-            UInt32(bigEndian: $0.load(as: UInt32.self))
-        }
+
+        // Assemble bytes explicitly to avoid unaligned loads.
+        let b0 = UInt32(self[offset])
+        let b1 = UInt32(self[offset + 1])
+        let b2 = UInt32(self[offset + 2])
+        let b3 = UInt32(self[offset + 3])
+        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
     }
 }
 

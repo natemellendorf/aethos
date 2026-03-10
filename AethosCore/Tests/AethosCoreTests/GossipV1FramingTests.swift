@@ -70,6 +70,19 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
+    func testStreamDecodeWorksWithMisalignedBuffer() throws {
+        let frameBytes = try makeCanonicalFrameBytes(seed: 0x33)
+        let encoded = try GossipV1Framing.encodeStreamFrame(frameBytes)
+
+        // Force a frame to start at offset 1.
+        var data = Data([0xFF])
+        data.append(encoded)
+
+        let slice = data.subdata(in: 1..<data.count)
+        let decoded = try GossipV1Framing.decodeSingleStreamFrame(from: slice)
+        XCTAssertEqual(decoded, frameBytes)
+    }
+
     func testStreamOversizedFrameLenRejected() {
         var out = Data()
         var tooLarge = UInt32(GossipV1.MAX_FRAME_BYTES + 1).bigEndian
@@ -99,11 +112,17 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
-    func testDatagramTrailingBytesRejectedByCanonicalDecoder() throws {
+    func testDatagramTrailingBytesAllowedAtFramingLayer() throws {
         let frameBytes = try makeCanonicalFrameBytes()
         var datagram = frameBytes
         datagram.append(0x00)
-        XCTAssertThrowsError(try GossipV1Framing.decodeDatagramFrame(datagram))
+
+        // Datagram framing only enforces basic size constraints; CBOR canonicality
+        // and trailing-byte rejection are enforced by GossipV1Frame.decode(bytes:).
+        let out = try GossipV1Framing.decodeDatagramFrame(datagram)
+        XCTAssertEqual(out, datagram)
+
+        XCTAssertThrowsError(try GossipV1Frame.decode(bytes: out))
     }
 }
 
