@@ -1,8 +1,15 @@
 # GOSSIP_SYNC_V1 Conformance Fixtures
 
-Status: Canonical v1 fixture catalog
+> Superseded
+>
+> This document described legacy **gossip sync** conformance fixtures for `docs/spec/GOSSIP_SYNC_V1.md`.
+> It is superseded by the Gossip v1 upgrade documentation in `docs/protocol/*` and the machine-readable interoperability fixtures in `Fixtures/Protocol/gossip-v1/*`.
+>
+> Backward compatibility with the legacy gossip-sync contract and its `testdata/gossip_sync/v1/*` fixtures is removed.
 
-This document defines canonical conformance fixtures for `docs/spec/GOSSIP_SYNC_V1.md`.
+Status: Superseded (legacy gossip sync fixture catalog)
+
+This document describes the legacy conformance fixture set for `docs/spec/GOSSIP_SYNC_V1.md`.
 
 Related migration references:
 
@@ -11,13 +18,11 @@ Related migration references:
 
 ## 1. Normative Scope
 
-- Normative message contract: `docs/spec/GOSSIP_SYNC_V1.md`
-- Normative machine-readable fixtures are the single-message fixtures:
-  - `testdata/gossip_sync/v1/inventory_summary.page1.json`
-  - `testdata/gossip_sync/v1/missing_request.page1.json`
-  - `testdata/gossip_sync/v1/missing_request.empty.page1.json`
-  - `testdata/gossip_sync/v1/transfer.page1.json`
-  - `testdata/gossip_sync/v1/receipt.page1.json`
+- Legacy message contract: `docs/spec/GOSSIP_SYNC_V1.md`
+- Legacy machine-readable fixtures in `testdata/gossip_sync/v1/*` are retained only as historical reference and are **not normative**.
+- Normative protocol docs and fixtures for the current Gossip v1 upgrade live at:
+  - `docs/protocol/*`
+  - `Fixtures/Protocol/gossip-v1/*`
 - Transcript fixtures are informative scenario aids and are not normative contract vectors.
 - This markdown file is normative for fixture selection and interpretation rules.
 - Any inline examples in this file are illustrative unless they point to a fixture file.
@@ -39,22 +44,22 @@ Future optional fixture representations:
 
 ### 3.1 Single-message fixtures
 
-1. `testdata/gossip_sync/v1/inventory_summary.page1.json`
+1. `testdata/gossip_sync/v1/inventory_summary.page1.json` (legacy; non-normative)
    - Canonical `inventory_summary` page with two items.
-2. `testdata/gossip_sync/v1/missing_request.page1.json`
+2. `testdata/gossip_sync/v1/missing_request.page1.json` (legacy; non-normative)
    - Canonical `missing_request` requesting one missing item.
-3. `testdata/gossip_sync/v1/missing_request.empty.page1.json`
+3. `testdata/gossip_sync/v1/missing_request.empty.page1.json` (legacy; non-normative)
    - Canonical zero-missing convergence request (`missing_item_ids=[]`, `page=1`, `has_more=false`).
-4. `testdata/gossip_sync/v1/transfer.page1.json`
+4. `testdata/gossip_sync/v1/transfer.page1.json` (legacy; non-normative)
    - Canonical `transfer` carrying one requested item.
    - v1 single-page invariant: `page=1`, `has_more=false`.
-5. `testdata/gossip_sync/v1/receipt.page1.json`
+5. `testdata/gossip_sync/v1/receipt.page1.json` (legacy; non-normative)
    - Canonical `receipt` for accepted transfer.
    - v1 single-page invariant: `page=1`, `has_more=false`.
 
 ### 3.2 Transcript fixture
 
-6. `testdata/gossip_sync/v1/happy_path.transcript.json`
+6. `testdata/gossip_sync/v1/happy_path.transcript.json` (legacy; non-normative)
    - Full happy-path exchange transcript referencing the canonical single-message fixtures.
    - Documents sender/receiver and expected state machine progression.
    - Informative only.

@@ -1,6 +1,13 @@
 # Gossip Sync Engine Integration (Transport-Neutral)
 
-`GossipSyncEngine` implements `docs/spec/GOSSIP_SYNC_V1.md` as transport-neutral runtime logic.
+> Superseded
+>
+> This document describes the legacy **gossip sync** integration (`GossipSyncEngine` + `docs/spec/GOSSIP_SYNC_V1.md`).
+> It has been superseded by the **Gossip v1** protocol upgrade docs in `docs/protocol/*` and the interoperability fixtures in `Fixtures/Protocol/gossip-v1/*`.
+>
+> Backward compatibility with the legacy gossip-sync contract/fixtures is removed.
+
+`GossipSyncEngine` implements the legacy contract in `docs/spec/GOSSIP_SYNC_V1.md` as transport-neutral runtime logic.
 
 ## Wiring flow
 

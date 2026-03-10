@@ -8,14 +8,15 @@ Purpose: track implementation alignment against canonical protocol specs across 
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Migration plan](./protocol_update.md)
 - [Architecture companion](./protocol_architecture.md)
-- [Gossip sync v1 spec](../spec/GOSSIP_SYNC_V1.md)
-- [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
+- [Gossip v1 protocol docs](../protocol/gossip.md)
+- [Gossip v1 interoperability fixtures](../../Fixtures/Protocol/gossip-v1/README.md)
 
 Related migration references:
 
 - Architecture companion: `docs/migration/protocol_architecture.md`
-- Gossip sync contract: `docs/spec/GOSSIP_SYNC_V1.md`
-- Gossip sync conformance fixtures: `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
+- Gossip v1 upgrade docs: `docs/protocol/*`
+- Gossip v1 interoperability fixtures: `Fixtures/Protocol/gossip-v1/*`
+- Legacy gossip-sync references (non-normative): `docs/spec/GOSSIP_SYNC_V1.md`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`, `testdata/gossip_sync/v1/*`
 
 ## Progress Summary
 
@@ -39,7 +40,7 @@ Status vocabulary for this section: `Specified` / `In progress` / `Not started` 
 
 | Track ID | Track | Status | Notes | Primary references |
 | --- | --- | --- | --- | --- |
-| P45-GOSSIP-CONTRACT | `GOSSIP_SYNC_V1` contract | Specified | Canonical v1 gossip-sync contract is defined and versioned; Phase 4 implementation rollout is active. | [GOSSIP_SYNC_V1](../spec/GOSSIP_SYNC_V1.md), [Fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md), [Phase 4 plan](./protocol_update.md#10-phase-4--gossip-sync-implementation) |
+| P45-GOSSIP-CONTRACT | Gossip v1 upgrade contract | Specified | Canonical Gossip v1 upgrade contract is defined in `docs/protocol/*`; Phase 4/5 implementation rollout is active. | [Docs](../protocol/gossip.md), [Fixtures](../../Fixtures/Protocol/gossip-v1/README.md), [Phase 4 plan](./protocol_update.md#10-phase-4--gossip-sync-implementation-legacy) |
 | P45-SYNC-ENGINE | Transport-neutral sync engine implementation | In progress | Sync engine/session integration work has started; fixture-backed convergence validation is still in progress across implementations. | [Phase 4 Step 4.3](./protocol_update.md#step-43--implement-transport-neutral-sync-engine), [Gossip fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md) |
 | P45-LOCAL-DISCOVERY | Local peer discovery | In progress | Local discovery rollout has started; iOS reports Bonjour/mDNS discovery implementation in progress. | [Phase 5 plan](./protocol_update.md#11-phase-5--lan-discovery-and-local-peer-delivery), [Phase 5 Step 5.2](./protocol_update.md#step-52--implement-ios-local-discovery) |
 | P45-PEER-TABLE | Peer-table tracking | In progress | Peer-table tracking is underway for discovered identities/endpoints/last-seen and diagnostics visibility. | [Phase 5 Step 5.4](./protocol_update.md#step-54--build-peer-table-abstraction), [Phase 5 Step 5.6](./protocol_update.md#step-56--add-diagnostics-ui-and-logs) |
