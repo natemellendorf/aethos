@@ -1,0 +1,8 @@
+{
+  "expected_error": {
+    "actual_bytes": 524294,
+    "domain": "engine",
+    "max_bytes": 524288,
+    "type": "transferOversize"
+  }
+}

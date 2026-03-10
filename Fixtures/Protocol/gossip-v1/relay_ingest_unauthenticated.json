@@ -1,0 +1,4 @@
+{
+  "expected_effect": "none_when_unauthenticated",
+  "expected_effect_when_authenticated": "observer_called_once"
+}

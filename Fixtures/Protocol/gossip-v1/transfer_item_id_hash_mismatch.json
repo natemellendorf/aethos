@@ -1,0 +1,7 @@
+{
+  "expected_error": {
+    "domain": "framing",
+    "type": "invalidDatagramFrame",
+    "underlying": "transferItemIDMismatch"
+  }
+}
