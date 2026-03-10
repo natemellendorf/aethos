@@ -80,6 +80,31 @@ final class GossipV1PrimitivesTests: XCTestCase {
         XCTAssertEqual(Hex.encode(bloom), expectedHex)
     }
 
+    func testBloomSetsExpectedBitsForFixedVector() throws {
+        let ids = [
+            try GossipV1ItemID(bytes: Data(repeating: 0x00, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x22, count: 32)),
+        ]
+
+        let bloom = GossipV1BloomFilter.build(for: ids)
+        XCTAssertEqual(bloom.count, 2_048)
+
+        // A few audited set bits from the fixed vector (LSB0 within each byte).
+        // These are complementary to the full hex equality test above.
+        // - byteIndex 129, bitOffset 4 => 0x10
+        XCTAssertEqual(bloom[129], 0x10)
+        XCTAssertNotEqual(bloom[129] & (UInt8(1) << 4), 0)
+
+        // - byteIndex 1317, bitOffset 1 => 0x02
+        XCTAssertEqual(bloom[1317], 0x02)
+        XCTAssertNotEqual(bloom[1317] & (UInt8(1) << 1), 0)
+
+        // - byteIndex 1953, bitOffset 7 => 0x80
+        XCTAssertEqual(bloom[1953], 0x80)
+        XCTAssertNotEqual(bloom[1953] & (UInt8(1) << 7), 0)
+    }
+
     func testHexDigestRejectsInvalidLength() {
         let sixtyThree = String(repeating: "a", count: 63)
         XCTAssertThrowsError(try GossipV1ItemID(hex: sixtyThree)) { err in

@@ -14,6 +14,8 @@ public enum GossipV1BloomFilter {
 
         for itemID in itemIDs {
             // Copy 32 digest bytes once per item.
+            // Defensive: Data.replaceSubrange will resize the buffer if counts mismatch.
+            precondition(itemID.bytes.count == 32, "GossipV1ItemID digest must be exactly 32 bytes (SHA-256)")
             hashInput.replaceSubrange(0..<32, with: itemID.bytes)
             for i in 0..<GossipV1.BLOOM_HASH_COUNT {
                 hashInput[32] = UInt8(i)

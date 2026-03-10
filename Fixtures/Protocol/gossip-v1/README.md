@@ -7,10 +7,12 @@ This directory is for downstream client interoperability fixtures for the Aethos
 - `hello.cbor` / `summary.cbor` / `request.cbor` / `transfer.cbor` / `receipt.cbor` / `relay_ingest.cbor`
   - Intended to contain the canonical CBOR bytes for a single frame envelope (see `docs/protocol/frames.md`).
   - Currently empty (0-byte) placeholders until canonical CBOR encoding is finalized.
+  - **Important:** these 0-byte `.cbor` files are intentional placeholders and are **not valid CBOR**. Downstream tooling must not attempt to decode them yet.
 
 - `bloom_filter.bin`
   - Intended to contain exactly 2048 bloom bytes for a deterministic item set.
   - Currently empty (0-byte) placeholder.
+  - **Important:** this 0-byte `.bin` file is an intentional placeholder and does not contain a bloom vector yet.
 
 - `item_id_derivation.json`
   - Intended to pin `item_id = sha256(envelope_bytes)` derivations for canonical test vectors.

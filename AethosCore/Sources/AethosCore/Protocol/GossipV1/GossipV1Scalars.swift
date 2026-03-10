@@ -78,7 +78,7 @@ public struct GossipV1ItemID: Hashable, Sendable {
     }
 
     internal init(unsafeDigestBytes bytes: Data) {
-        assert(bytes.count == 32, "SHA-256 must be 32 bytes")
+        precondition(bytes.count == 32, "GossipV1ItemID digest must be exactly 32 bytes (SHA-256)")
         self.bytes = bytes
     }
 
@@ -112,7 +112,7 @@ public struct GossipV1NodeID: Hashable, Sendable {
     }
 
     internal init(unsafeDigestBytes bytes: Data) {
-        assert(bytes.count == 32, "SHA-256 must be 32 bytes")
+        precondition(bytes.count == 32, "GossipV1NodeID digest must be exactly 32 bytes (SHA-256)")
         self.bytes = bytes
     }
 
