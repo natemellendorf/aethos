@@ -14,9 +14,9 @@ public enum GossipV1Framing {
             // Enforce datagram invariant: exactly one CBOR item (the frame envelope) with no trailing bytes.
             // CanonicalCBORDecoder.decode(_:) is strict and throws on trailing bytes.
             return try CanonicalCBORDecoder().decode(datagram)
-        } catch is CanonicalCBORDecoder.Error {
+        } catch let err as CanonicalCBORDecoder.Error {
             // Normalize CBOR decoder failures to a single framing error domain.
-            throw GossipV1FramingError.invalidDatagramCBOR
+            throw GossipV1FramingError.invalidDatagramCBOR(problem: .from(err))
         }
     }
 
@@ -85,13 +85,69 @@ public enum GossipV1Framing {
     }
 }
 
+public enum GossipV1DatagramCBORProblem: Equatable, Sendable {
+    case truncated
+    case trailingBytes
+    case unsupportedMajorType(UInt8)
+    case unsupportedSimpleValue(UInt8)
+    case invalidAdditionalInfo(UInt8)
+    case lengthTooLarge
+    case bytesTooLarge(max: Int, actual: Int)
+    case collectionTooLarge
+    case nestingTooDeep
+    case floatsNotSupported
+    case indefiniteLengthNotSupported
+    case nonCanonicalIntegerEncoding
+    case nonCanonicalLengthEncoding
+    case invalidUTF8
+    case duplicateMapKey
+    case nonCanonicalMapKeyOrder
+
+    static func from(_ err: CanonicalCBORDecoder.Error) -> GossipV1DatagramCBORProblem {
+        switch err {
+        case .truncated:
+            return .truncated
+        case .trailingBytes:
+            return .trailingBytes
+        case .unsupportedMajorType(let v):
+            return .unsupportedMajorType(v)
+        case .unsupportedSimpleValue(let v):
+            return .unsupportedSimpleValue(v)
+        case .invalidAdditionalInfo(let v):
+            return .invalidAdditionalInfo(v)
+        case .lengthTooLarge:
+            return .lengthTooLarge
+        case .bytesTooLarge(let max, let actual):
+            return .bytesTooLarge(max: max, actual: actual)
+        case .collectionTooLarge:
+            return .collectionTooLarge
+        case .nestingTooDeep:
+            return .nestingTooDeep
+        case .floatsNotSupported:
+            return .floatsNotSupported
+        case .indefiniteLengthNotSupported:
+            return .indefiniteLengthNotSupported
+        case .nonCanonicalIntegerEncoding:
+            return .nonCanonicalIntegerEncoding
+        case .nonCanonicalLengthEncoding:
+            return .nonCanonicalLengthEncoding
+        case .invalidUTF8:
+            return .invalidUTF8
+        case .duplicateMapKey:
+            return .duplicateMapKey
+        case .nonCanonicalMapKeyOrder:
+            return .nonCanonicalMapKeyOrder
+        }
+    }
+}
+
 public enum GossipV1FramingError: Swift.Error, Equatable, Sendable {
     case truncated
     case trailingBytes(expectedConsumed: Int, actualBytes: Int)
     case frameTooLarge(max: Int, actual: Int)
     case emptyFrame
     case emptyDatagram
-    case invalidDatagramCBOR
+    case invalidDatagramCBOR(problem: GossipV1DatagramCBORProblem)
 }
 
 // MARK: - Internal byte helpers

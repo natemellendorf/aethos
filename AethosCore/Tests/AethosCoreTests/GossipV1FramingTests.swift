@@ -118,7 +118,7 @@ final class GossipV1FramingTests: XCTestCase {
         datagram.append(0x00)
 
         XCTAssertThrowsError(try GossipV1Framing.decodeDatagram(datagram)) { err in
-            XCTAssertEqual(err as? GossipV1FramingError, .invalidDatagramCBOR)
+            XCTAssertEqual(err as? GossipV1FramingError, .invalidDatagramCBOR(problem: .trailingBytes))
         }
     }
 
