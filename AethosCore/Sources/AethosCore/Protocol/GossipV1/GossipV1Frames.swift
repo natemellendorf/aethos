@@ -14,6 +14,8 @@ public enum GossipV1FrameType: String, Sendable {
 public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case frameTooLarge(max: Int, actual: Int)
 
+    case invalidBloomByteCount(expected: Int, actual: Int)
+
     case envelopeNotAMap
     case envelopeMissingKey(String)
     case envelopeTypeNotText
@@ -151,7 +153,7 @@ public struct GossipV1SummaryFrame: Equatable, Sendable {
 
     public init(bloomFilter: Data, itemCount: UInt64) throws {
         guard bloomFilter.count == GossipV1.BLOOM_FILTER_BYTES else {
-            throw GossipV1Error.invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: bloomFilter.count)
+            throw GossipV1FrameError.invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: bloomFilter.count)
         }
         self.bloomFilter = bloomFilter
         self.itemCount = itemCount

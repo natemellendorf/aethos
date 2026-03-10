@@ -81,7 +81,11 @@ public enum GossipV1Framing {
     /// and performs CBOR decoding exactly once.
     public static func decodeDatagram(_ datagram: Data) throws -> GossipV1Frame {
         let decodedValue = try decodeDatagramValue(datagram)
-        return try GossipV1Frame.decode(decodedValue: decodedValue)
+        do {
+            return try GossipV1Frame.decode(decodedValue: decodedValue)
+        } catch let err as GossipV1FrameError {
+            throw GossipV1FramingError.invalidDatagramFrame(underlying: err)
+        }
     }
 }
 
@@ -148,6 +152,7 @@ public enum GossipV1FramingError: Swift.Error, Equatable, Sendable {
     case emptyFrame
     case emptyDatagram
     case invalidDatagramCBOR(problem: GossipV1DatagramCBORProblem)
+    case invalidDatagramFrame(underlying: GossipV1FrameError)
 }
 
 // MARK: - Internal byte helpers

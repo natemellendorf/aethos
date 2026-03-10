@@ -120,11 +120,16 @@ private extension GossipV1FramesTests {
     }
 
     func assertRoundTripAndFixture(frame: GossipV1Frame, fixtureFileName: String) throws {
+        let fixture = try loadFixtureBytes(fixtureFileName)
+
+        // Fixture bytes should decode and re-encode identically.
+        // This guards against encoder ordering changes drifting fixtures silently.
+        let fixtureDecoded = try GossipV1Frame.decode(bytes: fixture)
+        XCTAssertEqual(fixtureDecoded.encode(), fixture)
+
         let encoded = frame.encode()
         let decoded = try GossipV1Frame.decode(bytes: encoded)
         XCTAssertEqual(decoded, frame)
-
-        let fixture = try loadFixtureBytes(fixtureFileName)
         XCTAssertEqual(encoded, fixture)
     }
 

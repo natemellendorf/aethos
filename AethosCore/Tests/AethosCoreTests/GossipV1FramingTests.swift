@@ -122,6 +122,18 @@ final class GossipV1FramingTests: XCTestCase {
         }
     }
 
+    func testDatagramInvalidFrameIsWrappedAsFramingError() throws {
+        // Valid canonical CBOR but not a valid frame envelope.
+        let bytes = try CanonicalCBOREncoder().encode(.unsigned(1))
+
+        XCTAssertThrowsError(try GossipV1Framing.decodeDatagram(bytes)) { err in
+            XCTAssertEqual(
+                err as? GossipV1FramingError,
+                .invalidDatagramFrame(underlying: .envelopeNotAMap)
+            )
+        }
+    }
+
     func testDatagramDecodeReturnsParsedFrame() throws {
         let bytes = try makeCanonicalFrameBytes(seed: 0xAB)
         let frame = try GossipV1Framing.decodeDatagram(bytes)

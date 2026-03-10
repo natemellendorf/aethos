@@ -8,5 +8,4 @@ public enum GossipV1Error: Swift.Error, Equatable {
     case invalidBase64URLAlphabet
     case invalidBase64URLLength
     case invalidBase64URLDecoding
-    case invalidBloomByteCount(expected: Int, actual: Int)
 }
