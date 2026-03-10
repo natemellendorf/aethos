@@ -167,6 +167,8 @@ public struct GossipV1StreamAdapter: Sendable {
             if isAuthenticated {
                 hooks.onApplicationFrame?(frame)
             }
+
+            let before = engine.state
             do {
                 try engine.handleRelayIngest(
                     ingest,
@@ -179,7 +181,14 @@ public struct GossipV1StreamAdapter: Sendable {
             } catch {
                 hooks.onEvent(.didEncounterError(.fromRelayIngest(error)))
             }
-            // RELAY_INGEST has no encounter state effect.
+
+            if before != engine.state {
+                hooks.onEvent(.didChangeState(from: before, to: engine.state))
+            }
+
+            // Defensive: RELAY_INGEST is designed to have no encounter state effect,
+            // but if that ever changes (including termination), stop processing immediately
+            // to align with the stop-immediately semantics of non-relay frames.
             if case .terminated = engine.state {
                 return .stopProcessing
             }

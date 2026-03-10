@@ -203,12 +203,15 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         }
     }
 
-    func testRelayIngest_authenticated_validationErrorFromObserver_emitsRelayIngestValidationEventError() throws {
+    func testReceiveBytes_relayIngestPath_validationErrorThrownDuringEngineRelayIngest_isMappedToRelayIngestValidationTransportError() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
         let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
 
         let thrown: GossipV1EncounterEngine.ValidationError = .encounterTerminated
-        let observer = ValidationErrorThrowingRelayObserver(error: thrown)
+        // NOTE: The engine's relay-ingest path only throws if its observer throws.
+        // This observer is an intentional test seam to force a ValidationError and
+        // verify the adapter maps it into the relay-ingest transport error domain.
+        let observer = RelayIngestValidationErrorSeamObserver(error: thrown)
 
         let errors = Locked<[GossipV1TransportError]>([])
         let hooks = GossipV1StreamAdapter.Hooks(
@@ -296,7 +299,7 @@ private final class CancellationThrowingRelayObserver: @unchecked Sendable, Goss
     }
 }
 
-private final class ValidationErrorThrowingRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
+private final class RelayIngestValidationErrorSeamObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
     let error: GossipV1EncounterEngine.ValidationError
 
     init(error: GossipV1EncounterEngine.ValidationError) {
