@@ -16,7 +16,18 @@ func canonicalCBORMapKeyOrderingIsLengthFirstThenLexicographic() throws {
 
     let bytes = try CanonicalCBOREncoder().encode(v)
     let decoded = try CanonicalCBORDecoder().decode(bytes)
-    #expect(decoded == v)
+
+    // The encoder must canonicalize insertion order.
+    guard case .map(let entries) = decoded else { Issue.record("expected map"); return }
+    guard entries.count == 2 else { Issue.record("expected 2 entries"); return }
+    #expect(entries[0].key == .unsigned(1))
+    #expect(entries[1].key == .unsigned(24))
+
+    // And a non-canonically ordered encoding must be rejected.
+    let nonCanonical: Data = Data([0xA2, 0x18, 0x18, 0xF6, 0x01, 0xF6])
+    #expect(throws: CanonicalCBORDecoder.Error.nonCanonicalMapKeyOrder) {
+        _ = try CanonicalCBORDecoder().decode(nonCanonical)
+    }
 }
 
 @Test
