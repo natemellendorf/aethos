@@ -10,6 +10,13 @@ import Foundation
 public actor GossipV1StreamSession {
     private var adapter: GossipV1StreamAdapter
 
+    private static let eventBufferLimit = 128
+
+    private final class CloseScheduler: @unchecked Sendable {
+        var action: (@Sendable () -> Void)?
+        func schedule() { action?() }
+    }
+
     /// Outbound stream of length-prefixed Gossip v1 bytes.
     ///
     /// - Important: This stream is intended to be single-consumer. Creating multiple
@@ -19,16 +26,14 @@ public actor GossipV1StreamSession {
 
     /// Transport-layer events emitted by the underlying `GossipV1StreamAdapter`.
     ///
-    /// Events are best-effort, but this stream is finished deterministically on `close()`.
+    /// Events are best-effort. This stream is bounded (drops oldest when the consumer is slow)
+    /// and is finished deterministically on `close()`.
     public nonisolated let events: AsyncStream<GossipV1StreamAdapter.Event>
     private let eventsContinuation: AsyncStream<GossipV1StreamAdapter.Event>.Continuation
 
     private var isClosed = false
 
     private let outboundYieldGate = OutboundYieldGate()
-
-    private let closeSignal: AsyncStream<Void>
-    private let closeSignalContinuation: AsyncStream<Void>.Continuation
 
     public init<Clock: GossipV1EncounterEngine.Clock, Store: GossipV1EncounterEngine.Store>(
         engine: GossipV1EncounterEngine,
@@ -39,6 +44,8 @@ public actor GossipV1StreamSession {
         onEvent: @escaping @Sendable (GossipV1StreamAdapter.Event) -> Void,
         onApplicationFrame: (@Sendable (GossipV1Frame) -> Void)? = nil
     ) {
+        let closeScheduler = CloseScheduler()
+
         var outboundContinuation: AsyncStream<Data>.Continuation?
         self.outboundBytes = AsyncStream<Data>(bufferingPolicy: .bufferingOldest(outboundBufferLimit)) { c in
             outboundContinuation = c
@@ -49,7 +56,7 @@ public actor GossipV1StreamSession {
         self.outboundContinuation = outboundContinuation
 
         var eventsContinuation: AsyncStream<GossipV1StreamAdapter.Event>.Continuation?
-        self.events = AsyncStream<GossipV1StreamAdapter.Event>(bufferingPolicy: .unbounded) { c in
+        self.events = AsyncStream<GossipV1StreamAdapter.Event>(bufferingPolicy: .bufferingNewest(Self.eventBufferLimit)) { c in
             eventsContinuation = c
         }
         guard let eventsContinuation else {
@@ -57,22 +64,13 @@ public actor GossipV1StreamSession {
         }
         self.eventsContinuation = eventsContinuation
 
-        var closeSignalContinuation: AsyncStream<Void>.Continuation?
-        self.closeSignal = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { c in
-            closeSignalContinuation = c
-        }
-        guard let closeSignalContinuation else {
-            preconditionFailure("AsyncStream builder did not supply a close-signal continuation")
-        }
-        self.closeSignalContinuation = closeSignalContinuation
-
         let emitEvent: @Sendable (GossipV1StreamAdapter.Event) -> Void = { [eventsContinuation] event in
             _ = eventsContinuation.yield(event)
             onEvent(event)
         }
 
         let hooks = GossipV1StreamAdapter.Hooks(
-            onSend: { [outboundContinuation, outboundYieldGate, closeSignalContinuation, emitEvent] bytes in
+            onSend: { [outboundContinuation, outboundYieldGate, emitEvent] bytes in
                 guard outboundYieldGate.shouldYield else { return }
                 switch outboundContinuation.yield(bytes) {
                 case .enqueued:
@@ -83,8 +81,9 @@ public actor GossipV1StreamSession {
                     outboundYieldGate.markTerminated()
                     outboundContinuation.finish()
                     emitEvent(.didEncounterError(.from(OutboundBufferOverflowError())))
-                    _ = closeSignalContinuation.yield(())
-                    closeSignalContinuation.finish()
+                    // Avoid triggering actor reentrancy / exclusivity violations by scheduling
+                    // close outside the current send call stack.
+                    closeScheduler.schedule()
                 case .terminated:
                     // Stream is finished; stop yielding.
                     outboundYieldGate.markTerminated()
@@ -104,19 +103,14 @@ public actor GossipV1StreamSession {
             hooks: hooks
         )
 
-        let closeSignal = self.closeSignal
-        Task { [weak self] in
-            guard let self else { return }
-            for await _ in closeSignal {
-                await self.close()
-            }
+        closeScheduler.action = { [weak self] in
+            Task { await self?.close() }
         }
     }
 
     deinit {
         outboundContinuation.finish()
         eventsContinuation.finish()
-        closeSignalContinuation.finish()
     }
 
     /// Closes the session and finishes the outbound stream.
@@ -126,7 +120,6 @@ public actor GossipV1StreamSession {
         guard !isClosed else { return }
         isClosed = true
         outboundYieldGate.markTerminated()
-        closeSignalContinuation.finish()
         do {
             try adapter.finish()
         } catch is CancellationError {
