@@ -6,6 +6,20 @@ Aethos is a deterministic, store-and-forward data exchange protocol designed for
 
 It provides a protocol specification and a reference implementation for exchanging authenticated data between peers without requiring stable connections, long-lived sessions, or trusted transports.
 
+## Aethos Gossip Protocol (Gossip V1)
+
+The canonical transport-neutral gossip protocol is specified in:
+
+- `docs/protocol/gossip.md` (architecture and invariants)
+- `docs/protocol/frames.md` (wire frames and validation)
+- `docs/protocol/encounter.md` (encounter/session lifecycle)
+- `docs/protocol/replication.md` (store-carry-forward replication model)
+
+Reference implementation:
+
+- Protocol engine: `AethosCore/Sources/AethosCore/Protocol/GossipV1/*`
+- Transport stream adapter: `AethosCore/Sources/AethosCore/Transport/GossipV1/*`
+
 ---
 
 ## What Problem Does Aethos Solve?
