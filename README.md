@@ -23,7 +23,7 @@ Reference implementation:
 ## Core Design Goals
 
 - Deterministic, content-addressed objects and idempotent convergence.
-- Transport-neutral frames with bearer-specific boundaries: datagram bearers MUST carry exactly one complete frame per datagram; stream bearers MUST 32-bit big-endian length-prefix each frame (see `docs/protocol/frames.md` §2.3).
+- Transport-neutral frames with bearer-specific boundaries: datagram bearers MUST carry exactly one complete frame per datagram; stream bearers MUST prefix each frame with a 32-bit big-endian length (see `docs/protocol/frames.md` §2.3).
 - Sessionless progress under explicit budgets (items/bytes); safe repetition.
 - Fail-closed validation: reject malformed, oversize, expired, or incompatible inputs.
 - Strict separation between wire correctness and local policy (scoring, ordering).
@@ -52,7 +52,7 @@ Each gossiped object is identified by `item_id = SHA-256(envelope_bytes)` (lower
 
 ## Bloom-Based Inventory Exchange
 
-`SUMMARY` carries a fixed-size Bloom filter (`BLOOM_FILTER_BYTES = 2048`; defined in `docs/protocol/frames.md`) computed deterministically across implementations. False positives are acceptable; repeated encounters converge without coordination.
+`SUMMARY` carries a fixed-size Bloom filter (`BLOOM_FILTER_BYTES`; currently 2048; defined in `docs/protocol/frames.md`) computed deterministically across implementations. False positives are acceptable; repeated encounters converge without coordination.
 
 ## Replication Model
 
