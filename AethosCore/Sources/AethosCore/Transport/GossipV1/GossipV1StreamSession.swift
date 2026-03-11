@@ -14,8 +14,10 @@ public actor GossipV1StreamSession {
 
     private final class CloseScheduler: @unchecked Sendable {
         // Safe in this usage:
-        // - Single-writer during init: `action` is set exactly once before init returns.
+        // - Single-writer during init: `action` is set exactly once, before init returns.
         // - Read-only afterwards: `schedule()` only reads `action`.
+        // - `schedule()` is only expected to be called after session initialization completes.
+        //   If it were ever called earlier, it would be a benign no-op because `action` may be nil.
         // - The wrapper exists to avoid capturing `self` in an escaping @Sendable closure
         //   before the actor is fully initialized.
         var action: (@Sendable () -> Void)?
