@@ -255,10 +255,12 @@ final class GossipV1InMemoryStore: @unchecked Sendable, GossipV1EncounterEngine.
 }
 
 final class GossipV1InMemoryRelayObserver: @unchecked Sendable, GossipV1EncounterEngine.RelayIngestObserving {
+    private(set) var attemptCount: Int = 0
     private(set) var calls: [(itemIDs: [GossipV1ItemID], nowMs: UInt64)] = []
     var errorToThrow: (any Swift.Error)?
 
     func noteAuthenticatedRelayIngest(itemIDs: [GossipV1ItemID], nowMs: UInt64) throws {
+        attemptCount += 1
         if let errorToThrow { throw errorToThrow }
         calls.append((itemIDs: itemIDs, nowMs: nowMs))
     }

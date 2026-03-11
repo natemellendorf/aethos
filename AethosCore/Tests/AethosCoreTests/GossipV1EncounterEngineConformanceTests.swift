@@ -189,6 +189,56 @@ func gossipV1_engine_enforcesPeerHelloMaxWant_onOutboundBuildRequest() throws {
 }
 
 @Test
+func gossipV1_engine_buildRequest_throwsHelloRequiredFirst_beforeAnyHello() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+    let id = try GossipV1ItemID(bytes: Data(repeating: 0x01, count: 32))
+    #expect(throws: GossipV1EncounterEngine.ValidationError.helloRequiredFirst) {
+        _ = try engine.buildRequest(want: [id])
+    }
+}
+
+@Test
+func gossipV1_engine_buildRequest_throwsPeerCapsUnknown_afterHelloButBeforePeerHello() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    let engine = GossipV1EncounterEngine(_testing: .init(localHello: localHello), state: .active, peerCaps: nil)
+
+    let id = try GossipV1ItemID(bytes: Data(repeating: 0x02, count: 32))
+    #expect(throws: GossipV1EncounterEngine.ValidationError.peerCapsUnknown) {
+        _ = try engine.buildRequest(want: [id])
+    }
+}
+
+@Test
+func gossipV1_engine_buildTransfer_throwsHelloRequiredFirst_beforeAnyHello() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
+    let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
+
+    #expect(throws: GossipV1EncounterEngine.ValidationError.helloRequiredFirst) {
+        _ = try engine.buildTransfer(objects: [obj])
+    }
+}
+
+@Test
+func gossipV1_engine_buildTransfer_throwsPeerCapsUnknown_afterHelloButBeforePeerHello() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    var engine = GossipV1EncounterEngine(_testing: .init(localHello: localHello), state: .active, peerCaps: nil)
+
+    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
+    let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
+
+    #expect(throws: GossipV1EncounterEngine.ValidationError.peerCapsUnknown) {
+        _ = try engine.buildTransfer(objects: [obj])
+    }
+}
+
+@Test
 func gossipV1_engine_enforcesLocalHelloMaxTransfer_onInboundTransfer() throws {
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION, maxTransfer: 2)
     var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
@@ -369,7 +419,7 @@ func gossipV1_engine_enforcesReceiptSubsetRule() throws {
 @Test
 func gossipV1_relayIngest_unauthenticated_hasNoEffect() throws {
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
-    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
     let clock = FixedClock(nowMs: 0)
     let observer = InMemoryRelayIngestObserver()
 
@@ -383,7 +433,7 @@ func gossipV1_relayIngest_unauthenticated_hasNoEffect() throws {
 @Test
 func gossipV1_relayIngest_authenticated_callsObserver() throws {
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
-    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
     let clock = FixedClock(nowMs: 123)
     let observer = InMemoryRelayIngestObserver()
 

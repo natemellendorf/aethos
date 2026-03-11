@@ -3,7 +3,7 @@ import Testing
 @testable import AethosCore
 
 @Test
-func gossipV1_loopback_helloRoundTrip_bothHealthy() throws {
+func gossipV1_loopback_adapterInterop_helloRoundTrip_bothHealthy() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
 
@@ -32,12 +32,15 @@ func gossipV1_loopback_helloRoundTrip_bothHealthy() throws {
 
     #expect(endpointA.state == .active)
     #expect(endpointB.state == .active)
-    #expect(endpointA.events.contains { if case .didReceiveFrame(.hello) = $0 { true } else { false } })
-    #expect(endpointB.events.contains { if case .didReceiveFrame(.hello) = $0 { true } else { false } })
+
+    let aHelloReceiveCount = endpointA.events.filter { if case .didReceiveFrame(.hello) = $0 { true } else { false } }.count
+    let bHelloReceiveCount = endpointB.events.filter { if case .didReceiveFrame(.hello) = $0 { true } else { false } }.count
+    #expect(aHelloReceiveCount == 1)
+    #expect(bHelloReceiveCount == 1)
 }
 
 @Test
-func gossipV1_loopback_fullEncounter_happyPath_summary_request_transfer_receipt_dedupeByItemID() throws {
+func gossipV1_loopback_adapterInterop_fullEncounter_happyPath_summary_request_transfer_receipt_dedupeByItemID() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 1_000)
@@ -73,47 +76,73 @@ func gossipV1_loopback_fullEncounter_happyPath_summary_request_transfer_receipt_
     #expect(endpointA.state == .active)
     #expect(endpointB.state == .active)
 
+    let aHelloReceiveCount = endpointA.events.filter { if case .didReceiveFrame(.hello) = $0 { true } else { false } }.count
+    let bHelloReceiveCount = endpointB.events.filter { if case .didReceiveFrame(.hello) = $0 { true } else { false } }.count
+    #expect(aHelloReceiveCount == 1)
+    #expect(bHelloReceiveCount == 1)
+
     // SUMMARY: emitted by A; B should accept/observe but this engine does not reply.
     // Assert bloom bytes are deterministic for A's eligible set.
     let expectedBloom = GossipV1BloomFilter.build(for: [itemID])
     let summary = try GossipV1SummaryFrame(bloomFilter: expectedBloom, itemCount: 1)
     endpointA.sendFrame(.summary(summary))
     harness.pumpUntilIdle()
-    #expect(endpointB.events.contains { event in
-        guard case .didReceiveFrame(.summary(let s)) = event else { return false }
-        return s.itemCount == 1 && s.bloomFilter == expectedBloom
-    })
+
+    let summaryReceives = endpointB.events.compactMap { event -> GossipV1SummaryFrame? in
+        guard case .didReceiveFrame(.summary(let s)) = event else { return nil }
+        return s
+    }
+    #expect(summaryReceives.count == 1)
+    #expect(summaryReceives.first?.itemCount == 1)
+    #expect(summaryReceives.first?.bloomFilter == expectedBloom)
 
     // REQUEST: B asks for A's item.
     endpointB.sendFrame(.request(try GossipV1RequestFrame(want: [itemID])))
     harness.pumpUntilIdle()
 
-    #expect(endpointB.events.contains { event in
-        guard case .didSendFrame(.request(let r)) = event else { return false }
-        return r.want == [itemID]
-    })
+    let sentRequestsFromB = endpointB.events.compactMap { event -> GossipV1RequestFrame? in
+        guard case .didSendFrame(.request(let r)) = event else { return nil }
+        return r
+    }
+    #expect(sentRequestsFromB.count == 1)
+    #expect(sentRequestsFromB.first?.want == [itemID])
 
     // A must respond with TRANSFER for requested id.
-    let didSendTransferFromA = endpointA.events.contains { event in
+    let receiveRequestIndexOnA = endpointA.events.firstIndex { event in
+        guard case .didReceiveFrame(.request(let r)) = event else { return false }
+        return r.want == [itemID]
+    }
+    let sendTransferIndexOnA = endpointA.events.firstIndex { event in
         guard case .didSendFrame(.transfer(let t)) = event else { return false }
         return t.objects.map(\.itemID) == [itemID]
     }
-    #expect(didSendTransferFromA)
+    #expect(receiveRequestIndexOnA != nil)
+    #expect(sendTransferIndexOnA != nil)
+    #expect(receiveRequestIndexOnA! < sendTransferIndexOnA!)
 
     // B must accept transfer, ingest it, and send receipt scoped to last transfer.
-    #expect(endpointB.events.contains { event in
+    let receiveTransferIndexOnB = endpointB.events.firstIndex { event in
+        guard case .didReceiveFrame(.transfer(let t)) = event else { return false }
+        return t.objects.map(\.itemID) == [itemID]
+    }
+    let acceptTransferIndexOnB = endpointB.events.firstIndex { event in
         guard case .didAcceptTransfer(let ids) = event else { return false }
         return ids == [itemID]
-    })
+    }
+    #expect(receiveTransferIndexOnB != nil)
+    #expect(acceptTransferIndexOnB != nil)
+    #expect(receiveTransferIndexOnB! < acceptTransferIndexOnB!)
+
     #expect(storeB.entry(itemID) != nil)
     #expect(storeB.entry(itemID)?.envelopeBytes == envBytes)
     #expect(storeB.entry(itemID)?.hopCount == 1)
 
-    let didSendReceiptFromB = endpointB.events.contains { event in
+    let sendReceiptIndexOnB = endpointB.events.firstIndex { event in
         guard case .didSendFrame(.receipt(let r)) = event else { return false }
         return r.received == [itemID]
     }
-    #expect(didSendReceiptFromB)
+    #expect(sendReceiptIndexOnB != nil)
+    #expect(acceptTransferIndexOnB! < sendReceiptIndexOnB!)
 
     // Dedupe by item_id inside a transfer: duplicate ids must be rejected and not affect store.
     let obj = try GossipV1TransferFrame.Object(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 1)
@@ -123,7 +152,7 @@ func gossipV1_loopback_fullEncounter_happyPath_summary_request_transfer_receipt_
 }
 
 @Test
-func gossipV1_loopback_idempotency_sameObjectTransferredAgain_noDuplicateImport_converges() throws {
+func gossipV1_loopback_adapterInterop_idempotency_sameObjectTransferredAgain_noDuplicateImport_converges() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 1_000)
@@ -135,7 +164,6 @@ func gossipV1_loopback_idempotency_sameObjectTransferredAgain_noDuplicateImport_
     let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
-    storeA.setEligible([itemID])
 
     let endpointA = GossipV1LoopbackHarness.Endpoint(
         engine: GossipV1EncounterEngine(config: .init(localHello: helloA)),
@@ -173,7 +201,7 @@ func gossipV1_loopback_idempotency_sameObjectTransferredAgain_noDuplicateImport_
 }
 
 @Test
-func gossipV1_loopback_versionMismatch_failClosed_noFurtherFramesProcessed_stateChangePrecedesError() throws {
+func gossipV1_loopback_adapterInterop_versionMismatch_failClosed_noFurtherFramesProcessed_stateChangePrecedesError() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 0)
@@ -244,7 +272,7 @@ func gossipV1_loopback_versionMismatch_failClosed_noFurtherFramesProcessed_state
 }
 
 @Test
-func gossipV1_loopback_invalidTransfer_rejected_noStoreEffect_fatalMatchesImplementation() throws {
+func gossipV1_loopback_adapterInterop_invalidTransfer_rejected_noStoreEffect_nonFatalMatchesImplementation() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 1_000)
@@ -289,7 +317,7 @@ func gossipV1_loopback_invalidTransfer_rejected_noStoreEffect_fatalMatchesImplem
 }
 
 @Test
-func gossipV1_loopback_relayIngest_unauthenticated_decodedObservable_noAppEffects_noStoreEffects() throws {
+func gossipV1_loopback_adapterInterop_relayIngest_unauthenticated_decodedObservable_noAppEffects_noStoreEffects() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 123)
@@ -333,7 +361,7 @@ func gossipV1_loopback_relayIngest_unauthenticated_decodedObservable_noAppEffect
 }
 
 @Test
-func gossipV1_loopback_relayIngest_authenticated_reachesObserver_observerFailureIsObservable_andNonFatal() throws {
+func gossipV1_loopback_adapterInterop_relayIngest_authenticated_reachesObserver_observerFailureIsObservable_andNonFatal() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 777)
@@ -372,13 +400,15 @@ func gossipV1_loopback_relayIngest_authenticated_reachesObserver_observerFailure
         guard case .relayIngest(let f) = frame else { return false }
         return f.itemIDs == [id]
     })
+    #expect(observer.attemptCount == 1)
     #expect(observer.calls.isEmpty)
 
-    // Observer errors must be surfaced and non-fatal.
-    #expect(endpointB.events.contains { event in
-        if case .didEncounterError(.unexpected) = event { return true }
+    // Observer errors must be surfaced and non-fatal (do not pin exact error mapping).
+    let didEncounterAnyError = endpointB.events.contains { event in
+        if case .didEncounterError = event { return true }
         return false
-    })
+    }
+    #expect(didEncounterAnyError)
     #expect(endpointB.state == .active)
 
     // Subsequent relay ingest should still be processed.
@@ -388,13 +418,14 @@ func gossipV1_loopback_relayIngest_authenticated_reachesObserver_observerFailure
     endpointA.sendFrame(.relayIngest(ingest2))
     harness.pumpUntilIdle()
 
+    #expect(observer.attemptCount == 2)
     #expect(observer.calls.count == 1)
     #expect(observer.calls.first?.itemIDs == [id2])
     #expect(observer.calls.first?.nowMs == clock.nowMs)
 }
 
 @Test
-func gossipV1_loopback_invalidTransfer_hopRegression_rejected_noStoreEffect_nonFatalMatchesImplementation() throws {
+func gossipV1_loopback_adapterInterop_invalidTransfer_hopRegression_rejected_noStoreEffect_nonFatalMatchesImplementation() throws {
     let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
     let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
     let clock = GossipV1FixedClock(nowMs: 1_000)
