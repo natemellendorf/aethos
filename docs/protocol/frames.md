@@ -111,9 +111,11 @@ Required payload fields:
 Validation:
 
 1. `want` length **MUST** be `<= min(peer.max_want, MAX_WANT_ITEMS)`.
-2. `want` entries **MUST** be unique by `item_id`.
-3. Unknown/malformed `item_id` entries **MUST** be rejected.
-4. `want` MAY be empty. An empty `want` is a valid no-op request.
+2. `want` entries **MUST** be unique by `item_id` (duplicates are forbidden).
+3. `want` entries **MUST** be sorted by bytewise lexicographic order of the decoded `item_id` digest bytes (ascending). Ordering **MUST NOT** be based on hex string ordering.
+4. Receivers **MUST** reject frames with unsorted `want`.
+5. Unknown/malformed `item_id` entries **MUST** be rejected.
+6. `want` MAY be empty. An empty `want` is a valid no-op request.
 
 ### 5.4 TRANSFER (`type="TRANSFER"`)
 

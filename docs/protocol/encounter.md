@@ -107,7 +107,7 @@ Note: `candidateItemIDs` MAY be empty; in that case a conforming implementation 
 
 Note: A Bloom filter cannot enumerate or prove the presence of unknown IDs; it can only answer “might contain” for IDs the requester already knows.
 
-## 8.1 Constrained-encounter transfer scheduling (local policy only)
+## 8.2 Constrained-encounter transfer scheduling (local policy only)
 
 During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` tie-break).
 
