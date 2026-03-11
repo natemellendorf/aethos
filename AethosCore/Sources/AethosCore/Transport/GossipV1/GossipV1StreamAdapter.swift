@@ -195,6 +195,14 @@ public struct GossipV1StreamAdapter: Sendable {
         } catch let error as CancellationError {
             throw error
         } catch {
+            // Some decode failures are fatal at the transport boundary.
+            if let frameError = error as? GossipV1FrameError {
+                let previousState = engine.state
+                let didTerminate = terminateEncounterIfFatalFrameError(frameError)
+                emitTerminationEventsIfNeeded(previousState: previousState, error: .invalidFrame(frameError))
+                return didTerminate ? .stopProcessing : .continueProcessing
+            }
+
             hooks.onEvent(.didEncounterError(.from(error)))
             return .continueProcessing
         }
@@ -246,12 +254,25 @@ public struct GossipV1StreamAdapter: Sendable {
             if !result.acceptedTransferItemIDs.isEmpty {
                 hooks.onEvent(.didAcceptTransfer(itemIDs: result.acceptedTransferItemIDs))
             }
+
+            // Surface non-fatal per-object validation errors (e.g. mixed-validity TRANSFER).
+            for err in result.nonfatalValidationErrors {
+                hooks.onEvent(.didEncounterError(.encounterValidation(err)))
+            }
+
             for outbound in result.outbound {
                 sendFrame(outbound)
             }
         } catch let error as CancellationError {
             throw error
         } catch {
+            // Some engine validation failures are fatal by local policy.
+            if let v = error as? GossipV1EncounterEngine.ValidationError {
+                let didTerminate = terminateEncounterIfFatalEngineValidationError(v)
+                emitTerminationEventsIfNeeded(previousState: previousState, error: .encounterValidation(v))
+                return didTerminate ? .stopProcessing : .continueProcessing
+            }
+
             // Engine validation errors can terminate encounters; callers should close the transport.
             emitTerminationEventsIfNeeded(previousState: previousState, error: .from(error))
         }
@@ -260,6 +281,41 @@ public struct GossipV1StreamAdapter: Sendable {
             return .stopProcessing
         }
         return .continueProcessing
+    }
+
+    @discardableResult
+    private mutating func terminateEncounterIfFatalFrameError(_ error: GossipV1FrameError) -> Bool {
+        let message: String?
+        switch error {
+        case .envelopeNotAMap,
+             .envelopeMissingKey,
+             .envelopeTypeNotText,
+             .envelopePayloadNotMap:
+            message = "invalid frame envelope"
+        default:
+            message = nil
+        }
+
+        guard let message else { return false }
+        engine.terminateDueToProtocolViolation(message)
+        return true
+    }
+
+    @discardableResult
+    private mutating func terminateEncounterIfFatalEngineValidationError(
+        _ error: GossipV1EncounterEngine.ValidationError
+    ) -> Bool {
+        let message: String?
+        switch error {
+        case .transferTooManyObjects, .transferOversize:
+            message = "transfer validation"
+        default:
+            message = nil
+        }
+
+        guard let message else { return false }
+        engine.terminateDueToProtocolViolation(message)
+        return true
     }
 
     private func decodeFrameBytes(_ frameBytes: Data) throws -> GossipV1Frame {

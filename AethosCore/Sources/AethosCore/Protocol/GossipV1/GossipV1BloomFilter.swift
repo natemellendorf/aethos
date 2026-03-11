@@ -35,8 +35,8 @@ public enum GossipV1BloomFilter {
     #if DEBUG
     /// Deterministic bloom membership check for test harnesses.
     ///
-    /// - Important: Bloom filters have false positives. This returns true when the bloom
-    ///   indicates membership, but it cannot prove absence.
+    /// - Important: Bloom filters have false positives but no false negatives.
+    ///   This returns true when the bloom indicates membership, but it cannot prove presence.
     internal static func mightContain(_ itemID: GossipV1ItemID, bloom: Data) -> Bool {
         precondition(bloom.count == GossipV1.BLOOM_FILTER_BYTES, "Invalid bloom byte count")
         let bitCount = GossipV1.BLOOM_FILTER_BYTES * 8
