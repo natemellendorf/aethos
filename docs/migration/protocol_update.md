@@ -525,7 +525,7 @@ In `aethos`, define interface expectations for:
 - transport adapter
 - sync session manager
 
-### Step 4.3 — Implement transport-neutral sync engine
+### Step 4.3 — Implement transport-neutral Aethos Gossip Protocol (Gossip V1) runtime
 Preferred location:
 - `aethos` if acceptable for repo boundaries
 or
@@ -534,11 +534,11 @@ or
 Status: implementation in progress.
 
 Responsibilities:
-- manage sync session state
+- manage Gossip V1 session state
 - compare inventory
 - request missing items
 - transfer payloads
-- process sync receipts
+- process receipts
 - remain idempotent
 
 ### Step 4.4 — Add gossip conformance tests
@@ -556,7 +556,7 @@ Canonical fixture references for this phase:
 
 ### Step 4.5 — Integrate sync with relay
 In `aethos-relay`:
-- integrate sync engine without breaking current queue behavior
+- integrate Gossip V1 runtime without breaking current queue behavior
 - initially use sync in controlled paths if needed
 - ensure current pull and queue semantics remain compatible during rollout
 
@@ -567,7 +567,7 @@ In `aethos-ios`:
 - store received payloads idempotently
 
 ## Exit Criteria
-- Aethos supports transport-neutral sync
+- Aethos supports transport-neutral Gossip V1 sessions
 - repeated sessions converge safely
 - held messages can propagate beyond simple relay queue pull
 
@@ -664,7 +664,7 @@ Possible outcomes:
 - unify inventory exchange patterns
 
 ### Step 6.3 — Refactor relay if unification is chosen
-Only after sync engine is stable.
+Only after Gossip V1 runtime work is stable.
 
 ### Step 6.4 — Add federation compatibility tests
 Ensure multi-relay message propagation remains correct after any refactor.
@@ -736,8 +736,8 @@ The following documents should exist and be kept up to date.
 6. create migration plan
 7. finalize gossip protocol docs
 8. define sync runtime interfaces
-9. implement or host shared sync engine
-10. add sync conformance tests
+9. implement or host shared Gossip V1 runtime
+10. add Gossip V1 conformance tests
 
 ## aethos-relay
 1. documentation alignment to canonical specs
@@ -749,7 +749,7 @@ The following documents should exist and be kept up to date.
 7. encoding normalization support
 8. error frame normalization support
 9. federation ack alignment
-10. sync engine integration
+10. Gossip V1 runtime integration
 11. federation evolution work
 
 ## aethos-ios
@@ -760,7 +760,7 @@ The following documents should exist and be kept up to date.
 5. timestamp compatibility work
 6. encoding compatibility work
 7. error frame compatibility work
-8. sync engine integration
+8. Gossip V1 runtime integration
 9. LAN discovery implementation
 10. diagnostics UI for discovery and sync
 
