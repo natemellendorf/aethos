@@ -17,7 +17,6 @@ Authoritative semantics rule: `docs/spec/*` defines interoperability semantics. 
 
 - Gossip v1 upgrade docs: `docs/protocol/*`
 - Gossip v1 interoperability fixtures: `Fixtures/Protocol/gossip-v1/*`
-- Legacy gossip-sync references (non-normative): `docs/spec/GOSSIP_SYNC_V1.md`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`, `testdata/gossip_sync/v1/*`
 - Compatibility status tracking: `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
 
 ## Phase 4/5 Target-State Components (Kickoff Status)
@@ -30,7 +29,7 @@ Status vocabulary: `Specified` / `In progress` / `Not started` / `Implemented`.
 | Transport-neutral sync engine | Runtime implementation (`aethos`/implementations) | In progress | Engine/session behavior is being integrated to realize the contract without changing canonical semantics in this companion. | `docs/migration/protocol_update.md#10-phase-4--gossip-v1-implementation`, `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` |
 | Local peer discovery | Client/runtime network layer | In progress | Discovery remains an implementation concern; contract-level gossip semantics remain in `docs/protocol/*`. | `docs/migration/protocol_update.md#11-phase-5--lan-discovery-and-local-peer-delivery` |
 | Peer-table tracking | Client/runtime state layer | In progress | Peer identity/endpoint/last-seen tracking is treated as runtime state feeding sync eligibility. | `docs/migration/protocol_update.md#step-54--build-peer-table-abstraction`, `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md` |
-| Discovery-driven sync integration | Runtime orchestration layer | In progress | Discovery-triggered connect-and-sync wiring is active migration work under Phase 5. | `docs/migration/protocol_update.md#step-55--trigger-sync-on-discovery-driven-connection`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md` |
+| Discovery-driven sync integration | Runtime orchestration layer | In progress | Discovery-triggered connect-and-gossip wiring is active migration work under Phase 5. | `docs/migration/protocol_update.md#step-55--trigger-sync-on-discovery-driven-connection`, `docs/protocol/gossip.md` |
 
 ## Layering Notes
 

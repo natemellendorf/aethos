@@ -27,7 +27,6 @@ This document defines:
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
 - [Gossip v1 protocol docs](../protocol/gossip.md)
-- [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
 
 ---
 
@@ -477,7 +476,7 @@ Ensure relay federation acknowledgments match canonical definitions exactly.
 
 ---
 
-# 10. Phase 4 — Gossip Sync Implementation (Legacy)
+# 10. Phase 4 — Gossip V1 Implementation
 
 ## Objective
 Implement the protocol-level “send all messages I have” behavior as a transport-neutral gossip model.
@@ -554,7 +553,6 @@ Test:
 Canonical fixture references for this phase:
 - Normative docs: `docs/protocol/*`
 - Normative fixtures: `Fixtures/Protocol/gossip-v1/*`
-- Legacy reference only (non-normative): `docs/spec/GOSSIP_SYNC_V1.md`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`, `testdata/gossip_sync/v1/*`
 
 ### Step 4.5 — Integrate sync with relay
 In `aethos-relay`:
@@ -709,11 +707,9 @@ The following documents should exist and be kept up to date.
 - `docs/migration/protocol_update.md` (this canonical migration plan)
 - `docs/migration/protocol_architecture.md`
 - `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
-- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md` (legacy; non-normative)
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
-- `docs/spec/GOSSIP_SYNC_V1.md` (legacy; non-normative)
 - `docs/protocol/*`
 - `Fixtures/Protocol/gossip-v1/*`
 - relevant ADRs
@@ -849,7 +845,7 @@ The next concrete actions should be:
 
 ## Migration update (2026-03-08)
 
-Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral gossip sync + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
+Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral Gossip V1 implementation + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
 
 - Relay-side canonical cleanup is sufficiently complete to begin Phase 4 integration work.
 - Gossip protocol is specified in `docs/protocol/*`; implementation rollout is in progress.
