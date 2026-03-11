@@ -97,6 +97,17 @@ public struct GossipV1EncounterEngine: Sendable {
         self.config = config
     }
 
+    #if DEBUG
+    /// Test-only initializer for constructing specific internal states.
+    ///
+    /// This is intentionally DEBUG-only so production builds cannot depend on it.
+    internal init(_testing config: Config, state: State, peerCaps: PeerCaps?) {
+        self.init(config: config)
+        self.state = state
+        self.peerCaps = peerCaps
+    }
+    #endif
+
     // MARK: - Outbound builders
 
     public func buildHello() -> GossipV1Frame {
