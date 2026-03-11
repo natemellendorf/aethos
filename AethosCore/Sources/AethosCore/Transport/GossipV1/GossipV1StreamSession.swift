@@ -13,6 +13,11 @@ public actor GossipV1StreamSession {
     private static let eventBufferLimit = 128
 
     private final class CloseScheduler: @unchecked Sendable {
+        // Safe in this usage:
+        // - Single-writer during init: `action` is set exactly once before init returns.
+        // - Read-only afterwards: `schedule()` only reads `action`.
+        // - The wrapper exists to avoid capturing `self` in an escaping @Sendable closure
+        //   before the actor is fully initialized.
         var action: (@Sendable () -> Void)?
         func schedule() { action?() }
     }
@@ -27,6 +32,7 @@ public actor GossipV1StreamSession {
     /// Transport-layer events emitted by the underlying `GossipV1StreamAdapter`.
     ///
     /// Events are best-effort. This stream is bounded (drops oldest when the consumer is slow)
+    /// via `.bufferingNewest(Self.eventBufferLimit)` (currently 128),
     /// and is finished deterministically on `close()`.
     public nonisolated let events: AsyncStream<GossipV1StreamAdapter.Event>
     private let eventsContinuation: AsyncStream<GossipV1StreamAdapter.Event>.Continuation
