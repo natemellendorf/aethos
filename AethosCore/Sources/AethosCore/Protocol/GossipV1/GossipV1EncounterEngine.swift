@@ -83,10 +83,22 @@ public struct GossipV1EncounterEngine: Sendable {
         public let state: State
         public let outbound: [GossipV1Frame]
         public let acceptedTransferItemIDs: [GossipV1ItemID]
+
+        /// Non-fatal validation errors encountered while processing an inbound frame.
+        ///
+        /// These errors MUST NOT imply encounter termination; they are surfaced for diagnostics.
+        public let nonfatalValidationErrors: [ValidationError]
     }
 
     private(set) public var state: State = .awaitingHello
     private(set) public var peerCaps: PeerCaps?
+
+    /// Transport-layer termination seam.
+    ///
+    /// Stream boundary violations are fatal and must terminate the session immediately.
+    internal mutating func terminateDueToProtocolViolation(_ message: String) {
+        state = .terminated(reason: .protocolViolation(message))
+    }
 
     private var lastValidInboundTransferIDs: Set<GossipV1ItemID>?
     private var lastValidOutboundTransferIDs: Set<GossipV1ItemID>?
@@ -177,26 +189,37 @@ public struct GossipV1EncounterEngine: Sendable {
         switch frame {
         case .hello(let hello):
             try handleHello(hello)
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [])
+            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
 
         case .summary:
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [])
+            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
 
         case .request(let request):
             let transfer = try handleInboundRequest(request, clock: clock, store: store)
-            return InboundResult(state: state, outbound: [transfer], acceptedTransferItemIDs: [])
+            return InboundResult(
+                state: state,
+                outbound: transfer.map { [$0] } ?? [],
+                acceptedTransferItemIDs: [],
+                nonfatalValidationErrors: []
+            )
 
         case .transfer(let transfer):
-            let accepted = try handleInboundTransfer(transfer, clock: clock, store: store)
+            let ingest = try handleInboundTransfer(transfer, clock: clock, store: store)
+            let accepted = ingest.accepted
             let receipt = try buildReceiptForLastInboundTransfer(received: accepted)
-            return InboundResult(state: state, outbound: [receipt], acceptedTransferItemIDs: accepted)
+            return InboundResult(
+                state: state,
+                outbound: [receipt],
+                acceptedTransferItemIDs: accepted,
+                nonfatalValidationErrors: ingest.nonfatalErrors
+            )
 
         case .receipt(let receipt):
             try handleInboundReceipt(receipt)
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [])
+            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
 
         case .relayIngest:
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [])
+            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
         }
     }
 
@@ -267,7 +290,9 @@ public struct GossipV1EncounterEngine: Sendable {
     }
 
     private func maxInboundWantItemsAllowed() -> Int {
-        min(Int(config.localHello.maxWant), GossipV1.MAX_WANT_ITEMS)
+        // Inbound REQUEST.want is validated against the *peer's* advertised cap.
+        // See `docs/protocol/frames.md`.
+        min(peerCaps?.maxWant ?? GossipV1.MAX_WANT_ITEMS, GossipV1.MAX_WANT_ITEMS)
     }
 
     private func maxOutboundWantItemsAllowed() -> Int {
@@ -286,11 +311,19 @@ public struct GossipV1EncounterEngine: Sendable {
         _ request: GossipV1RequestFrame,
         clock: some Clock,
         store: some Store
-    ) throws -> GossipV1Frame {
+    ) throws -> GossipV1Frame? {
+        guard peerCaps != nil else {
+            // Defensive: inbound REQUEST validation depends on peer HELLO caps.
+            throw ValidationError.peerCapsUnknown
+        }
         let maxWant = maxInboundWantItemsAllowed()
         guard request.want.count <= maxWant else {
             throw ValidationError.wantTooManyItems(max: maxWant, actual: request.want.count)
         }
+
+        // Spec: REQUEST.want MAY be empty. When empty, this is a valid no-op.
+        // The receiver MUST NOT emit a TRANSFER in response.
+        guard !request.want.isEmpty else { return nil }
 
         let nowMs = clock.nowUnixMs()
         let cutoff = nowMsPlusSkewClamped(nowMs)
@@ -323,14 +356,23 @@ public struct GossipV1EncounterEngine: Sendable {
             totalBytes = projectedBytes
         }
 
+        // Spec: if none of the requested items are eligible to be forwarded (missing, expired,
+        // hop overflow, or size bounded), the receiver MUST NOT emit an empty TRANSFER.
+        guard !objects.isEmpty else { return nil }
+
         return try buildTransfer(objects: objects)
+    }
+
+    private struct InboundTransferIngest: Sendable {
+        let accepted: [GossipV1ItemID]
+        let nonfatalErrors: [ValidationError]
     }
 
     private mutating func handleInboundTransfer(
         _ transfer: GossipV1TransferFrame,
         clock: some Clock,
         store: some Store
-    ) throws -> [GossipV1ItemID] {
+    ) throws -> InboundTransferIngest {
         let maxObjects = maxInboundTransferObjectsAllowed()
         guard transfer.objects.count <= maxObjects else {
             throw ValidationError.transferTooManyObjects(max: maxObjects, actual: transfer.objects.count)
@@ -347,25 +389,39 @@ public struct GossipV1EncounterEngine: Sendable {
         let nowMs = clock.nowUnixMs()
         let cutoff = nowMsPlusSkewClamped(nowMs)
 
-        // Validate all objects first to avoid partial ingest on deterministic violations.
-        for obj in transfer.objects {
-            if cutoff >= obj.expiryUnixMs {
-                throw ValidationError.transferExpired(nowUnixMs: nowMs, expiryUnixMs: obj.expiryUnixMs)
-            }
-            if let existing = try store.existingHopCount(obj.itemID), obj.hopCount < existing {
-                throw ValidationError.hopRegression(existing: existing, incoming: obj.hopCount)
-            }
-        }
-
+        // Spec: validate objects independently, in-order. Accept valid objects even if some
+        // are invalid; invalid objects are rejected and surfaced as non-fatal errors.
         var accepted: [GossipV1ItemID] = []
         accepted.reserveCapacity(transfer.objects.count)
+        var nonfatal: [ValidationError] = []
+
         for obj in transfer.objects {
-            try store.ingest(obj.itemID, envelopeBytes: obj.envelopeBytes, expiryUnixMs: obj.expiryUnixMs, hopCount: obj.hopCount)
-            accepted.append(obj.itemID)
+            if cutoff >= obj.expiryUnixMs {
+                nonfatal.append(.transferExpired(nowUnixMs: nowMs, expiryUnixMs: obj.expiryUnixMs))
+                continue
+            }
+
+            if let existing = try store.existingHopCount(obj.itemID), obj.hopCount < existing {
+                nonfatal.append(.hopRegression(existing: existing, incoming: obj.hopCount))
+                continue
+            }
+
+            do {
+                try store.ingest(obj.itemID, envelopeBytes: obj.envelopeBytes, expiryUnixMs: obj.expiryUnixMs, hopCount: obj.hopCount)
+                accepted.append(obj.itemID)
+            } catch let error as ValidationError {
+                // Defensive: stores are required to enforce hop regression.
+                // Treat hop regression as an object-level rejection, not a fatal encounter failure.
+                if case .hopRegression = error {
+                    nonfatal.append(error)
+                    continue
+                }
+                throw error
+            }
         }
 
         lastValidInboundTransferIDs = Set(transfer.objects.map { $0.itemID })
-        return accepted
+        return InboundTransferIngest(accepted: accepted, nonfatalErrors: nonfatal)
     }
 
     private mutating func buildReceiptForLastInboundTransfer(received: [GossipV1ItemID]) throws -> GossipV1Frame {

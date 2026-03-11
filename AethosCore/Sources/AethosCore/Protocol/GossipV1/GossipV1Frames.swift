@@ -30,6 +30,7 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case invalidRange(field: String)
 
     case wantTooManyItems(max: Int, actual: Int)
+    case wantNotLexicographicallySorted
     case transferTooManyObjects(max: Int, actual: Int)
     case transferTotalEnvelopeBytesTooLarge(max: Int, actual: Int)
     case transferEnvelopeNotCanonical
@@ -251,11 +252,26 @@ public struct GossipV1RequestFrame: Equatable, Sendable {
         guard Set(want).count == want.count else {
             throw GossipV1FrameError.duplicateItemID
         }
+        guard Self.isLexicographicallySortedByRawDigestBytes(want) else {
+            throw GossipV1FrameError.wantNotLexicographicallySorted
+        }
         self.want = want
     }
 
     public func encode() -> Data {
         GossipV1CBOR.encodeEnvelope(type: .REQUEST, payload: payloadCBOR())
+    }
+
+    private static func isLexicographicallySortedByRawDigestBytes(_ want: [GossipV1ItemID]) -> Bool {
+        guard want.count >= 2 else { return true }
+        for i in 1..<want.count {
+            let previous = want[i - 1].rawBytes()
+            let next = want[i].rawBytes()
+            if DataLexicographic.compare(previous, next) == .orderedDescending {
+                return false
+            }
+        }
+        return true
     }
 }
 
@@ -581,6 +597,9 @@ private extension GossipV1RequestFrame {
             let id = try GossipV1CBOR.parseItemID(hex: hex, field: "want")
             guard seen.insert(id).inserted else { throw GossipV1FrameError.duplicateItemID }
             want.append(id)
+        }
+        guard GossipV1RequestFrame.isLexicographicallySortedByRawDigestBytes(want) else {
+            throw GossipV1FrameError.wantNotLexicographicallySorted
         }
         return try GossipV1RequestFrame(want: want)
     }

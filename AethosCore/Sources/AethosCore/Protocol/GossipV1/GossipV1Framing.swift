@@ -211,6 +211,49 @@ public struct GossipV1StreamFrameDecoder: Sendable {
         buffer.append(data)
     }
 
+    /// Appends bytes while enforcing `frame_len` invariants as early as possible.
+    ///
+    /// This avoids buffering an arbitrarily large payload when the peer declares an
+    /// oversize or empty `frame_len`.
+    ///
+    /// - Throws: `GossipV1FramingError` when the declared length is invalid.
+    public mutating func appendChecked(_ data: Data) throws {
+        guard !data.isEmpty else { return }
+
+        // If we can complete the 4-byte prefix without buffering the full payload,
+        // validate the declared length before appending the remainder.
+        if buffer.count < 4 {
+            let needed = 4 - buffer.count
+            if data.count >= needed {
+                var prefix = Data()
+                prefix.reserveCapacity(4)
+                prefix.append(buffer)
+                prefix.append(data.prefix(needed))
+
+                // Prefix is complete; validate declared length.
+                let declaredLength = Int(prefix.readUInt32BE(at: 0))
+                do {
+                    guard declaredLength > 0 else { throw GossipV1FramingError.emptyFrame }
+                    guard declaredLength <= GossipV1.MAX_FRAME_BYTES else {
+                        throw GossipV1FramingError.frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: declaredLength)
+                    }
+                } catch {
+                    // Invalid prefix makes the stream unrecoverable; drop buffered prefix bytes.
+                    buffer.removeAll(keepingCapacity: false)
+                    throw error
+                }
+
+                // Declared length is sane; append everything.
+                buffer = prefix
+                buffer.append(data.dropFirst(needed))
+                return
+            }
+        }
+
+        // Still don't have a complete prefix; safe to buffer.
+        buffer.append(data)
+    }
+
     /// Returns the next available frame, or nil if more bytes are required.
     public mutating func nextFrame() throws -> Data? {
         do {

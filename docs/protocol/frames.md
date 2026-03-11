@@ -111,8 +111,11 @@ Required payload fields:
 Validation:
 
 1. `want` length **MUST** be `<= min(peer.max_want, MAX_WANT_ITEMS)`.
-2. `want` entries **MUST** be unique by `item_id`.
-3. Unknown/malformed `item_id` entries **MUST** be rejected.
+2. `want` entries **MUST** be unique by `item_id` (duplicates are forbidden).
+3. `want` entries **MUST** be sorted by bytewise lexicographic order of the decoded `item_id` digest bytes (ascending). Ordering **MUST NOT** be based on hex string ordering.
+4. Receivers **MUST** reject frames with unsorted `want`.
+5. Unknown/malformed `item_id` entries **MUST** be rejected.
+6. `want` MAY be empty. An empty `want` is a valid no-op request.
 
 ### 5.4 TRANSFER (`type="TRANSFER"`)
 
@@ -128,11 +131,18 @@ Validation:
 
 1. Object count **MUST** be `<= MAX_TRANSFER_ITEMS`.
 2. Total decoded envelope bytes across `objects` **MUST** be `<= MAX_TRANSFER_BYTES`.
-3. `envelope_b64` **MUST** be base64url without padding.
+3. `envelope_b64` **MUST** be base64url without padding of the canonical RFC 8949 deterministic CBOR envelope bytes.
 4. Decoded `envelope_b64` bytes **MUST** be canonical serialized envelope bytes.
 5. `item_id` **MUST** equal lowercase hex `SHA-256(envelope_bytes)` where `envelope_bytes` are decoded from `envelope_b64`.
 6. `hop_count` **MUST** be `0..65535`.
 7. Expired objects (`now_ms + CLOCK_SKEW_TOLERANCE_MS >= expiry_unix_ms`) **MUST NOT** be accepted.
+
+Mixed-validity semantics:
+
+1. Receivers MUST validate `objects` independently, in the order provided.
+2. If one object is invalid, the receiver MUST reject that object but MUST continue validating subsequent objects.
+3. A receiver MUST accept all valid objects even when one or more objects in the same frame are invalid.
+4. Object-level rejections MUST be treated as non-fatal (they MUST NOT terminate the encounter).
 
 ### 5.5 RECEIPT (`type="RECEIPT"`)
 

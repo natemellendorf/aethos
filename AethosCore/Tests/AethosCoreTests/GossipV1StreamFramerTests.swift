@@ -62,6 +62,30 @@ final class GossipV1StreamFramerTests: XCTestCase {
         }
     }
 
+    func testOversizeDeclaredLengthRejected_evenWhenPrefixArrivesSplitAcrossBuffers() throws {
+        // Provide first 2 bytes of the 4-byte u32be prefix, then the rest.
+        let tooLarge = UInt32(GossipV1.MAX_FRAME_BYTES + 1).bigEndian
+        let prefix = withUnsafeBytes(of: tooLarge) { Data($0) }
+        let part1 = prefix.prefix(2)
+        let part2 = prefix.dropFirst(2)
+
+        var framer = GossipV1StreamFramer()
+        XCTAssertEqual(try framer.append(part1), [])
+
+        do {
+            _ = try framer.append(part2)
+            XCTFail("Expected oversize prefix to throw")
+        } catch {
+            XCTAssertEqual(
+                error as? GossipV1FramingError,
+                .frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: GossipV1.MAX_FRAME_BYTES + 1)
+            )
+        }
+
+        // Early rejection must not buffer the declared payload.
+        XCTAssertEqual(framer.bufferedByteCount, 0)
+    }
+
     func testTruncatedPayloadRejectedOnFinish() throws {
         let frameBytes = Data([0xAB, 0xCD])
         let streamBytes = try GossipV1Framing.encodeStreamFrame(frameBytes)
@@ -71,6 +95,25 @@ final class GossipV1StreamFramerTests: XCTestCase {
         _ = try framer.append(streamBytes.dropLast(1))
         XCTAssertThrowsError(try framer.finish()) { err in
             XCTAssertEqual(err as? GossipV1FramingError, .truncated)
+        }
+    }
+
+    func testAppendThatDecodesFramesThenHitsBoundaryError_throwsPartialAppendErrorCarryingFrames() throws {
+        let f1 = Data([0x01])
+        let f1Bytes = try GossipV1Framing.encodeStreamFrame(f1)
+
+        // Then an invalid second frame prefix: declaredLength=0 (empty frame)
+        let invalidSecond = Data([0x00, 0x00, 0x00, 0x00])
+        let bytes = f1Bytes + invalidSecond
+
+        var framer = GossipV1StreamFramer()
+
+        do {
+            _ = try framer.append(bytes)
+            XCTFail("Expected PartialAppendError")
+        } catch let err as GossipV1StreamFramer.PartialAppendError {
+            XCTAssertEqual(err.frames, [f1])
+            XCTAssertEqual(err.underlying, .emptyFrame)
         }
     }
 }

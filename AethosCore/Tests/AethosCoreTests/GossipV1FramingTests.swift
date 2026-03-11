@@ -216,7 +216,8 @@ private extension GossipV1FramingTests {
     func makeCanonicalFrameBytes(seed: UInt8 = 0x01) throws -> Data {
         let a = try GossipV1ItemID(bytes: Data(repeating: seed, count: 32))
         let b = try GossipV1ItemID(bytes: Data(repeating: seed ^ 0xFF, count: 32))
-        let request = try GossipV1RequestFrame(want: [a, b])
+        let sorted = [a, b].sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
+        let request = try GossipV1RequestFrame(want: sorted)
         return GossipV1Frame.request(request).encode()
     }
 }
