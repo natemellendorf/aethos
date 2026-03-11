@@ -28,7 +28,7 @@ For v1 contracts introduced with this ADR:
 
 Legacy note:
 
-- `docs/spec/GOSSIP_SYNC_V1.md` is retained as a historical reference for the legacy gossip-sync contract and is not normative.
+- A legacy transport-neutral sync contract has been removed from this repository. Historical context may exist only in repository history.
 
 ## Consequences
 

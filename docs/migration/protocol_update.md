@@ -27,7 +27,6 @@ This document defines:
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
 - [Gossip v1 protocol docs](../protocol/gossip.md)
-- [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
 
 ---
 
@@ -477,7 +476,7 @@ Ensure relay federation acknowledgments match canonical definitions exactly.
 
 ---
 
-# 10. Phase 4 — Gossip Sync Implementation (Legacy)
+# 10. Phase 4 — Gossip V1 Implementation
 
 ## Objective
 Implement the protocol-level “send all messages I have” behavior as a transport-neutral gossip model.
@@ -526,7 +525,7 @@ In `aethos`, define interface expectations for:
 - transport adapter
 - sync session manager
 
-### Step 4.3 — Implement transport-neutral sync engine
+### Step 4.3 — Implement transport-neutral Aethos Gossip Protocol (Gossip V1) runtime
 Preferred location:
 - `aethos` if acceptable for repo boundaries
 or
@@ -535,11 +534,11 @@ or
 Status: implementation in progress.
 
 Responsibilities:
-- manage sync session state
+- manage Gossip V1 session state
 - compare inventory
 - request missing items
 - transfer payloads
-- process sync receipts
+- process receipts
 - remain idempotent
 
 ### Step 4.4 — Add gossip conformance tests
@@ -554,11 +553,10 @@ Test:
 Canonical fixture references for this phase:
 - Normative docs: `docs/protocol/*`
 - Normative fixtures: `Fixtures/Protocol/gossip-v1/*`
-- Legacy reference only (non-normative): `docs/spec/GOSSIP_SYNC_V1.md`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`, `testdata/gossip_sync/v1/*`
 
 ### Step 4.5 — Integrate sync with relay
 In `aethos-relay`:
-- integrate sync engine without breaking current queue behavior
+- integrate Gossip V1 runtime without breaking current queue behavior
 - initially use sync in controlled paths if needed
 - ensure current pull and queue semantics remain compatible during rollout
 
@@ -569,7 +567,7 @@ In `aethos-ios`:
 - store received payloads idempotently
 
 ## Exit Criteria
-- Aethos supports transport-neutral sync
+- Aethos supports transport-neutral Gossip V1 sessions
 - repeated sessions converge safely
 - held messages can propagate beyond simple relay queue pull
 
@@ -666,7 +664,7 @@ Possible outcomes:
 - unify inventory exchange patterns
 
 ### Step 6.3 — Refactor relay if unification is chosen
-Only after sync engine is stable.
+Only after Gossip V1 runtime work is stable.
 
 ### Step 6.4 — Add federation compatibility tests
 Ensure multi-relay message propagation remains correct after any refactor.
@@ -709,11 +707,9 @@ The following documents should exist and be kept up to date.
 - `docs/migration/protocol_update.md` (this canonical migration plan)
 - `docs/migration/protocol_architecture.md`
 - `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
-- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md` (legacy; non-normative)
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
-- `docs/spec/GOSSIP_SYNC_V1.md` (legacy; non-normative)
 - `docs/protocol/*`
 - `Fixtures/Protocol/gossip-v1/*`
 - relevant ADRs
@@ -740,8 +736,8 @@ The following documents should exist and be kept up to date.
 6. create migration plan
 7. finalize gossip protocol docs
 8. define sync runtime interfaces
-9. implement or host shared sync engine
-10. add sync conformance tests
+9. implement or host shared Gossip V1 runtime
+10. add Gossip V1 conformance tests
 
 ## aethos-relay
 1. documentation alignment to canonical specs
@@ -753,7 +749,7 @@ The following documents should exist and be kept up to date.
 7. encoding normalization support
 8. error frame normalization support
 9. federation ack alignment
-10. sync engine integration
+10. Gossip V1 runtime integration
 11. federation evolution work
 
 ## aethos-ios
@@ -764,7 +760,7 @@ The following documents should exist and be kept up to date.
 5. timestamp compatibility work
 6. encoding compatibility work
 7. error frame compatibility work
-8. sync engine integration
+8. Gossip V1 runtime integration
 9. LAN discovery implementation
 10. diagnostics UI for discovery and sync
 
@@ -849,7 +845,7 @@ The next concrete actions should be:
 
 ## Migration update (2026-03-08)
 
-Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral gossip sync + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
+Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral Gossip V1 implementation + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
 
 - Relay-side canonical cleanup is sufficiently complete to begin Phase 4 integration work.
 - Gossip protocol is specified in `docs/protocol/*`; implementation rollout is in progress.
