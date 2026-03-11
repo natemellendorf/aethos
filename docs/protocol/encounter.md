@@ -86,6 +86,27 @@ Mandatory high-level sequence:
 
 `SUMMARY/REQUEST/TRANSFER/RECEIPT` MAY repeat in-cycle for long sessions, but each frame MUST remain independently valid under frame catalog rules.
 
+## 8.1 Deterministic SUMMARY→REQUEST reconciliation (normative)
+
+After receiving a peer `SUMMARY`, an implementation MUST deterministically select a `REQUEST.want` list using the following model and names.
+
+Definitions:
+
+- `candidateItemIDs`: the local candidate set of item IDs that might be missing remotely.
+- `localHaveItemIDs`: the locally-stored item IDs (the set the local node “has”).
+
+Rules:
+
+1. `candidateItemIDs` MUST be derived only from local state and the peer-provided Bloom filter; it MUST NOT depend on timing, randomness, or transport metadata.
+2. For each `item_id` in `localHaveItemIDs`, if the peer Bloom filter indicates it **might** contain the item, the implementation MUST treat the peer as potentially already having it (Bloom filters have false positives and cannot enumerate unknown IDs).
+3. `candidateItemIDs` MUST contain only items from `localHaveItemIDs` that the peer Bloom filter does **not** indicate it might contain.
+4. `candidateItemIDs` MUST be ordered by bytewise lexicographic order of the decoded `item_id` digest bytes (not by hex string order).
+5. `REQUEST.want` MUST be the first `N` item IDs from `candidateItemIDs`, where `N = min(peer.max_want, MAX_WANT_ITEMS)`.
+
+Note: `candidateItemIDs` MAY be empty; in that case a conforming implementation MAY emit an empty `REQUEST.want` as a valid no-op.
+
+Note: A Bloom filter cannot enumerate or prove the presence of unknown IDs; it can only answer “might contain” for IDs the requester already knows.
+
 ## 8.1 Constrained-encounter transfer scheduling (local policy only)
 
 During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` tie-break).
