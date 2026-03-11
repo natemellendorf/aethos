@@ -428,6 +428,234 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         let errs = errors.withLock { $0 }
         XCTAssertEqual(errs, [.streamBoundary(.emptyFrame)])
     }
+
+    func testReceiveBytes_twoFramesInOneBuffer_firstValidSecondInvalidEnvelope_fatalStopsProcessing_butDoesNotDropFirstFrame() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let errors = Locked<[GossipV1TransportError]>([])
+        let stateTransitions = Locked<[(GossipV1EncounterEngine.State, GossipV1EncounterEngine.State)]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                switch event {
+                case .didReceiveFrame(let frame):
+                    receivedFrames.withLock { $0.append(frame) }
+                case .didEncounterError(let err):
+                    errors.withLock { $0.append(err) }
+                case .didChangeState(from: let from, to: let to):
+                    stateTransitions.withLock { $0.append((from, to)) }
+                default:
+                    break
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let validFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        // Valid canonical CBOR, invalid envelope shape.
+        let invalidEnvelope = try CanonicalCBOREncoder().encode(.unsigned(1))
+        let trailing = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(validFirst)
+            + GossipV1Framing.encodeStreamFrame(invalidEnvelope)
+            + GossipV1Framing.encodeStreamFrame(trailing)
+
+        try adapter.receiveBytes(streamBytes)
+
+        // First frame must not be dropped. The invalid envelope is a decode failure (no frame
+        // emitted) and is fatal; subsequent frames in the same buffer must not be processed.
+        XCTAssertEqual(receivedFrames.withLock { $0 }.count, 1)
+
+        XCTAssertTrue(stateTransitions.withLock { $0 }.contains { _, to in
+            to == .terminated(reason: .protocolViolation("invalid frame envelope"))
+        })
+
+        XCTAssertTrue(errors.withLock { $0 }.contains(.invalidFrame(.envelopeNotAMap)))
+    }
+
+    func testReceiveBytes_fatalTransferValidationTerminates_andStopsProcessingSubsequentFrames() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION, maxTransfer: 16)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let errors = Locked<[GossipV1TransportError]>([])
+        let transitions = Locked<[(GossipV1EncounterEngine.State, GossipV1EncounterEngine.State)]>([])
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                switch event {
+                case .didEncounterError(let err):
+                    errors.withLock { $0.append(err) }
+                case .didChangeState(from: let from, to: let to):
+                    transitions.withLock { $0.append((from, to)) }
+                case .didReceiveFrame(let frame):
+                    receivedFrames.withLock { $0.append(frame) }
+                default:
+                    break
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        // Establish active state.
+        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
+        XCTAssertEqual(adapter.state, .active)
+
+        // Create an inbound TRANSFER that violates local max_transfer (16) by having 17 objects.
+        let expiry: UInt64 = 4_102_444_800_000
+        let objs: [GossipV1TransferFrame.Object] = try (0..<17).map { i in
+            let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(UInt64(i)))]))
+            let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
+            return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
+        }
+        let tooMany = try GossipV1TransferFrame(objects: objs)
+
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.transfer(tooMany).encode())
+            + GossipV1Framing.encodeStreamFrame(helloBytes)
+
+        try adapter.receiveBytes(streamBytes)
+
+        XCTAssertEqual(adapter.state, .terminated(reason: .protocolViolation("transfer validation")))
+
+        // Ensure subsequent frames in the same buffer are not processed.
+        XCTAssertEqual(receivedFrames.withLock { $0 }.count, 2)
+
+        XCTAssertTrue(errors.withLock { $0 }.contains(.encounterValidation(.transferTooManyObjects(max: 16, actual: 17))))
+        XCTAssertTrue(transitions.withLock { $0 }.contains { _, to in
+            to == .terminated(reason: .protocolViolation("transfer validation"))
+        })
+    }
+
+    func testFinish_withTruncatedFrame_isFatalStreamBoundary_andEmitsStateChangeBeforeError() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let events = Locked<[GossipV1StreamAdapter.Event]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                events.withLock { $0.append(event) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        // Establish active state so termination is observable as a transition.
+        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
+
+        // Append an incomplete (truncated) stream frame: u32be length for 2 bytes payload,
+        // but only provide 1 payload byte.
+        let frameBytes = Data([0xAB, 0xCD])
+        let full = try GossipV1Framing.encodeStreamFrame(frameBytes)
+        try adapter.receiveBytes(full.dropLast(1))
+
+        // Finish should surface a fatal boundary error and terminate.
+        try adapter.finish()
+
+        let snapshot = events.withLock { $0 }
+        let stateIdx = snapshot.firstIndex { if case .didChangeState = $0 { true } else { false } }
+        let errorIdx = snapshot.firstIndex { if case .didEncounterError = $0 { true } else { false } }
+        XCTAssertNotNil(stateIdx)
+        XCTAssertNotNil(errorIdx)
+        XCTAssertLessThan(stateIdx!, errorIdx!)
+
+        let errorEvents = snapshot.compactMap { event -> GossipV1TransportError? in
+            guard case .didEncounterError(let err) = event else { return nil }
+            return err
+        }
+        XCTAssertTrue(errorEvents.contains(.streamBoundary(.truncated)))
+    }
+
+    func testReceiveBytes_transferMixedValidity_emitsAcceptForValidItemIDs_andErrorForInvalidObject_andDoesNotTerminate() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let events = Locked<[GossipV1StreamAdapter.Event]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                events.withLock { $0.append(event) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 1_000),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        // Activate encounter.
+        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
+        XCTAssertEqual(adapter.state, .active)
+
+        // Build a mixed-validity TRANSFER: [valid, expired, valid].
+        let expiryOk: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1
+        let expiryExpired: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS
+
+        func makeObject(x: UInt64, expiry: UInt64) throws -> GossipV1TransferFrame.Object {
+            let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(x))]))
+            let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
+            return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
+        }
+
+        let a = try makeObject(x: 1, expiry: expiryOk)
+        let bExpired = try makeObject(x: 2, expiry: expiryExpired)
+        let c = try makeObject(x: 3, expiry: expiryOk)
+        let transfer = GossipV1TransferFrame(unsafeObjects: [a, bExpired, c])
+
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(GossipV1Frame.transfer(transfer).encode()))
+
+        // Encounter must remain active.
+        XCTAssertEqual(adapter.state, .active)
+
+        let snapshot = events.withLock { $0 }
+
+        // Must accept the valid IDs.
+        let accepted = snapshot.compactMap { event -> [GossipV1ItemID]? in
+            guard case .didAcceptTransfer(itemIDs: let ids) = event else { return nil }
+            return ids
+        }
+        XCTAssertEqual(accepted.flatMap { $0 }, [a.itemID, c.itemID])
+
+        // Must surface a non-fatal error for the expired object.
+        let errors = snapshot.compactMap { event -> GossipV1TransportError? in
+            guard case .didEncounterError(let err) = event else { return nil }
+            return err
+        }
+        XCTAssertTrue(errors.contains(.encounterValidation(.transferExpired(nowUnixMs: 1_000, expiryUnixMs: expiryExpired))))
+
+        // Must NOT emit termination.
+        XCTAssertFalse(snapshot.contains { event in
+            if case .didChangeState(_, .terminated) = event { return true }
+            return false
+        })
+    }
 }
 
 // MARK: - Minimal test helpers (scoped to this file)

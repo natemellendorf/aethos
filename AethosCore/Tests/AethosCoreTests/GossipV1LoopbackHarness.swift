@@ -124,6 +124,37 @@ final class GossipV1LoopbackHarness {
         }
     }
 
+    /// Pumps only the A -> B direction until A is idle.
+    func pumpAtoBUntilIdle(maxSteps: Int = 10_000, maxChunkBytes: Int = 17) {
+        pumpOneWayUntilIdle(from: a, to: b, chunker: &aToBChunker, maxSteps: maxSteps, maxChunkBytes: maxChunkBytes)
+    }
+
+    /// Pumps only the B -> A direction until B is idle.
+    func pumpBtoAUntilIdle(maxSteps: Int = 10_000, maxChunkBytes: Int = 17) {
+        pumpOneWayUntilIdle(from: b, to: a, chunker: &bToAChunker, maxSteps: maxSteps, maxChunkBytes: maxChunkBytes)
+    }
+
+    private func pumpOneWayUntilIdle(
+        from: Endpoint,
+        to: Endpoint,
+        chunker: inout DeterministicChunker,
+        maxSteps: Int,
+        maxChunkBytes: Int
+    ) {
+        guard maxSteps > 0 else { return }
+        var steps = 0
+        while true {
+            guard steps < maxSteps else {
+                Issue.record("pumpOneWayUntilIdle exceeded maxSteps=\(maxSteps)")
+                return
+            }
+            steps += 1
+            guard pumpOneDirection(from: from, to: to, chunker: &chunker, maxChunkBytes: maxChunkBytes) else {
+                return
+            }
+        }
+    }
+
     @discardableResult
     private func pumpOneDirection(
         from: Endpoint,

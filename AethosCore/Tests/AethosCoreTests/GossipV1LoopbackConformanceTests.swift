@@ -97,6 +97,7 @@ func gossipV1_loopback_adapterInterop_fullEncounter_happyPath_summary_request_tr
     #expect(summaryReceives.first?.bloomFilter == expectedBloom)
 
     // REQUEST: B asks for A's item.
+    // The inbound REQUEST cap is the peer's HELLO `max_want`, so ensure A advertises >= 1.
     endpointB.sendFrame(.request(try GossipV1RequestFrame(want: [itemID])))
     harness.pumpUntilIdle()
 
@@ -471,4 +472,69 @@ func gossipV1_loopback_adapterInterop_invalidTransfer_hopRegression_rejected_noS
         guard case .didEncounterError(.encounterValidation(.hopRegression(existing: 10, incoming: 9))) = event else { return false }
         return true
     })
+}
+
+@Test
+func gossipV1_loopback_adapterInterop_partialEncounter_resume_requestAgain_converges_idempotently() throws {
+    let helloA = try gossipV1_makeHello(pubKeyByte: 0xA1)
+    let helloB = try gossipV1_makeHello(pubKeyByte: 0xB2)
+    let clock = GossipV1FixedClock(nowMs: 1_000)
+
+    let storeA = GossipV1InMemoryStore()
+    let storeB = GossipV1InMemoryStore()
+
+    // A has one transferable item.
+    let expiry: UInt64 = 4_102_444_800_000
+    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(123))]))
+    let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
+    storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
+    storeA.setEligible([itemID])
+
+    let endpointA = GossipV1LoopbackHarness.Endpoint(
+        engine: GossipV1EncounterEngine(config: .init(localHello: helloA)),
+        clock: clock,
+        store: storeA,
+        relayIngest: .init(observer: nil, isAuthenticatedTransport: { false })
+    )
+    let endpointB = GossipV1LoopbackHarness.Endpoint(
+        engine: GossipV1EncounterEngine(config: .init(localHello: helloB)),
+        clock: clock,
+        store: storeB,
+        relayIngest: .init(observer: nil, isAuthenticatedTransport: { false })
+    )
+    let harness = GossipV1LoopbackHarness(a: endpointA, b: endpointB)
+
+    // HELLO exchange.
+    endpointA.sendHello(); endpointB.sendHello(); harness.pumpUntilIdle()
+    #expect(endpointA.state == .active)
+    #expect(endpointB.state == .active)
+
+    // B requests the item, but we only deliver B -> A (request reaches A); we do not deliver A -> B yet.
+    endpointB.sendFrame(.request(try GossipV1RequestFrame(want: [itemID])))
+    harness.pumpBtoAUntilIdle()
+
+    // A should have produced a TRANSFER in outbound bytes.
+    let aSentTransferCount = endpointA.events.filter { if case .didSendFrame(.transfer) = $0 { true } else { false } }.count
+    #expect(aSentTransferCount == 1)
+    #expect(storeB.entry(itemID) == nil)
+
+    // "Resume": request again; engine must deterministically respond again.
+    endpointB.sendFrame(.request(try GossipV1RequestFrame(want: [itemID])))
+    harness.pumpBtoAUntilIdle()
+    let aSentTransferCountAfter = endpointA.events.filter { if case .didSendFrame(.transfer) = $0 { true } else { false } }.count
+    #expect(aSentTransferCountAfter == 2)
+
+    // Now deliver A -> B bytes; B should ingest and converge.
+    harness.pumpAtoBUntilIdle()
+    #expect(storeB.entry(itemID) != nil)
+    #expect(storeB.firstTimeIngested.contains(itemID))
+
+    // Deliver any remaining receipts/transfers; system should settle.
+    harness.pumpUntilIdle()
+
+    // Already-imported item should not be "first-time" again.
+    let firstTimeCount = storeB.firstTimeIngested.count
+    endpointB.sendFrame(.request(try GossipV1RequestFrame(want: [itemID])))
+    harness.pumpUntilIdle()
+    #expect(storeB.firstTimeIngested.count == firstTimeCount)
 }

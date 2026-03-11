@@ -104,14 +104,22 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
                 let store = InMemoryGossipStore()
                 _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
 
-                XCTAssertThrowsError(
-                    try engine.ingestInboundDatagram(bytes, clock: FixedClock(nowMs: 1000), store: store)
-                ) { err in
-                    XCTAssertEqual(
-                        err as? GossipV1EncounterEngine.ValidationError,
-                        .transferExpired(nowUnixMs: 1000, expiryUnixMs: 0)
-                    )
+                let result = try engine.ingestInboundDatagram(bytes, clock: FixedClock(nowMs: 1000), store: store)
+                XCTAssertEqual(result.state, .active)
+                let transfer = try GossipV1Framing.decodeDatagram(bytes)
+                guard case .transfer(let decoded) = transfer else {
+                    return XCTFail("Expected TRANSFER fixture")
                 }
+                let cutoff = 1000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS
+                let expectedAccepted = decoded.objects
+                    .filter { cutoff < $0.expiryUnixMs }
+                    .map { $0.itemID }
+                XCTAssertEqual(result.acceptedTransferItemIDs, expectedAccepted)
+
+                let expectedNonfatal = decoded.objects
+                    .filter { cutoff >= $0.expiryUnixMs }
+                    .map { GossipV1EncounterEngine.ValidationError.transferExpired(nowUnixMs: 1000, expiryUnixMs: $0.expiryUnixMs) }
+                XCTAssertEqual(result.nonfatalValidationErrors, expectedNonfatal)
             }
         )
     }
@@ -131,14 +139,29 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
                 }
                 store.setHopCount(id: objID, hop: 10)
 
-                XCTAssertThrowsError(
-                    try engine.ingestInboundDatagram(bytes, clock: FixedClock(nowMs: 0), store: store)
-                ) { err in
-                    XCTAssertEqual(
-                        err as? GossipV1EncounterEngine.ValidationError,
-                        .hopRegression(existing: 10, incoming: 9)
-                    )
+                let result = try engine.ingestInboundDatagram(bytes, clock: FixedClock(nowMs: 0), store: store)
+                XCTAssertEqual(result.state, .active)
+                let transfer = try GossipV1Framing.decodeDatagram(bytes)
+                guard case .transfer(let decoded) = transfer else {
+                    return XCTFail("Expected TRANSFER fixture")
                 }
+                let cutoff = UInt64(0) + GossipV1.CLOCK_SKEW_TOLERANCE_MS
+                let expectedNonfatal: [GossipV1EncounterEngine.ValidationError] = decoded.objects.compactMap { obj in
+                    if cutoff >= obj.expiryUnixMs {
+                        return .transferExpired(nowUnixMs: 0, expiryUnixMs: obj.expiryUnixMs)
+                    }
+                    if obj.itemID == objID, obj.hopCount < 10 {
+                        return .hopRegression(existing: 10, incoming: obj.hopCount)
+                    }
+                    return nil
+                }
+                let expectedAccepted: [GossipV1ItemID] = decoded.objects.compactMap { obj in
+                    if cutoff >= obj.expiryUnixMs { return nil }
+                    if obj.itemID == objID, obj.hopCount < 10 { return nil }
+                    return obj.itemID
+                }
+                XCTAssertEqual(result.acceptedTransferItemIDs, expectedAccepted)
+                XCTAssertEqual(result.nonfatalValidationErrors, expectedNonfatal)
             }
         )
     }
@@ -173,7 +196,9 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
                 let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION, maxWant: 1)
                 var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
                 let store = InMemoryGossipStore()
-                _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
+                // Peer caps drive inbound REQUEST.want validation.
+                let peerHello = try makeHello(version: GossipV1.GOSSIP_VERSION, maxWant: 1)
+                _ = try engine.ingestInboundFrame(.hello(peerHello), clock: FixedClock(nowMs: 0), store: store)
 
                 XCTAssertThrowsError(
                     try engine.ingestInboundDatagram(bytes, clock: FixedClock(nowMs: 0), store: store)
