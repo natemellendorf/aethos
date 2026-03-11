@@ -122,7 +122,9 @@ Transport/ Frames and link abstraction
 Sim/ In-memory simulation
 Tests/
 docs/
-protocol.md Protocol documentation
+protocol.md Core canonical structures and encoding
+protocol/ Gossip v1 upgrade protocol docs
+Fixtures/Protocol/gossip-v1/ Gossip v1 interoperability fixtures
 
 
 ---

@@ -26,7 +26,7 @@ This document defines:
 - [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
-- [Gossip sync spec](../spec/GOSSIP_SYNC_V1.md)
+- [Gossip v1 protocol docs](../protocol/gossip.md)
 - [Gossip sync conformance fixtures](./GOSSIP_SYNC_CONFORMANCE_FIXTURES.md)
 
 ---
@@ -217,7 +217,7 @@ Create canonical `FEDERATION_PROTOCOL_V1.md` in `aethos`.
 Create canonical `RECEIPTS.md` in `aethos`.
 
 ### Step 0.5
-Finalize `GOSSIP_SYNC_V1.md` in `aethos` as the canonical v1 transport-neutral sync contract.
+Finalize the Gossip v1 upgrade protocol docs in `docs/protocol/*` and fixtures in `Fixtures/Protocol/gossip-v1/*` as the canonical v1 gossip contract.
 
 ### Step 0.6
 Update `aethos-relay` documentation to reference `aethos` as the canonical spec location.
@@ -477,13 +477,13 @@ Ensure relay federation acknowledgments match canonical definitions exactly.
 
 ---
 
-# 10. Phase 4 — Gossip Sync Implementation
+# 10. Phase 4 — Gossip Sync Implementation (Legacy)
 
 ## Objective
-Implement the protocol-level “send all messages I have” behavior as a transport-neutral sync model.
+Implement the protocol-level “send all messages I have” behavior as a transport-neutral gossip model.
 
 ## Status
-In progress — canonical contract is specified in `docs/spec/GOSSIP_SYNC_V1.md`; implementation rollout is underway.
+In progress — canonical contract is specified in `docs/protocol/*`; implementation rollout is underway.
 
 ## Why this phase matters
 This is the architectural flip from relay-centric queueing to distributed, opportunistic message delivery.
@@ -502,16 +502,18 @@ This must work for:
 
 ## Step-by-step
 
-### Step 4.1 — Finalize sync spec in aethos
-Completed: `GOSSIP_SYNC_V1.md` is now the canonical v1 transport-neutral sync contract.
+### Step 4.1 — Finalize gossip protocol docs in aethos
+Completed: `docs/protocol/*` is now the canonical Gossip v1 upgrade contract.
 
 Current expectation: keep semantic changes versioned; limit near-term edits to clarifications, examples, and cross-links.
 
 Define:
-- InventorySummary
-- MissingRequest
-- Transfer
-- Receipt
+- HELLO
+- SUMMARY
+- REQUEST
+- TRANSFER
+- RECEIPT
+- RELAY_INGEST
 - paging behavior
 - idempotency rules
 - sync budgets
@@ -540,7 +542,7 @@ Responsibilities:
 - process sync receipts
 - remain idempotent
 
-### Step 4.4 — Add sync conformance tests
+### Step 4.4 — Add gossip conformance tests
 Test:
 - inventory convergence
 - duplicate suppression
@@ -550,8 +552,9 @@ Test:
 - retry after disconnect
 
 Canonical fixture references for this phase:
-- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
-- `testdata/gossip_sync/v1/*.json`
+- Normative docs: `docs/protocol/*`
+- Normative fixtures: `Fixtures/Protocol/gossip-v1/*`
+- Legacy reference only (non-normative): `docs/spec/GOSSIP_SYNC_V1.md`, `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`, `testdata/gossip_sync/v1/*`
 
 ### Step 4.5 — Integrate sync with relay
 In `aethos-relay`:
@@ -624,7 +627,7 @@ Clients maintain:
 Flow:
 - discover peer
 - connect
-- run gossip sync
+ - run gossip
 - update held message inventory
 
 ### Step 5.6 — Add diagnostics UI and logs
@@ -648,11 +651,11 @@ In iOS:
 Reduce duplication between relay federation logic and the broader sync model.
 
 ## Why this phase matters
-Today relay federation has its own forwarding shape. Long term, you may want federation and gossip sync to share more machinery.
+Today relay federation has its own forwarding shape. Long term, you may want federation and gossip to share more machinery.
 
 ## Step-by-step
 
-### Step 6.1 — Compare federation forward model to gossip sync model
+### Step 6.1 — Compare federation forward model to gossip model
 Document overlap and differences.
 
 ### Step 6.2 — Decide whether federation remains distinct or converges
@@ -706,11 +709,13 @@ The following documents should exist and be kept up to date.
 - `docs/migration/protocol_update.md` (this canonical migration plan)
 - `docs/migration/protocol_architecture.md`
 - `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
-- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
+- `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md` (legacy; non-normative)
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
-- `docs/spec/GOSSIP_SYNC_V1.md`
+- `docs/spec/GOSSIP_SYNC_V1.md` (legacy; non-normative)
+- `docs/protocol/*`
+- `Fixtures/Protocol/gossip-v1/*`
 - relevant ADRs
 
 ## In aethos-relay
@@ -733,7 +738,7 @@ The following documents should exist and be kept up to date.
 4. create receipt vocabulary spec
 5. create master compatibility matrix
 6. create migration plan
-7. finalize gossip sync spec
+7. finalize gossip protocol docs
 8. define sync runtime interfaces
 9. implement or host shared sync engine
 10. add sync conformance tests
@@ -847,7 +852,7 @@ The next concrete actions should be:
 Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (transport-neutral gossip sync + LAN discovery), while keeping residual client-relay exceptions evidence-gated.
 
 - Relay-side canonical cleanup is sufficiently complete to begin Phase 4 integration work.
-- Gossip sync is specified in `docs/spec/GOSSIP_SYNC_V1.md`; implementation rollout is in progress.
+- Gossip protocol is specified in `docs/protocol/*`; implementation rollout is in progress.
 - Local peer discovery is in progress, with iOS now implementing Bonjour/mDNS discovery + peer table + diagnostics.
 - The migration scoreboard for both residual cutover items and Phase 4/5 kickoff status is maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 

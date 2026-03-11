@@ -1,0 +1,217 @@
+import XCTest
+@testable import AethosCore
+
+final class GossipV1PrimitivesTests: XCTestCase {
+    func testConstantsMatchSpec() {
+        XCTAssertEqual(GossipV1.GOSSIP_VERSION, 1)
+        XCTAssertEqual(GossipV1.MAX_FRAME_BYTES, 1_048_576)
+        XCTAssertEqual(GossipV1.MAX_WANT_ITEMS, 256)
+        XCTAssertEqual(GossipV1.MAX_TRANSFER_ITEMS, 32)
+        XCTAssertEqual(GossipV1.MAX_TRANSFER_BYTES, 524_288)
+        XCTAssertEqual(GossipV1.BLOOM_FILTER_BYTES, 2_048)
+        XCTAssertEqual(GossipV1.BLOOM_HASH_COUNT, 4)
+        XCTAssertEqual(GossipV1.CLOCK_SKEW_TOLERANCE_MS, 30_000)
+    }
+
+    func testItemIDDerivationOverFixedBytes() {
+        let envelopeBytes = Data("aethos-gossip-v1-fixture-item".utf8)
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+        XCTAssertEqual(itemID.hex, "a0e877c7b87cdb54e94671048da4a31722cd3c181fd74b16466b5c15f9796cad")
+    }
+
+    func testNodeIDDerivationOverFixedPubKeyBytes() {
+        let pubKey = Data(repeating: 0, count: 32)
+        let nodeID = GossipV1NodeID.derive(fromPublicKeyRawBytes: pubKey)
+        XCTAssertEqual(nodeID.hex, "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925")
+    }
+
+    func testBase64URLRejectsPadding() {
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("Zg==")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLPadding)
+        }
+    }
+
+    func testBase64URLRejectsNonURLAlphabet() {
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("a+b")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLAlphabet)
+        }
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("a/b")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLAlphabet)
+        }
+    }
+
+    func testBase64URLRejectsWhitespace() {
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("Zg \n")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLAlphabet)
+        }
+    }
+
+    func testBase64URLRejectsLengthMod4Equals1() {
+        // Base64URL length 1 mod 4 is impossible under RFC 4648.
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("a")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLLength)
+        }
+        XCTAssertThrowsError(try GossipV1Base64URL.decode("abcde")) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidBase64URLLength)
+        }
+    }
+
+    func testBase64URLRoundTripNoPadding() throws {
+        let data = Data([0x66]) // "f"
+        let encoded = GossipV1Base64URL.encode(data)
+        XCTAssertEqual(encoded, "Zg")
+        let decoded = try GossipV1Base64URL.decode(encoded)
+        XCTAssertEqual(decoded, data)
+    }
+
+    func testBloomDeterminismOverFixedItemIDs() throws {
+        let ids = [
+            try GossipV1ItemID(bytes: Data(repeating: 0x00, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x22, count: 32)),
+        ]
+
+        let bloom = GossipV1BloomFilter.build(for: ids)
+        XCTAssertEqual(bloom.count, 2_048)
+
+        // Expected bloom bytes computed per encounter.md mapping.
+        let expectedHex = expectedBloomHexVector
+        XCTAssertEqual(expectedHex.count, 2_048 * 2)
+        XCTAssertEqual(Hex.encode(bloom), expectedHex)
+    }
+
+    func testBloomSetsExpectedBitsForFixedVector() throws {
+        let ids = [
+            try GossipV1ItemID(bytes: Data(repeating: 0x00, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32)),
+            try GossipV1ItemID(bytes: Data(repeating: 0x22, count: 32)),
+        ]
+
+        let bloom = GossipV1BloomFilter.build(for: ids)
+        XCTAssertEqual(bloom.count, 2_048)
+
+        // A few audited set bits from the fixed vector (LSB0 within each byte).
+        // These are complementary to the full hex equality test above.
+        // - byteIndex 129, bitOffset 4 => 0x10
+        XCTAssertEqual(bloom[129], 0x10)
+        XCTAssertNotEqual(bloom[129] & (UInt8(1) << 4), 0)
+
+        // - byteIndex 1317, bitOffset 1 => 0x02
+        XCTAssertEqual(bloom[1317], 0x02)
+        XCTAssertNotEqual(bloom[1317] & (UInt8(1) << 1), 0)
+
+        // - byteIndex 1953, bitOffset 7 => 0x80
+        XCTAssertEqual(bloom[1953], 0x80)
+        XCTAssertNotEqual(bloom[1953] & (UInt8(1) << 7), 0)
+    }
+
+    func testHexDigestRejectsInvalidLength() {
+        let sixtyThree = String(repeating: "a", count: 63)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: sixtyThree)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexDigest(expectedChars: 64, actualChars: 63))
+        }
+
+        let sixtyFive = String(repeating: "a", count: 65)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: sixtyFive)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexDigest(expectedChars: 64, actualChars: 65))
+        }
+    }
+
+    func testHexDigestRejectsUppercase() {
+        let uppercase = String(repeating: "A", count: 64)
+        XCTAssertThrowsError(try GossipV1NodeID(hex: uppercase)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexCharacter)
+        }
+    }
+
+    func testHexDigestRejectsNonHex() {
+        let bad = String(repeating: "g", count: 64)
+        XCTAssertThrowsError(try GossipV1ItemID(hex: bad)) { err in
+            XCTAssertEqual(err as? GossipV1Error, .invalidHexCharacter)
+        }
+    }
+
+    func testBloomOrderIndependenceAndDuplicateInvariance() throws {
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x00, count: 32))
+        let b = try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32))
+        let c = try GossipV1ItemID(bytes: Data(repeating: 0x22, count: 32))
+
+        let bloomABC = GossipV1BloomFilter.build(for: [a, b, c])
+        let bloomCBA = GossipV1BloomFilter.build(for: [c, b, a])
+        XCTAssertEqual(bloomABC, bloomCBA)
+
+        let bloomWithDuplicates = GossipV1BloomFilter.build(for: [a, b, b, c, a])
+        XCTAssertEqual(bloomABC, bloomWithDuplicates)
+    }
+}
+
+private let expectedBloomHexVector: String = {
+    // 2048 bytes == 4096 hex chars
+    let lines = [
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0010000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000040000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000008000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000200000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000004000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000004000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000020000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000008000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000004000000000000000000000000000000000000000",
+        "0000000000000000000000000000000080000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0080000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000020000000000",
+    ]
+    return lines.joined()
+}()

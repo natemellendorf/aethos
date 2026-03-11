@@ -1,8 +1,15 @@
 # GOSSIP_SYNC_V1
 
-Status: Canonical v1 contract (transport-neutral inventory sync)
+> Superseded
+>
+> This legacy spec defined a JSON/CBOR transport-neutral **gossip sync** contract.
+> It has been superseded by the Gossip v1 upgrade protocol docs in `docs/protocol/*` and the interoperability fixtures in `Fixtures/Protocol/gossip-v1/*`.
+>
+> Backward compatibility with this legacy gossip-sync contract is removed.
 
-This document defines the normative transport-neutral sync contract used to converge stored message inventories between peers.
+Status: Superseded (legacy transport-neutral inventory sync contract)
+
+This document describes the legacy transport-neutral sync contract that was used to converge stored message inventories between peers.
 
 - Canonical contract source: `docs/spec/*` (see `docs/adr/ADR-0001-protocol-contract-source-of-truth.md`)
 - Core canonical structures and bytes: `docs/protocol.md`
@@ -352,11 +359,13 @@ Retry expectation:
 
 ## 10. Conformance Fixtures
 
-- Fixture catalog and usage: `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`
-- Machine-readable fixtures: `testdata/gossip_sync/v1/*.json`
-
-Normative/illustrative rule:
-
-- The single-message v1 fixtures (`inventory_summary.page1.json`, `missing_request.page1.json`, `transfer.page1.json`, `receipt.page1.json`, `missing_request.empty.page1.json`) are normative for conformance expectations in this repository.
-- Transcript fixtures are informative scenario aids and are not normative contract vectors.
-- Markdown examples are explanatory/illustrative and must not override this contract.
+> Note
+>
+> The legacy conformance-fixture catalog for this spec lives in `docs/migration/GOSSIP_SYNC_CONFORMANCE_FIXTURES.md`.
+> The `testdata/gossip_sync/v1/*` fixtures are retained only as historical reference and are **not normative**.
+>
+> The current Gossip v1 upgrade protocol docs and interoperability fixtures live under:
+> - `docs/protocol/*`
+> - `Fixtures/Protocol/gossip-v1/*`
+>
+> Backward compatibility with this legacy gossip-sync contract/fixtures is removed.

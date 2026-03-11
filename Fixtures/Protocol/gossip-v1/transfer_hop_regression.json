@@ -1,0 +1,8 @@
+{
+  "expected_error": {
+    "domain": "engine",
+    "existing": 10,
+    "incoming": 9,
+    "type": "hopRegression"
+  }
+}

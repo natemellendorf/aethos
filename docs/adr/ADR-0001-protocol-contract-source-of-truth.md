@@ -23,7 +23,12 @@ For v1 contracts introduced with this ADR:
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
-- `docs/spec/GOSSIP_SYNC_V1.md` (canonical v1 transport-neutral sync contract)
+- `docs/protocol/*` (canonical Gossip v1 upgrade docs and invariants)
+- `Fixtures/Protocol/gossip-v1/*` (canonical interoperability fixtures)
+
+Legacy note:
+
+- `docs/spec/GOSSIP_SYNC_V1.md` is retained as a historical reference for the legacy gossip-sync contract and is not normative.
 
 ## Consequences
 
