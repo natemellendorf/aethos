@@ -1,6 +1,5 @@
 import Foundation
 
-#if DEBUG
 /// Deterministic SUMMARY→REQUEST reconciliation helper.
 ///
 /// Spec references:
@@ -61,4 +60,3 @@ internal enum GossipV1SummaryReconciliation {
         return out
     }
 }
-#endif

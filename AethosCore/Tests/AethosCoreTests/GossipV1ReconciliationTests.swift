@@ -15,7 +15,8 @@ final class GossipV1ReconciliationTests: XCTestCase {
         let peerBloom = GossipV1BloomFilter.build(for: [x, y])
 
         let localHave: Set<GossipV1ItemID> = [y]
-        let candidates = [x, y]
+        // Spec-compliant candidate set: candidates MUST NOT include local-have IDs.
+        let candidates = [x]
 
         let want1 = try GossipV1SummaryReconciliation.computeWant(
             bloomFilterBytes: peerBloom,
@@ -32,6 +33,20 @@ final class GossipV1ReconciliationTests: XCTestCase {
 
         XCTAssertEqual(want1, [x])
         XCTAssertEqual(want2, [x])
+    }
+
+    func testReconciliationDeDup_duplicateCandidates_produceUniqueWant() throws {
+        let x = try GossipV1ItemID(bytes: Data(repeating: 0x01, count: 32))
+
+        let peerBloom = GossipV1BloomFilter.build(for: [x])
+        let want = try GossipV1SummaryReconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [x, x, x],
+            localHaveItemIDs: [],
+            peerMaxWant: 128
+        )
+
+        XCTAssertEqual(want, [x])
     }
 
     func testReconciliationOrdering_stableAndLexicographic_overScrambledCandidates() throws {
