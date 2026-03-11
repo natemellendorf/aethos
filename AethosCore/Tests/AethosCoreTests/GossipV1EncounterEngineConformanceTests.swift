@@ -105,7 +105,8 @@ func gossipV1_engine_rejectsOversizeRequest_andOversizeTransferBytes() throws {
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
 
     let ids = try (0..<3).map { i in try GossipV1ItemID(bytes: Data(repeating: UInt8(i), count: 32)) }
-    let request = try GossipV1RequestFrame(want: ids)
+    let sorted = ids.sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
+    let request = try GossipV1RequestFrame(want: sorted)
     #expect(throws: GossipV1EncounterEngine.ValidationError.wantTooManyItems(max: 2, actual: 3)) {
         _ = try engine.ingestInboundFrame(.request(request), clock: clock, store: store)
     }
@@ -136,7 +137,8 @@ func gossipV1_engine_capsInboundRequestWant_byLocalHelloMaxWant_notPeerHelloMaxW
     _ = try engine.ingestInboundFrame(.hello(peerHello), clock: clock, store: store)
 
     let ids = try (0..<2).map { i in try GossipV1ItemID(bytes: Data(repeating: UInt8(i), count: 32)) }
-    let request = try GossipV1RequestFrame(want: ids)
+    let sorted = ids.sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
+    let request = try GossipV1RequestFrame(want: sorted)
     #expect(throws: GossipV1EncounterEngine.ValidationError.wantTooManyItems(max: 1, actual: 2)) {
         _ = try engine.ingestInboundFrame(.request(request), clock: clock, store: store)
     }
@@ -183,6 +185,7 @@ func gossipV1_engine_enforcesPeerHelloMaxWant_onOutboundBuildRequest() throws {
     _ = try engine.ingestInboundFrame(.hello(peerHello), clock: clock, store: store)
 
     let ids = try (0..<2).map { i in try GossipV1ItemID(bytes: Data(repeating: UInt8(i), count: 32)) }
+        .sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
     #expect(throws: GossipV1EncounterEngine.ValidationError.wantTooManyItems(max: 1, actual: 2)) {
         _ = try engine.buildRequest(want: ids)
     }
@@ -328,7 +331,8 @@ func gossipV1_engine_doesNotForwardHopOverflowedItems() throws {
     store.put(itemID: idForwardable, envelopeBytes: envBytes1, expiryUnixMs: expiry, hopCount: 0)
     store.put(itemID: idOverflow, envelopeBytes: envBytes2, expiryUnixMs: expiry, hopCount: .max)
 
-    let request = try GossipV1RequestFrame(want: [idForwardable, idOverflow])
+    let sorted = [idForwardable, idOverflow].sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
+    let request = try GossipV1RequestFrame(want: sorted)
     let result = try engine.ingestInboundFrame(.request(request), clock: clock, store: store)
 
     #expect(result.outbound.count == 1)

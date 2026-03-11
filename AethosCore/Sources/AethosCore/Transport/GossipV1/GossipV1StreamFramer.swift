@@ -13,18 +13,40 @@ public struct GossipV1StreamFramer: Sendable {
 
     public var bufferedByteCount: Int { decoder.bufferedByteCount }
 
+    /// Error thrown when at least one valid frame was decoded, but a later stream-boundary
+    /// violation was encountered in the same `append` call.
+    ///
+    /// This avoids silently dropping already-decoded frames.
+    public struct PartialAppendError: Swift.Error, Equatable, Sendable {
+        public let frames: [Data]
+        public let underlying: GossipV1FramingError
+
+        public init(frames: [Data], underlying: GossipV1FramingError) {
+            self.frames = frames
+            self.underlying = underlying
+        }
+    }
+
     /// Appends raw stream bytes and returns any newly completed frames.
     ///
     /// - Throws: `GossipV1FramingError` for invalid boundaries (oversize, empty, etc.).
     public mutating func append(_ bytes: Data) throws -> [Data] {
         guard !bytes.isEmpty else { return [] }
-        try decoder.appendChecked(bytes)
 
         var frames: [Data] = []
-        while let next = try decoder.nextFrame() {
-            frames.append(next)
+        do {
+            try decoder.appendChecked(bytes)
+            while let next = try decoder.nextFrame() {
+                frames.append(next)
+            }
+            return frames
+        } catch let error as GossipV1FramingError {
+            // If we already decoded frames in this call, do not drop them.
+            if frames.isEmpty {
+                throw error
+            }
+            throw PartialAppendError(frames: frames, underlying: error)
         }
-        return frames
     }
 
     /// Signals end-of-stream.

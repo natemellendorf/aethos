@@ -88,6 +88,13 @@ public struct GossipV1EncounterEngine: Sendable {
     private(set) public var state: State = .awaitingHello
     private(set) public var peerCaps: PeerCaps?
 
+    /// Transport-layer termination seam.
+    ///
+    /// Stream boundary violations are fatal and must terminate the session immediately.
+    internal mutating func terminateDueToProtocolViolation(_ message: String) {
+        state = .terminated(reason: .protocolViolation(message))
+    }
+
     private var lastValidInboundTransferIDs: Set<GossipV1ItemID>?
     private var lastValidOutboundTransferIDs: Set<GossipV1ItemID>?
 

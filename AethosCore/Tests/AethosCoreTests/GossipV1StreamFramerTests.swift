@@ -97,4 +97,23 @@ final class GossipV1StreamFramerTests: XCTestCase {
             XCTAssertEqual(err as? GossipV1FramingError, .truncated)
         }
     }
+
+    func testAppendThatDecodesFramesThenHitsBoundaryError_throwsPartialAppendErrorCarryingFrames() throws {
+        let f1 = Data([0x01])
+        let f1Bytes = try GossipV1Framing.encodeStreamFrame(f1)
+
+        // Then an invalid second frame prefix: declaredLength=0 (empty frame)
+        let invalidSecond = Data([0x00, 0x00, 0x00, 0x00])
+        let bytes = f1Bytes + invalidSecond
+
+        var framer = GossipV1StreamFramer()
+
+        do {
+            _ = try framer.append(bytes)
+            XCTFail("Expected PartialAppendError")
+        } catch let err as GossipV1StreamFramer.PartialAppendError {
+            XCTAssertEqual(err.frames, [f1])
+            XCTAssertEqual(err.underlying, .emptyFrame)
+        }
+    }
 }

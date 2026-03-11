@@ -121,9 +121,29 @@ public struct GossipV1StreamAdapter: Sendable {
                     return
                 }
             }
+        } catch let error as GossipV1StreamFramer.PartialAppendError {
+            // Preserve already-decoded frames and then apply fatal boundary error semantics.
+            for frameBytes in error.frames {
+                let outcome = try ingestCompleteFrameBytes(frameBytes)
+                if outcome == .stopProcessing {
+                    return
+                }
+            }
+            // Boundary errors are fatal: emit termination-ordered events and stop processing.
+            let previousState = engine.state
+            engine.terminateDueToProtocolViolation("stream boundary")
+            emitTerminationEventsIfNeeded(previousState: previousState, error: .from(error.underlying))
+            return
         } catch let error as CancellationError {
             throw error
         } catch {
+            // Boundary errors are fatal.
+            if let framing = error as? GossipV1FramingError {
+                let previousState = engine.state
+                engine.terminateDueToProtocolViolation("stream boundary")
+                emitTerminationEventsIfNeeded(previousState: previousState, error: .from(framing))
+                return
+            }
             hooks.onEvent(.didEncounterError(.from(error)))
         }
     }

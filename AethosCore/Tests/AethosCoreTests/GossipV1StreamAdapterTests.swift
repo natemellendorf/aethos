@@ -133,7 +133,8 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        // This fixture exceeds MAX_FRAME_BYTES and should fail framing as non-fatal.
+        // This fixture exceeds MAX_TRANSFER_BYTES at the TRANSFER decode boundary and should fail
+        // as a non-fatal invalid-frame (not a boundary error).
         let invalidFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("transfer_oversize_bytes.cbor"))
         let validSecond = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
         let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
@@ -375,6 +376,57 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             errors.first,
             .streamBoundary(.invalidDatagramCBOR(problem: .indefiniteLengthNotSupported))
         )
+    }
+
+    func testReceiveBytes_twoFramesInOneBuffer_firstValidSecondBoundaryError_fatalStopsProcessing_butDoesNotDropFirstFrame() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let errors = Locked<[GossipV1TransportError]>([])
+        let stateTransitions = Locked<[(GossipV1EncounterEngine.State, GossipV1EncounterEngine.State)]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                switch event {
+                case .didReceiveFrame(let frame):
+                    receivedFrames.withLock { $0.append(frame) }
+                case .didEncounterError(let err):
+                    errors.withLock { $0.append(err) }
+                case .didChangeState(from: let from, to: let to):
+                    stateTransitions.withLock { $0.append((from, to)) }
+                default:
+                    break
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let validFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let invalidSecond = Data([0x00, 0x00, 0x00, 0x00]) // empty frame_len
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(validFirst) + invalidSecond
+
+        try adapter.receiveBytes(streamBytes)
+
+        // The first valid frame must not be dropped.
+        XCTAssertEqual(receivedFrames.withLock { $0 }.count, 1)
+
+        // Boundary error is fatal: we should terminate.
+        // (The first frame is a valid HELLO, so we may have already transitioned to `.active`.)
+        let transitions = stateTransitions.withLock { $0 }
+        XCTAssertTrue(transitions.contains { _, to in
+            to == .terminated(reason: .protocolViolation("stream boundary"))
+        })
+
+        let errs = errors.withLock { $0 }
+        XCTAssertEqual(errs, [.streamBoundary(.emptyFrame)])
     }
 }
 
