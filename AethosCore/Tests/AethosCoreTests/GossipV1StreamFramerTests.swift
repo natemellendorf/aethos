@@ -62,6 +62,30 @@ final class GossipV1StreamFramerTests: XCTestCase {
         }
     }
 
+    func testOversizeDeclaredLengthRejected_evenWhenPrefixArrivesSplitAcrossBuffers() throws {
+        // Provide first 2 bytes of the 4-byte u32be prefix, then the rest.
+        let tooLarge = UInt32(GossipV1.MAX_FRAME_BYTES + 1).bigEndian
+        let prefix = withUnsafeBytes(of: tooLarge) { Data($0) }
+        let part1 = prefix.prefix(2)
+        let part2 = prefix.dropFirst(2)
+
+        var framer = GossipV1StreamFramer()
+        XCTAssertEqual(try framer.append(part1), [])
+
+        do {
+            _ = try framer.append(part2)
+            XCTFail("Expected oversize prefix to throw")
+        } catch {
+            XCTAssertEqual(
+                error as? GossipV1FramingError,
+                .frameTooLarge(max: GossipV1.MAX_FRAME_BYTES, actual: GossipV1.MAX_FRAME_BYTES + 1)
+            )
+        }
+
+        // Early rejection must not buffer the declared payload.
+        XCTAssertEqual(framer.bufferedByteCount, 0)
+    }
+
     func testTruncatedPayloadRejectedOnFinish() throws {
         let frameBytes = Data([0xAB, 0xCD])
         let streamBytes = try GossipV1Framing.encodeStreamFrame(frameBytes)

@@ -327,6 +327,55 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             return false
         })
     }
+
+    func testReceiveBytes_twoFramesInOneBuffer_firstInvalidDatagramCBOR_secondValid_secondStillProcessedWhenFirstNonFatal() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let receivedFrames = Locked<[GossipV1Frame]>([])
+        let errorEvents = Locked<[GossipV1TransportError]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                switch event {
+                case .didReceiveFrame(let frame):
+                    receivedFrames.withLock { $0.append(frame) }
+                case .didEncounterError(let err):
+                    errorEvents.withLock { $0.append(err) }
+                default:
+                    break
+                }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 0),
+            store: InMemoryGossipStore(),
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        // Invalid CBOR: a single byte 0xBF indicates an indefinite-length map, which
+        // is forbidden by canonical CBOR and should be rejected at the framing layer.
+        let invalidFirst = Data([0xBF])
+        let validSecond = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let expectedSecondFrame = try GossipV1Frame.decode(bytes: validSecond)
+        let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
+
+        try adapter.receiveBytes(streamBytes)
+
+        let frames = receivedFrames.withLock { $0 }
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames.first, expectedSecondFrame)
+
+        let errors = errorEvents.withLock { $0 }
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertEqual(
+            errors.first,
+            .streamBoundary(.invalidDatagramCBOR(problem: .indefiniteLengthNotSupported))
+        )
+    }
 }
 
 // MARK: - Minimal test helpers (scoped to this file)

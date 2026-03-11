@@ -18,7 +18,7 @@ public struct GossipV1StreamFramer: Sendable {
     /// - Throws: `GossipV1FramingError` for invalid boundaries (oversize, empty, etc.).
     public mutating func append(_ bytes: Data) throws -> [Data] {
         guard !bytes.isEmpty else { return [] }
-        decoder.append(bytes)
+        try decoder.appendChecked(bytes)
 
         var frames: [Data] = []
         while let next = try decoder.nextFrame() {

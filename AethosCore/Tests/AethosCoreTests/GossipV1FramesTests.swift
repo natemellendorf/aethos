@@ -98,6 +98,42 @@ final class GossipV1FramesTests: XCTestCase {
         let decoded = try GossipV1Frame.decode(bytes: bytes)
         XCTAssertEqual(decoded, frame)
     }
+
+    func testHelloEncodingIsDeterministicAcrossRepeatedEncodes() throws {
+        let frame = try helloFixtureFrame()
+        let a = frame.encode()
+        let b = frame.encode()
+        let c = frame.encode()
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(b, c)
+    }
+
+    func testHelloPayloadMapOrderingIsCanonical_notInsertionOrder() throws {
+        // Build an envelope with a HELLO payload whose keys are intentionally out-of-order.
+        // The canonical encoder must reorder deterministically.
+        let pubKey = Data(repeating: 0, count: 32)
+        let nodeID = GossipV1NodeID.derive(fromPublicKeyRawBytes: pubKey)
+
+        let payloadOutOfOrder: CanonicalCBORValue = .map([
+            .init(key: .text("node_pubkey"), value: .text(GossipV1Base64URL.encode(pubKey))),
+            .init(key: .text("node_id"), value: .text(nodeID.hex)),
+            .init(key: .text("version"), value: .unsigned(GossipV1.GOSSIP_VERSION)),
+            .init(key: .text("capabilities"), value: .array([.text("store")])),
+            .init(key: .text("propagation_class"), value: .text("direct")),
+            .init(key: .text("max_transfer"), value: .unsigned(16)),
+            .init(key: .text("max_want"), value: .unsigned(128)),
+        ])
+        let envOutOfOrder: CanonicalCBORValue = .map([
+            .init(key: .text("type"), value: .text(GossipV1FrameType.HELLO.rawValue)),
+            .init(key: .text("payload"), value: payloadOutOfOrder),
+        ])
+        let bytesOutOfOrder = try CanonicalCBOREncoder().encode(envOutOfOrder)
+
+        let decoded = try GossipV1Frame.decode(bytes: bytesOutOfOrder)
+        let expected = try helloFixtureFrame()
+        XCTAssertEqual(decoded, expected)
+        XCTAssertEqual(decoded.encode(), expected.encode())
+    }
 }
 
 // MARK: - Fixtures
