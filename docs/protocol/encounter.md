@@ -92,16 +92,20 @@ After receiving a peer `SUMMARY`, an implementation MUST deterministically selec
 
 Definitions:
 
-- `candidateItemIDs`: the local candidate set of item IDs that might be missing remotely.
-- `localHaveItemIDs`: the locally-stored item IDs (the set the local node “has”).
+- `candidateItemIDs`: receiver-side candidate item IDs that the receiver believes it might be missing and believes the peer might have.
+- `localHaveItemIDs`: the receiver's locally-stored item IDs (the set the receiver “has”).
 
 Rules:
 
-1. `candidateItemIDs` MUST be derived only from local state and the peer-provided Bloom filter; it MUST NOT depend on timing, randomness, or transport metadata.
-2. For each `item_id` in `localHaveItemIDs`, if the peer Bloom filter indicates it **might** contain the item, the implementation MUST treat the peer as potentially already having it (Bloom filters have false positives and cannot enumerate unknown IDs).
-3. `candidateItemIDs` MUST contain only items from `localHaveItemIDs` that the peer Bloom filter does **not** indicate it might contain.
-4. `candidateItemIDs` MUST be ordered by bytewise lexicographic order of the decoded `item_id` digest bytes (not by hex string order).
-5. `REQUEST.want` MUST be the first `N` item IDs from `candidateItemIDs`, where `N = min(peer.max_want, MAX_WANT_ITEMS)`.
+1. Inputs are receiver-side and deterministic:
+   - `candidateItemIDs` MUST be derived only from receiver-local state plus the peer-provided Bloom filter; it MUST NOT depend on timing, randomness, or transport metadata.
+   - `localHaveItemIDs` is the receiver's local inventory.
+2. Selection rule: `candidateItemIDs` MUST NOT include any item IDs that are present in `localHaveItemIDs`.
+3. Bloom check: an item ID MUST be included in `REQUEST.want` **iff** the peer Bloom filter indicates it *might contain* that item ID.
+4. Ordering: `REQUEST.want` MUST be bytewise lexicographically sorted by the decoded digest bytes of `item_id` (not by hex string order).
+5. Truncation: `REQUEST.want` MUST be truncated to the first `N` items, where `N = min(peer.max_want, MAX_WANT_ITEMS)`.
+
+Note: Bloom filters have false positives but no false negatives. A receiver MAY request items the peer does not actually have; this is acceptable.
 
 Note: `candidateItemIDs` MAY be empty; in that case a conforming implementation MAY emit an empty `REQUEST.want` as a valid no-op.
 

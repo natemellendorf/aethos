@@ -13,8 +13,8 @@ internal enum GossipV1SummaryReconciliation {
     /// Computes a deterministic REQUEST.want list from a peer SUMMARY bloom filter.
     ///
     /// The output is:
-    /// - filtered to items the peer bloom indicates it might contain,
-    /// - excludes items already present in `localHaveItemIDs`,
+    /// - includes only items the peer bloom indicates it might contain,
+    /// - excludes items already present in `localHaveItemIDs` (candidate set MUST NOT include local-have, but we guard anyway),
     /// - sorted by bytewise lexicographic order of decoded digest bytes,
     /// - de-duplicated,
     /// - truncated to `min(peerMaxWant, GossipV1.MAX_WANT_ITEMS)`.
@@ -39,6 +39,8 @@ internal enum GossipV1SummaryReconciliation {
         guard maxItems > 0 else { return [] }
 
         // Filter candidates to only items we don't already have and the peer bloom might contain.
+        // Per spec, `candidateItemIDs` MUST NOT include local-have IDs; we still filter to make
+        // this helper resilient for test harnesses.
         let filtered = candidateItemIDs
             .lazy
             .filter { !localHaveItemIDs.contains($0) }
