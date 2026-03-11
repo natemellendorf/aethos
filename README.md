@@ -2,11 +2,11 @@
   <img src="docs/img/banner.jpg" alt="Aethos banner" width="960">
 </p>
 
-Aethos is a deterministic, store-and-forward data exchange protocol designed for unreliable, intermittent, or constrained links.
+# Aethos Gossip Protocol (Gossip V1)
 
-It provides a protocol specification and a reference implementation for exchanging authenticated data between peers without requiring stable connections, long-lived sessions, or trusted transports.
+Aethos is a deterministic, store–carry–forward gossip protocol designed for unreliable, intermittent, or constrained links.
 
-## Aethos Gossip Protocol (Gossip V1)
+`docs/protocol/` is authoritative for Aethos Gossip Protocol (Gossip V1) semantics, invariants, and wire framing.
 
 The canonical transport-neutral gossip protocol is specified in:
 
@@ -20,164 +20,67 @@ Reference implementation:
 - Protocol engine: `AethosCore/Sources/AethosCore/Protocol/GossipV1/*`
 - Transport stream adapter: `AethosCore/Sources/AethosCore/Transport/GossipV1/*`
 
----
+## Core Design Goals
 
-## What Problem Does Aethos Solve?
+- Deterministic, content-addressed objects and idempotent convergence.
+- Transport-neutral frames with bearer-specific boundaries (datagram vs stream).
+- Sessionless progress under explicit budgets (items/bytes); safe repetition.
+- Fail-closed validation: reject malformed, oversize, expired, or incompatible inputs.
+- Strict separation between wire correctness and local policy (scoring, ordering).
 
-Most modern protocols assume:
+## Store–Carry–Forward Gossip
 
-- Stable connectivity
-- Ordered, lossless transport
-- Long-lived sessions
-- Centralized coordination
+Nodes exchange inventory and replicate objects opportunistically during brief encounters.
+Transfers are incremental and tolerate duplication, reordering, partial completion, and repeated sessions.
 
-Aethos assumes none of these.
+## Protocol Overview
 
-It is designed for environments where:
+An encounter is a bounded exchange of frames:
 
-- Connections are brief, unreliable, or opportunistic
-- Data may be duplicated, delayed, or reordered
-- Peers operate asynchronously
-- Progress must be made incrementally, session by session
+1. `HELLO`: version and node identity advertisement.
+2. `SUMMARY`: deterministic Bloom filter of eligible inventory.
+3. `REQUEST`: item IDs the peer wants.
+4. `TRANSFER`: objects (envelope bytes + metadata) within strict size/item limits.
+5. `RECEIPT`: acknowledgement of received item IDs for the immediately preceding transfer.
+6. Optional `RELAY_INGEST`: relay durability signal (trusted only on authenticated relay transport).
 
-Aethos enables **eventual, verifiable delivery** under these conditions.
+Frame names, schemas, and limits are defined in `docs/protocol/frames.md`.
 
----
+## Deterministic Object Identity
 
-## Core Concepts
+Each gossiped object is identified by `item_id = SHA-256(envelope_bytes)` (lowercase hex), where `envelope_bytes` are immutable, canonical serialized Aethos envelope bytes carried as base64url (`envelope_b64`). Deduplication is by `item_id` only.
 
-### Deterministic Protocol Objects
+## Bloom-Based Inventory Exchange
 
-All protocol objects have stable, content-derived identifiers:
+`SUMMARY` carries a fixed-size Bloom filter (`BLOOM_FILTER_BYTES`) computed deterministically across implementations. False positives are acceptable; repeated encounters converge without coordination.
 
-- Chunks
-- Manifests
-- Envelopes
-- Receipts
+## Replication Model
 
-This enables idempotency, deduplication, integrity verification, and replay tolerance by design.
+Replication is multi-path (not strict custody transfer). Multiple nodes may hold the same `item_id` concurrently; forwarding does not imply safe deletion. `hop_count` starts at 0 and must increment by exactly 1 on forward and must not regress for the same `item_id`.
 
----
+See `docs/protocol/replication.md`.
 
-### Explicit Protocol Layers
+## Relay Interaction
 
-Aethos strictly separates concerns:
+Relays participate in gossip without changing semantics:
 
-- Canonical encoding (Canonical Bytes)
-- Identity and cryptography
-- Chunking and manifests
-- Routing and session planning
-- Transport framing and links
+- Preserve envelope immutability and deduplicate by `item_id`.
+- Emit/accept `RELAY_INGEST` only after durable write.
+- Treat `RELAY_INGEST` as authoritative for pruning or replication de-escalation only when received on authenticated relay transport.
 
-No behavior is implicit in the transport layer.
+See `docs/protocol/gossip.md` and `docs/protocol/frames.md`.
 
----
+## Protocol Documentation
 
-### Sessionless Progress
-
-Each exchange session:
-
-- Operates under explicit budgets (bytes and items)
-- Requires no shared session state
-- Can be repeated safely
-
-Repeated sessions converge naturally without coordination.
-
----
-
-### Self-Certifying Identity
-
-Every Aethos node has a **self-certifying identity**: the Wayfarer ID is derived deterministically from the node's public key.
-
-- **Derivation**: `wayfarerId = SHA-256(Ed25519 signing public key)` (64-char hex)
-- **Verification**: Any peer can verify a claimed Wayfarer ID by re-deriving it from the presented public key
-- **Key type**: Ed25519 (Curve25519.Signing) for compact 32-byte keys and fast signatures
-- **Exchange key**: Curve25519 key agreement (X25519) for sealed payload key delivery
-
-This means:
-- Identity cannot be spoofed without the corresponding private key
-- No central authority is needed to assign or verify identities
-- Peers can authenticate each other without prior coordination
-
-**Storage layout** (under peer home `identity/` directory):
-- `identity-v2.json` — metadata (key type, public keys hex, creation timestamp)
-- `private.key` — raw private key bytes (0600 permissions)
-- `public.key` — raw public key bytes
-- `identity-v1.json` — backward-compatible key snapshot
-
-**Identity rotation**: To rotate identity, delete the identity directory and re-run `aethos init`. This generates a new keypair and a new Wayfarer ID. Peers will see the new identity as a different node. A future bead will add explicit rotation with continuity proofs.
-
----
-
-### Crypto-First Design
-
-Security is part of the protocol itself:
-
-- Ed25519 self-certifying identities
-- Signed receipts
-- Sealed key exchange (Curve25519)
-- Authenticated payload encryption (ChaCha20-Poly1305)
-
-There is no assumption of a secure transport.
-
----
-
-## Repository Structure
-
-AethosCore/
-Sources/
-Canonical/ Canonical encoding
-Crypto/ Payload encryption and sealing
-Identity/ Identity management and signing
-Chunking/ Chunking and manifest logic
-Routing/ Session planning and prioritization
-Store/ SQLite-backed persistence
-Transport/ Frames and link abstraction
-Sim/ In-memory simulation
-Tests/
-docs/
-protocol.md Core canonical structures and encoding
-protocol/ Gossip v1 upgrade protocol docs
-Fixtures/Protocol/gossip-v1/ Gossip v1 interoperability fixtures
-
-
----
-
-## Current Status
-
-Aethos currently includes:
-
-- Canonical encoding v1 with stable test vectors
-- Deterministic identifiers for all protocol objects
-- Chunking, manifests, and reassembly
-- SQLite-backed durable store
-- Routing and session planning
-- Explicit transport framing
-- End-to-end simulated delivery under constrained budgets
-
-It is suitable as a **reference implementation and experimentation platform**.
-
----
-
-## App Pivot Readiness
-
-APP_PIVOT_READY: true
-
----
-
-## Non-Goals
-
-Aethos is **not** intended to be:
-
-- A replacement for TCP or HTTP
-- A real-time streaming protocol
-- A low-latency RPC system
-
-It prioritizes correctness, resilience, and eventual delivery over immediacy.
-
----
+- Authoritative Gossip V1 docs: `docs/protocol/`
+  - `docs/protocol/frames.md` (authoritative wire-frame catalog)
+  - `docs/protocol/gossip.md` (architecture and invariants)
+  - `docs/protocol/encounter.md` (encounter behavior)
+  - `docs/protocol/replication.md` (store–carry–forward replication contract)
+  - `docs/protocol/scoring.md` (non-normative policy guidance)
+- Core canonical object encoding: `docs/protocol.md`
+- Interoperability fixtures: `Fixtures/Protocol/gossip-v1/`
 
 ## License
 
-Licensed under the Apache License, Version 2.0.  
-See [LICENSE](LICENSE) for details.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
