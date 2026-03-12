@@ -37,13 +37,16 @@ final class GossipV1FixtureMirrorGuardTests: XCTestCase {
 
         var mismatches: [String] = []
         for relativePath in canonicalPaths.sorted() {
-            guard let canonicalURL = canonicalFiles[relativePath], let mirrorURL = mirrorFiles[relativePath] else {
-                continue
-            }
+            let canonicalURL = try XCTUnwrap(
+                canonicalFiles[relativePath],
+                "Unexpected state: canonical fixtures missing URL for relative path: \(relativePath)"
+            )
+            let mirrorURL = try XCTUnwrap(
+                mirrorFiles[relativePath],
+                "Unexpected state: mirror fixtures missing URL for relative path: \(relativePath)"
+            )
 
-            let canonicalBytes = try Data(contentsOf: canonicalURL)
-            let mirrorBytes = try Data(contentsOf: mirrorURL)
-            if canonicalBytes != mirrorBytes {
+            if try !FixtureTree.filesAreEqual(canonicalURL, mirrorURL) {
                 mismatches.append(relativePath)
             }
         }
@@ -67,7 +70,7 @@ private enum RepoRootLocator {
         var description: String {
             switch self {
             case .repoRootNotFound(let startingAt):
-                return "Failed to locate repo root by walking upward from: \(startingAt.path)"
+                return "Failed to locate repo root by walking upward from: \(startingAt.path). Markers searched: Package.swift and Fixtures/Protocol/gossip-v1"
             }
         }
     }
@@ -75,19 +78,30 @@ private enum RepoRootLocator {
     /// Walk upward from a source file path until we find a directory that contains
     /// both `Package.swift` and `Fixtures/Protocol/gossip-v1`.
     static func repoRoot(near filePath: String) throws -> URL {
-        var candidate = URL(fileURLWithPath: filePath).deletingLastPathComponent()
+        var candidate = URL(fileURLWithPath: filePath)
+            .deletingLastPathComponent()
+            .standardizedFileURL
+        let fileManager = FileManager.default
 
         while true {
+            candidate = candidate.standardizedFileURL
+
             let packageSwift = candidate.appendingPathComponent("Package.swift", isDirectory: false)
             let fixturesDir = candidate.appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
 
-            if FileManager.default.fileExists(atPath: packageSwift.path),
-               FileManager.default.fileExists(atPath: fixturesDir.path)
-            {
+            var packageIsDir: ObjCBool = false
+            let hasPackageSwift = fileManager.fileExists(atPath: packageSwift.path, isDirectory: &packageIsDir)
+                && !packageIsDir.boolValue
+
+            var fixturesIsDir: ObjCBool = false
+            let hasFixturesDir = fileManager.fileExists(atPath: fixturesDir.path, isDirectory: &fixturesIsDir)
+                && fixturesIsDir.boolValue
+
+            if hasPackageSwift, hasFixturesDir {
                 return candidate
             }
 
-            let parent = candidate.deletingLastPathComponent()
+            let parent = candidate.deletingLastPathComponent().standardizedFileURL
             if parent.path == candidate.path {
                 throw Error.repoRootNotFound(startingAt: URL(fileURLWithPath: filePath))
             }
@@ -124,7 +138,7 @@ private enum FixtureTree {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles]
+            options: []
         ) else {
             throw Error.failedToEnumerate(root)
         }
@@ -138,6 +152,20 @@ private enum FixtureTree {
             out[relativePath] = fileURL
         }
         return out
+    }
+
+    static func filesAreEqual(_ lhs: URL, _ rhs: URL) throws -> Bool {
+        // Small perf polish: if sizes differ, bytes differ.
+        let keys: Set<URLResourceKey> = [.fileSizeKey]
+        let lhsSize = try lhs.resourceValues(forKeys: keys).fileSize
+        let rhsSize = try rhs.resourceValues(forKeys: keys).fileSize
+        if let lhsSize, let rhsSize, lhsSize != rhsSize {
+            return false
+        }
+
+        let lhsBytes = try Data(contentsOf: lhs)
+        let rhsBytes = try Data(contentsOf: rhs)
+        return lhsBytes == rhsBytes
     }
 
     private static func makeRelativePath(fileURL: URL, root: URL) throws -> String {
