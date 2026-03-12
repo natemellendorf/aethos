@@ -70,7 +70,7 @@ private enum RepoRootLocator {
         var description: String {
             switch self {
             case .repoRootNotFound(let startingAt):
-                return "Failed to locate repo root by walking upward from: \(startingAt.path). Markers searched: Package.swift and Fixtures/Protocol/gossip-v1"
+                return "Failed to locate repo root by walking upward from: \(startingAt.path). Markers searched: Package.swift (file) and Fixtures/Protocol/gossip-v1 (directory)."
             }
         }
     }
@@ -78,14 +78,14 @@ private enum RepoRootLocator {
     /// Walk upward from a source file path until we find a directory that contains
     /// both `Package.swift` and `Fixtures/Protocol/gossip-v1`.
     static func repoRoot(near filePath: String) throws -> URL {
-        var candidate = URL(fileURLWithPath: filePath)
+        let startingDirectory = URL(fileURLWithPath: filePath)
             .deletingLastPathComponent()
             .standardizedFileURL
+
+        var candidate = startingDirectory
         let fileManager = FileManager.default
 
         while true {
-            candidate = candidate.standardizedFileURL
-
             let packageSwift = candidate.appendingPathComponent("Package.swift", isDirectory: false)
             let fixturesDir = candidate.appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
 
@@ -103,7 +103,7 @@ private enum RepoRootLocator {
 
             let parent = candidate.deletingLastPathComponent().standardizedFileURL
             if parent.path == candidate.path {
-                throw Error.repoRootNotFound(startingAt: URL(fileURLWithPath: filePath))
+                throw Error.repoRootNotFound(startingAt: startingDirectory)
             }
             candidate = parent
         }
@@ -147,6 +147,11 @@ private enum FixtureTree {
         for case let fileURL as URL in enumerator {
             let values = try fileURL.resourceValues(forKeys: Set(keys))
             guard values.isRegularFile == true else { continue }
+
+            // Explicitly ignore macOS metadata artifacts while continuing
+            // to include other hidden files in the fixture mirror guard.
+            let filename = fileURL.lastPathComponent
+            guard filename != ".DS_Store", !filename.hasPrefix("._") else { continue }
 
             let relativePath = try makeRelativePath(fileURL: fileURL, root: root)
             out[relativePath] = fileURL
