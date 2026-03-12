@@ -2,6 +2,8 @@ import Foundation
 import XCTest
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 final class GossipV1StreamSessionTests: XCTestCase {
     func testSendHelloYieldsOutboundBytes() async throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
@@ -196,21 +198,6 @@ final class GossipV1StreamSessionTests: XCTestCase {
 }
 
 // MARK: - Minimal helpers (scoped to this file)
-
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
-    }
-}
 
 private struct TimeoutError: Swift.Error, CustomStringConvertible {
     let seconds: TimeInterval

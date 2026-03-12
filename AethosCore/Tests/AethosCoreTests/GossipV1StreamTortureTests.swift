@@ -2,6 +2,8 @@ import Foundation
 import XCTest
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 final class GossipV1StreamTortureTests: XCTestCase {
     func testStreamFramer_chunkingPatterns_decodeSingleFrame_forAllDeterministicChunkings() throws {
         let payload = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
@@ -109,17 +111,3 @@ final class GossipV1StreamTortureTests: XCTestCase {
     }
 }
 
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
-    }
-}

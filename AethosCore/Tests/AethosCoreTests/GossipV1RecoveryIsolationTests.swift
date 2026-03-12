@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 @Test
 func gossipV1_recovery_mixedValidityTransfer_commitsOnlyValidObjects_andIsolatesInvalidOnes() throws {
     let localHello = try GossipV1TestSupport.makeHello(version: GossipV1.GOSSIP_VERSION)
@@ -86,17 +88,3 @@ private final class ThrowingRelayObserver: @unchecked Sendable, GossipV1Encounte
     }
 }
 
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
-    }
-}

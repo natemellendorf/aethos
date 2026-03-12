@@ -2,6 +2,8 @@ import Foundation
 import XCTest
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 final class GossipV1StreamAdapterTests: XCTestCase {
     func testSendingHelloEmitsStreamBytes_lengthPrefixPlusPayload() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
@@ -659,21 +661,6 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 }
 
 // MARK: - Minimal test helpers (scoped to this file)
-
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
-    }
-}
 
 private func makeHello(version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt64 = 16) throws -> GossipV1HelloFrame {
     let pubKey = Data(repeating: 0x01, count: 32)

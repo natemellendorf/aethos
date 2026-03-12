@@ -5,6 +5,24 @@ import Foundation
 ///
 /// Intentionally scoped to the test target.
 enum GossipV1TestSupport {
+    /// Minimal thread-safe box for capturing values from concurrent callbacks.
+    ///
+    /// Intentionally test-only; prefer `actor` in production code.
+    final class Locked<T>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: T
+
+        init(_ value: T) {
+            self.value = value
+        }
+
+        func withLock<R>(_ body: (inout T) -> R) -> R {
+            lock.lock()
+            defer { lock.unlock() }
+            return body(&value)
+        }
+    }
+
     static func fixturesDir(file: StaticString = #filePath) -> URL {
         let here = URL(fileURLWithPath: "\(file)")
         return here
