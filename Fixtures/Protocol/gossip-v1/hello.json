@@ -1,0 +1,11 @@
+{
+  "capabilities": [
+    "store"
+  ],
+  "max_transfer": 16,
+  "max_want": 128,
+  "node_id": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+  "node_pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "propagation_class": "direct",
+  "version": 1
+}

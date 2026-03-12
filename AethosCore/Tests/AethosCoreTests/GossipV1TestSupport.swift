@@ -5,6 +5,8 @@ import Foundation
 ///
 /// Intentionally scoped to the test target.
 enum GossipV1TestSupport {
+    private static let fixtureRootResourcePath = "Fixtures/Protocol/gossip-v1"
+
     enum FixtureError: Swift.Error, CustomStringConvertible, Equatable {
         case missingResource(relativePath: String)
 
@@ -48,12 +50,12 @@ enum GossipV1TestSupport {
     static func fixtureURL(_ relativePath: String) throws -> URL {
         let trimmed = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmed.isEmpty else {
-            throw FixtureError.missingResource(relativePath: relativePath)
+            throw FixtureError.missingResource(relativePath: "\(fixtureRootResourcePath)/")
         }
 
-        let resourcePath = "Fixtures/Protocol/gossip-v1/\(trimmed)"
+        let resourcePath = "\(fixtureRootResourcePath)/\(trimmed)"
         guard let url = Bundle.module.url(forResource: resourcePath, withExtension: nil) else {
-            throw FixtureError.missingResource(relativePath: trimmed)
+            throw FixtureError.missingResource(relativePath: resourcePath)
         }
         return url
     }

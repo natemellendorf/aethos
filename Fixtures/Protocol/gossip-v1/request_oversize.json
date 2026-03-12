@@ -1,0 +1,8 @@
+{
+  "expected_error": {
+    "actual": 2,
+    "domain": "engine",
+    "max": 1,
+    "type": "wantTooManyItems"
+  }
+}
