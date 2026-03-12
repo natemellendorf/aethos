@@ -119,7 +119,7 @@ func gossipV1_malformedCorpus_streamBoundaryRejectsEmptyFrame_andStopsImmediatel
     )
 
     let emptyFrame = Data([0x00, 0x00, 0x00, 0x00])
-    let trailingHello = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
+    let trailingHello = try GossipV1TestSupport.fixtureData("hello.cbor")
     let bytes = try emptyFrame + GossipV1Framing.encodeStreamFrame(trailingHello)
 
     try adapter.receiveBytes(bytes)
@@ -155,4 +155,3 @@ func gossipV1_malformedCorpus_rejectedFramesDoNotCorruptPreviouslyAcceptedState(
     // Engine state should remain active.
     #expect(engine.state == .active)
 }
-

@@ -6,7 +6,7 @@ private typealias Locked<T> = GossipV1TestSupport.Locked<T>
 
 final class GossipV1StreamTortureTests: XCTestCase {
     func testStreamFramer_chunkingPatterns_decodeSingleFrame_forAllDeterministicChunkings() throws {
-        let payload = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
+        let payload = try GossipV1TestSupport.fixtureData("hello.cbor")
         let streamFrame = try GossipV1Framing.encodeStreamFrame(payload)
         let patterns: [[Int]] = [
             [1],
@@ -33,8 +33,8 @@ final class GossipV1StreamTortureTests: XCTestCase {
 
     func testStreamAdapter_chunkingTorture_twoFrames_allChunkPatterns_preserveOrder_andDecodeBoth() throws {
         let engine = GossipV1EncounterEngine(config: .init(localHello: try GossipV1TestSupport.makeHello(version: GossipV1.GOSSIP_VERSION)))
-        let frame1 = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
-        let frame2 = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("summary.cbor"))
+        let frame1 = try GossipV1TestSupport.fixtureData("hello.cbor")
+        let frame2 = try GossipV1TestSupport.fixtureData("summary.cbor")
         let stream = try GossipV1Framing.encodeStreamFrame(frame1) + GossipV1Framing.encodeStreamFrame(frame2)
 
         let patterns: [[Int]] = [
@@ -95,7 +95,7 @@ final class GossipV1StreamTortureTests: XCTestCase {
             hooks: hooks
         )
 
-        let validHello = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
+        let validHello = try GossipV1TestSupport.fixtureData("hello.cbor")
         let emptyFrame = Data([0x00, 0x00, 0x00, 0x00])
         let stream = try GossipV1Framing.encodeStreamFrame(validHello) + emptyFrame + GossipV1Framing.encodeStreamFrame(validHello)
 
@@ -110,4 +110,3 @@ final class GossipV1StreamTortureTests: XCTestCase {
         XCTAssertTrue(errors.withLock { $0 }.contains(.streamBoundary(.emptyFrame)))
     }
 }
-

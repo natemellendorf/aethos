@@ -14,7 +14,7 @@ final class GossipV1FixtureFreezeTests: XCTestCase {
         ]
 
         for v in vectors {
-            let expected = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent(v.fixture))
+            let expected = try GossipV1TestSupport.fixtureData(v.fixture)
             let built = try v.build().encode()
             XCTAssertEqual(built, expected, "Fixture drift: \(v.fixture) bytes changed")
         }

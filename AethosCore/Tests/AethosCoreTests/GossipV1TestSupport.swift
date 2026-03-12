@@ -5,6 +5,17 @@ import Foundation
 ///
 /// Intentionally scoped to the test target.
 enum GossipV1TestSupport {
+    enum FixtureError: Swift.Error, CustomStringConvertible, Equatable {
+        case missingResource(relativePath: String)
+
+        var description: String {
+            switch self {
+            case .missingResource(let relativePath):
+                return "Missing Gossip v1 fixture resource: \(relativePath)"
+            }
+        }
+    }
+
     /// Minimal thread-safe box for capturing values from concurrent callbacks.
     ///
     /// Intentionally test-only; prefer `actor` in production code.
@@ -23,14 +34,28 @@ enum GossipV1TestSupport {
         }
     }
 
-    static func fixturesDir(file: StaticString = #filePath) -> URL {
-        let here = URL(fileURLWithPath: "\(file)")
-        return here
-            .deletingLastPathComponent() // AethosCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // AethosCore
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
+    /// Fixture bytes loaded from SwiftPM test resources.
+    ///
+    /// - Parameter relativePath: Path relative to `Fixtures/Protocol/gossip-v1/`.
+    static func fixtureData(_ relativePath: String) throws -> Data {
+        let url = try fixtureURL(relativePath)
+        return try Data(contentsOf: url)
+    }
+
+    /// Fixture URL loaded from SwiftPM test resources.
+    ///
+    /// - Parameter relativePath: Path relative to `Fixtures/Protocol/gossip-v1/`.
+    static func fixtureURL(_ relativePath: String) throws -> URL {
+        let trimmed = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else {
+            throw FixtureError.missingResource(relativePath: relativePath)
+        }
+
+        let resourcePath = "Fixtures/Protocol/gossip-v1/\(trimmed)"
+        guard let url = Bundle.module.url(forResource: resourcePath, withExtension: nil) else {
+            throw FixtureError.missingResource(relativePath: trimmed)
+        }
+        return url
     }
 
     static func makeHello(

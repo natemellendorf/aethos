@@ -63,7 +63,7 @@ func gossipV1_recovery_observerHookFailureDoesNotDamageValidFlow_whenContractSay
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
     let ingest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
     let relayBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
-    let helloBytes = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
+    let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
     let helloStreamBytes = try GossipV1Framing.encodeStreamFrame(helloBytes)
 
     try adapter.receiveBytes(relayBytes + helloStreamBytes)
@@ -87,4 +87,3 @@ private final class ThrowingRelayObserver: @unchecked Sendable, GossipV1Encounte
         throw error
     }
 }
-

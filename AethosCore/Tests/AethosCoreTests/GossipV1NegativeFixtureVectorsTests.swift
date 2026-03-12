@@ -283,23 +283,13 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
 // MARK: - Fixture loading
 
 private extension GossipV1NegativeFixtureVectorsTests {
-    func fixturesDir() -> URL {
-        let here = URL(fileURLWithPath: #filePath)
-        return here
-            .deletingLastPathComponent() // AethosCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // AethosCore
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
-    }
-
     func loadFixtureBytes(_ name: String) throws -> Data {
         // Avoid storing multi-megabyte fixtures in-repo.
         // Keep the JSON fixture as the vector definition; generate bytes deterministically in tests.
         if name == "datagram_frame_too_large.cbor" {
             return Data(repeating: 0x00, count: GossipV1.MAX_FRAME_BYTES + 1)
         }
-        return try Data(contentsOf: fixturesDir().appendingPathComponent(name))
+        return try GossipV1TestSupport.fixtureData(name)
     }
 }
 
