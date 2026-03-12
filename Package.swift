@@ -63,7 +63,10 @@ let package = Package(
                 "AethosCore",
                 .product(name: "Crypto", package: "swift-crypto"),
             ],
-            path: "AethosCore/Tests/AethosCoreTests"
+            path: "AethosCore/Tests/AethosCoreTests",
+            resources: [
+                .copy("Resources")
+            ]
         )
     ]
 )

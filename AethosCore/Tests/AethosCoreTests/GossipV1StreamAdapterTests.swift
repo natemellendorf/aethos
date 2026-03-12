@@ -2,6 +2,8 @@ import Foundation
 import XCTest
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 final class GossipV1StreamAdapterTests: XCTestCase {
     func testSendingHelloEmitsStreamBytes_lengthPrefixPlusPayload() throws {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
@@ -51,7 +53,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let mismatchFrameBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello_version_mismatch.cbor"))
+        let mismatchFrameBytes = try GossipV1TestSupport.fixtureData("hello_version_mismatch.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(mismatchFrameBytes)
         try adapter.receiveBytes(streamBytes)
 
@@ -87,7 +89,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let mismatchFrameBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello_version_mismatch.cbor"))
+        let mismatchFrameBytes = try GossipV1TestSupport.fixtureData("hello_version_mismatch.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(mismatchFrameBytes)
         try adapter.receiveBytes(streamBytes)
 
@@ -135,8 +137,8 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         // This fixture exceeds MAX_TRANSFER_BYTES at the TRANSFER decode boundary and should fail
         // as a non-fatal invalid-frame (not a boundary error).
-        let invalidFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("transfer_oversize_bytes.cbor"))
-        let validSecond = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let invalidFirst = try GossipV1TestSupport.fixtureData("transfer_oversize_bytes.cbor")
+        let validSecond = try GossipV1TestSupport.fixtureData("hello.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
 
         try adapter.receiveBytes(streamBytes)
@@ -175,8 +177,8 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let terminatingHello = try Data(contentsOf: fixturesDir().appendingPathComponent("hello_version_mismatch.cbor"))
-        let secondHello = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let terminatingHello = try GossipV1TestSupport.fixtureData("hello_version_mismatch.cbor")
+        let secondHello = try GossipV1TestSupport.fixtureData("hello.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(terminatingHello) + GossipV1Framing.encodeStreamFrame(secondHello)
 
         try adapter.receiveBytes(streamBytes)
@@ -211,7 +213,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let relayIngestBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("relay_ingest_unauthenticated.cbor"))
+        let relayIngestBytes = try GossipV1TestSupport.fixtureData("relay_ingest_unauthenticated.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(relayIngestBytes)
         try adapter.receiveBytes(streamBytes)
 
@@ -234,7 +236,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let relayIngestBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("relay_ingest.cbor"))
+        let relayIngestBytes = try GossipV1TestSupport.fixtureData("relay_ingest.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(relayIngestBytes)
 
         XCTAssertThrowsError(try adapter.receiveBytes(streamBytes)) { error in
@@ -308,7 +310,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
         let ingest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
         let relayBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
-        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
         let helloStreamBytes = try GossipV1Framing.encodeStreamFrame(helloBytes)
 
         // Relay ingest observer error must not stop processing subsequent frames.
@@ -360,7 +362,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         // Invalid CBOR: a single byte 0xBF indicates an indefinite-length map, which
         // is forbidden by canonical CBOR and should be rejected at the framing layer.
         let invalidFirst = Data([0xBF])
-        let validSecond = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let validSecond = try GossipV1TestSupport.fixtureData("hello.cbor")
         let expectedSecondFrame = try GossipV1Frame.decode(bytes: validSecond)
         let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
 
@@ -409,7 +411,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let validFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let validFirst = try GossipV1TestSupport.fixtureData("hello.cbor")
         let invalidSecond = Data([0x00, 0x00, 0x00, 0x00]) // empty frame_len
         let streamBytes = try GossipV1Framing.encodeStreamFrame(validFirst) + invalidSecond
 
@@ -460,10 +462,10 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             hooks: hooks
         )
 
-        let validFirst = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let validFirst = try GossipV1TestSupport.fixtureData("hello.cbor")
         // Valid canonical CBOR, invalid envelope shape.
         let invalidEnvelope = try CanonicalCBOREncoder().encode(.unsigned(1))
-        let trailing = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let trailing = try GossipV1TestSupport.fixtureData("hello.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(validFirst)
             + GossipV1Framing.encodeStreamFrame(invalidEnvelope)
             + GossipV1Framing.encodeStreamFrame(trailing)
@@ -513,7 +515,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         )
 
         // Establish active state.
-        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
         try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
         XCTAssertEqual(adapter.state, .active)
 
@@ -563,7 +565,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         )
 
         // Establish active state so termination is observable as a transition.
-        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
         try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
 
         // Append an incomplete (truncated) stream frame: u32be length for 2 bytes payload,
@@ -610,7 +612,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         )
 
         // Activate encounter.
-        let helloBytes = try Data(contentsOf: fixturesDir().appendingPathComponent("hello.cbor"))
+        let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
         try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
         XCTAssertEqual(adapter.state, .active)
 
@@ -660,21 +662,6 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
 // MARK: - Minimal test helpers (scoped to this file)
 
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
-    }
-}
-
 private func makeHello(version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt64 = 16) throws -> GossipV1HelloFrame {
     let pubKey = Data(repeating: 0x01, count: 32)
     let nodeID = GossipV1NodeID.derive(fromPublicKeyRawBytes: pubKey)
@@ -687,16 +674,6 @@ private func makeHello(version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt
         maxWant: maxWant,
         maxTransfer: maxTransfer
     )
-}
-
-private func fixturesDir() -> URL {
-    let here = URL(fileURLWithPath: #filePath)
-    return here
-        .deletingLastPathComponent() // AethosCoreTests
-        .deletingLastPathComponent() // Tests
-        .deletingLastPathComponent() // AethosCore
-        .deletingLastPathComponent() // repo root
-        .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
 }
 
 private struct FixedClock: GossipV1EncounterEngine.Clock {

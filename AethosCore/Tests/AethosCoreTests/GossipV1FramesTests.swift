@@ -159,20 +159,8 @@ final class GossipV1FramesTests: XCTestCase {
 // MARK: - Fixtures
 
 private extension GossipV1FramesTests {
-    func fixturesDir() -> URL {
-        // AethosCore/Tests/AethosCoreTests/ -> repo root Fixtures/...
-        let here = URL(fileURLWithPath: #filePath)
-        return here
-            .deletingLastPathComponent() // AethosCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // AethosCore
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
-    }
-
     func loadFixtureBytes(_ name: String) throws -> Data {
-        let url = fixturesDir().appendingPathComponent(name)
-        return try Data(contentsOf: url)
+        try GossipV1TestSupport.fixtureData(name)
     }
 
     func assertRoundTripAndFixture(frame: GossipV1Frame, fixtureFileName: String) throws {

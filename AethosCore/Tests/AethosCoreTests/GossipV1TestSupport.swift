@@ -5,14 +5,59 @@ import Foundation
 ///
 /// Intentionally scoped to the test target.
 enum GossipV1TestSupport {
-    static func fixturesDir(file: StaticString = #filePath) -> URL {
-        let here = URL(fileURLWithPath: "\(file)")
-        return here
-            .deletingLastPathComponent() // AethosCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // AethosCore
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
+    private static let fixtureRootResourcePath = "Fixtures/Protocol/gossip-v1"
+
+    enum FixtureError: Swift.Error, CustomStringConvertible, Equatable {
+        case missingResource(relativePath: String)
+
+        var description: String {
+            switch self {
+            case .missingResource(let relativePath):
+                return "Missing Gossip v1 fixture resource: \(relativePath)"
+            }
+        }
+    }
+
+    /// Minimal thread-safe box for capturing values from concurrent callbacks.
+    ///
+    /// Intentionally test-only; prefer `actor` in production code.
+    final class Locked<T>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: T
+
+        init(_ value: T) {
+            self.value = value
+        }
+
+        func withLock<R>(_ body: (inout T) -> R) -> R {
+            lock.lock()
+            defer { lock.unlock() }
+            return body(&value)
+        }
+    }
+
+    /// Fixture bytes loaded from SwiftPM test resources.
+    ///
+    /// - Parameter relativePath: Path relative to `Fixtures/Protocol/gossip-v1/`.
+    static func fixtureData(_ relativePath: String) throws -> Data {
+        let url = try fixtureURL(relativePath)
+        return try Data(contentsOf: url)
+    }
+
+    /// Fixture URL loaded from SwiftPM test resources.
+    ///
+    /// - Parameter relativePath: Path relative to `Fixtures/Protocol/gossip-v1/`.
+    static func fixtureURL(_ relativePath: String) throws -> URL {
+        let trimmed = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else {
+            throw FixtureError.missingResource(relativePath: "\(fixtureRootResourcePath)/")
+        }
+
+        let resourcePath = "\(fixtureRootResourcePath)/\(trimmed)"
+        guard let url = Bundle.module.url(forResource: resourcePath, withExtension: nil) else {
+            throw FixtureError.missingResource(relativePath: resourcePath)
+        }
+        return url
     }
 
     static func makeHello(

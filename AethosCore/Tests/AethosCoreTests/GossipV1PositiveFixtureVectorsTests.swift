@@ -14,7 +14,7 @@ final class GossipV1PositiveFixtureVectorsTests: XCTestCase {
         ]
 
         for v in vectors {
-            let fixtureBytes = try Data(contentsOf: fixturesDir().appendingPathComponent(v.file))
+            let fixtureBytes = try GossipV1TestSupport.fixtureData(v.file)
 
             let decoded = try GossipV1Frame.decode(bytes: fixtureBytes)
             XCTAssertEqual(decoded.encode(), fixtureBytes, "Fixture drift guard failed: decode->encode bytes changed for \(v.file)")
@@ -26,16 +26,6 @@ final class GossipV1PositiveFixtureVectorsTests: XCTestCase {
 }
 
 private extension GossipV1PositiveFixtureVectorsTests {
-    func fixturesDir() -> URL {
-        let here = URL(fileURLWithPath: #filePath)
-        return here
-            .deletingLastPathComponent() // AethosCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // AethosCore
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("Fixtures/Protocol/gossip-v1", isDirectory: true)
-    }
-
     func decodedFrameType(_ frame: GossipV1Frame) throws -> GossipV1FrameType {
         switch frame {
         case .hello:

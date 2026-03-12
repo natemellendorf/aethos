@@ -1,0 +1,8 @@
+{
+  "expected_error": {
+    "actual": 2,
+    "domain": "engine",
+    "expected": 1,
+    "type": "invalidHelloVersion"
+  }
+}

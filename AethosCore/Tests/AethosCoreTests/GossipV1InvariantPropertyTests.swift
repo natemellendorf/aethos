@@ -14,7 +14,7 @@ func gossipV1_invariants_frameEncodeRepeatability_forAllCanonicalFixtures() thro
     ]
 
     for name in fixtures {
-        let bytes = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent(name))
+        let bytes = try GossipV1TestSupport.fixtureData(name)
         let frame = try GossipV1Frame.decode(bytes: bytes)
         let a = frame.encode()
         let b = frame.encode()
@@ -50,7 +50,7 @@ func gossipV1_invariants_encodeDecodeEncodeStability_forCanonicalFrames() throws
         "relay_ingest.cbor",
     ]
     for name in fixtures {
-        let bytes = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent(name))
+        let bytes = try GossipV1TestSupport.fixtureData(name)
         let decoded1 = try GossipV1Frame.decode(bytes: bytes)
         let reencoded1 = decoded1.encode()
         let decoded2 = try GossipV1Frame.decode(bytes: reencoded1)

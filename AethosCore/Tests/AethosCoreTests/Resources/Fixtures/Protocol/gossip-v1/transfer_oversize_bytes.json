@@ -1,0 +1,11 @@
+{
+  "expected_error": {
+    "domain": "framing",
+    "type": "invalidDatagramFrame",
+    "underlying": {
+      "type": "transferTotalEnvelopeBytesTooLarge",
+      "max": 524288,
+      "actual": 524294
+    }
+  }
+}

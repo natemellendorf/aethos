@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import AethosCore
 
+private typealias Locked<T> = GossipV1TestSupport.Locked<T>
+
 @Test
 func gossipV1_recovery_mixedValidityTransfer_commitsOnlyValidObjects_andIsolatesInvalidOnes() throws {
     let localHello = try GossipV1TestSupport.makeHello(version: GossipV1.GOSSIP_VERSION)
@@ -61,7 +63,7 @@ func gossipV1_recovery_observerHookFailureDoesNotDamageValidFlow_whenContractSay
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: Data([0x01]))
     let ingest = try GossipV1RelayIngestFrame(itemIDs: [itemID])
     let relayBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.relayIngest(ingest).encode())
-    let helloBytes = try Data(contentsOf: GossipV1TestSupport.fixturesDir().appendingPathComponent("hello.cbor"))
+    let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
     let helloStreamBytes = try GossipV1Framing.encodeStreamFrame(helloBytes)
 
     try adapter.receiveBytes(relayBytes + helloStreamBytes)
@@ -83,20 +85,5 @@ private final class ThrowingRelayObserver: @unchecked Sendable, GossipV1Encounte
 
     func noteAuthenticatedRelayIngest(itemIDs _: [GossipV1ItemID], nowMs _: UInt64) throws {
         throw error
-    }
-}
-
-private final class Locked<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-
-    func withLock<R>(_ body: (inout T) -> R) -> R {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&value)
     }
 }
