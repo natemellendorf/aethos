@@ -8,8 +8,21 @@ import Foundation
 ///
 /// - Important: This helper is pure computation only. It does not interact with the encounter
 ///   state machine and performs no I/O.
-internal enum GossipV1SummaryReconciliation {
+public enum GossipV1SummaryReconciliation {
     /// Computes a deterministic REQUEST.want list from a peer SUMMARY bloom filter.
+    ///
+    /// This is the supported public reconciliation seam for downstream clients that need to
+    /// deterministically derive `REQUEST.want` from an inbound SUMMARY frame.
+    ///
+    /// ```swift
+    /// let want = try GossipV1SummaryReconciliation.computeWant(
+    ///     bloomFilterBytes: summary.bloomFilter,
+    ///     candidateItemIDs: candidateItemIDs,
+    ///     localHaveItemIDs: localHaveItemIDs,
+    ///     peerMaxWant: peerMaxWant
+    /// )
+    /// // Pass `want` to GossipV1RequestFrame.init(want:)
+    /// ```
     ///
     /// The output is:
     /// - includes only items the peer bloom indicates it might contain,
@@ -17,7 +30,7 @@ internal enum GossipV1SummaryReconciliation {
     /// - sorted by bytewise lexicographic order of decoded digest bytes,
     /// - de-duplicated,
     /// - truncated to `min(peerMaxWant, GossipV1.MAX_WANT_ITEMS)`.
-    internal static func computeWant(
+    public static func computeWant(
         bloomFilterBytes: Data,
         candidateItemIDs: [GossipV1ItemID],
         localHaveItemIDs: Set<GossipV1ItemID>,
