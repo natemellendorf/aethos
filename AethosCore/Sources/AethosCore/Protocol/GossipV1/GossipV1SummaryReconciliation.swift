@@ -1,5 +1,10 @@
 import Foundation
 
+public enum GossipV1ReconciliationError: Error, Equatable, Sendable {
+    case invalidBloomByteCount(expected: Int, actual: Int)
+    case invalidPeerMaxWant
+}
+
 /// Deterministic SUMMARY→REQUEST reconciliation helper.
 ///
 /// Spec references:
@@ -8,29 +13,54 @@ import Foundation
 ///
 /// - Important: This helper is pure computation only. It does not interact with the encounter
 ///   state machine and performs no I/O.
-public enum GossipV1SummaryReconciliation {
+public enum GossipV1Reconciliation {
     /// Computes a deterministic REQUEST.want list from a peer SUMMARY bloom filter.
-    ///
-    /// This is the supported public reconciliation seam for downstream clients that need to
-    /// deterministically derive `REQUEST.want` from an inbound SUMMARY frame.
-    ///
-    /// ```swift
-    /// let want = try GossipV1SummaryReconciliation.computeWant(
-    ///     bloomFilterBytes: summary.bloomFilter,
-    ///     candidateItemIDs: candidateItemIDs,
-    ///     localHaveItemIDs: localHaveItemIDs,
-    ///     peerMaxWant: peerMaxWant
-    /// )
-    /// // Pass `want` to GossipV1RequestFrame.init(want:)
-    /// ```
     ///
     /// The output is:
     /// - includes only items the peer bloom indicates it might contain,
-    /// - excludes items already present in `localHaveItemIDs` (candidate set MUST NOT include local-have, but we guard anyway),
+    /// - excludes items already present in `localHaveItemIDs` (candidate set may include local-have IDs; they are filtered out),
     /// - sorted by bytewise lexicographic order of decoded digest bytes,
     /// - de-duplicated,
     /// - truncated to `min(peerMaxWant, GossipV1.MAX_WANT_ITEMS)`.
     public static func computeWant(
+        bloomFilterBytes: Data,
+        candidateItemIDs: [GossipV1ItemID],
+        localHaveItemIDs: Set<GossipV1ItemID>,
+        peerMaxWant: UInt64
+    ) throws -> [GossipV1ItemID] {
+        let boundedPeerMaxWant = min(peerMaxWant, UInt64(Int.max))
+        let clampedPeerMaxWant = Int(boundedPeerMaxWant)
+
+        do {
+            return try GossipV1SummaryReconciliation.computeWant(
+                bloomFilterBytes: bloomFilterBytes,
+                candidateItemIDs: candidateItemIDs,
+                localHaveItemIDs: localHaveItemIDs,
+                peerMaxWant: clampedPeerMaxWant
+            )
+        } catch let error as GossipV1FrameError {
+            switch error {
+            case .invalidBloomByteCount(let expected, let actual):
+                throw GossipV1ReconciliationError.invalidBloomByteCount(expected: expected, actual: actual)
+            case .invalidRange(let field) where field == "max_want":
+                throw GossipV1ReconciliationError.invalidPeerMaxWant
+            default:
+                throw GossipV1ReconciliationError.invalidPeerMaxWant
+            }
+        }
+    }
+}
+
+/// Deterministic SUMMARY→REQUEST reconciliation helper.
+///
+/// Spec references:
+/// - `docs/protocol/encounter.md` §8.1
+/// - `docs/protocol/frames.md` REQUEST ordering rule
+///
+/// - Important: This helper is pure computation only. It does not interact with the encounter
+///   state machine and performs no I/O.
+internal enum GossipV1SummaryReconciliation {
+    static func computeWant(
         bloomFilterBytes: Data,
         candidateItemIDs: [GossipV1ItemID],
         localHaveItemIDs: Set<GossipV1ItemID>,
@@ -43,7 +73,6 @@ public enum GossipV1SummaryReconciliation {
             )
         }
         guard peerMaxWant >= 0 else {
-            // Peer max_want is validated at the encounter boundary; guard here for test harnesses.
             throw GossipV1FrameError.invalidRange(field: "max_want")
         }
 
@@ -51,8 +80,7 @@ public enum GossipV1SummaryReconciliation {
         guard maxItems > 0 else { return [] }
 
         // Filter candidates to only items we don't already have and the peer bloom might contain.
-        // Per spec, `candidateItemIDs` MUST NOT include local-have IDs; we still filter to make
-        // this helper resilient for test harnesses.
+        // `candidateItemIDs` may include local-have IDs; we filter them out deterministically.
         let filtered = candidateItemIDs
             .lazy
             .filter { !localHaveItemIDs.contains($0) }

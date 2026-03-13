@@ -11,13 +11,13 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         let peerBloom = GossipV1BloomFilter.build(for: [a, b, c])
         let candidates = [c, a, b, a, c]
 
-        let want1 = try GossipV1SummaryReconciliation.computeWant(
+        let want1 = try GossipV1Reconciliation.computeWant(
             bloomFilterBytes: peerBloom,
             candidateItemIDs: candidates,
             localHaveItemIDs: [],
             peerMaxWant: 128
         )
-        let want2 = try GossipV1SummaryReconciliation.computeWant(
+        let want2 = try GossipV1Reconciliation.computeWant(
             bloomFilterBytes: peerBloom,
             candidateItemIDs: candidates,
             localHaveItemIDs: [],
@@ -28,7 +28,9 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         XCTAssertEqual(Set(want1).count, want1.count)
         XCTAssertEqual(want1, [a, b, c])
 
-        let expectedByByteLexicographicOrder = want1.sorted { $0.hex < $1.hex }
+        let expectedByByteLexicographicOrder = want1.sorted {
+            $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
+        }
         XCTAssertEqual(want1, expectedByByteLexicographicOrder)
     }
 
@@ -36,14 +38,16 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         let ids = try (0..<10).map { i in try itemID(firstByte: UInt8(i)) }
         let peerBloom = GossipV1BloomFilter.build(for: ids)
 
-        let want = try GossipV1SummaryReconciliation.computeWant(
+        let want = try GossipV1Reconciliation.computeWant(
             bloomFilterBytes: peerBloom,
             candidateItemIDs: Array(ids.reversed()),
             localHaveItemIDs: [],
             peerMaxWant: 3
         )
 
-        let expected = ids.sorted { $0.hex < $1.hex }
+        let expected = ids.sorted {
+            $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
+        }
         XCTAssertEqual(want, Array(expected.prefix(3)))
     }
 
@@ -56,15 +60,46 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         }
         let peerBloom = GossipV1BloomFilter.build(for: ids)
 
-        let want = try GossipV1SummaryReconciliation.computeWant(
+        let want = try GossipV1Reconciliation.computeWant(
             bloomFilterBytes: peerBloom,
             candidateItemIDs: Array(ids.reversed()),
             localHaveItemIDs: [],
-            peerMaxWant: GossipV1.MAX_WANT_ITEMS + 100
+            peerMaxWant: UInt64(GossipV1.MAX_WANT_ITEMS + 100)
         )
 
-        let expected = ids.sorted { $0.hex < $1.hex }
+        let expected = ids.sorted {
+            $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
+        }
         XCTAssertEqual(want, Array(expected.prefix(GossipV1.MAX_WANT_ITEMS)))
+    }
+
+    func testPublicReconciliation_excludesLocalHaveItemIDs() throws {
+        let a = try itemID(firstByte: 0x01)
+        let b = try itemID(firstByte: 0x02)
+        let peerBloom = GossipV1BloomFilter.build(for: [a, b])
+
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [b, a],
+            localHaveItemIDs: [b],
+            peerMaxWant: 128
+        )
+
+        XCTAssertEqual(want, [a])
+    }
+
+    func testPublicReconciliation_peerMaxWantZeroYieldsEmptyWant() throws {
+        let item = try itemID(firstByte: 0xAB)
+        let peerBloom = GossipV1BloomFilter.build(for: [item])
+
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [item],
+            localHaveItemIDs: [],
+            peerMaxWant: 0
+        )
+
+        XCTAssertEqual(want, [])
     }
 
     func testPublicReconciliation_invalidBloomByteCountThrows() throws {
@@ -72,7 +107,7 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         let invalidBloom = Data(repeating: 0x00, count: GossipV1.BLOOM_FILTER_BYTES - 1)
 
         XCTAssertThrowsError(
-            try GossipV1SummaryReconciliation.computeWant(
+            try GossipV1Reconciliation.computeWant(
                 bloomFilterBytes: invalidBloom,
                 candidateItemIDs: [item],
                 localHaveItemIDs: [],
@@ -80,7 +115,7 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
             )
         ) { error in
             XCTAssertEqual(
-                error as? GossipV1FrameError,
+                error as? GossipV1ReconciliationError,
                 .invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: invalidBloom.count)
             )
         }
