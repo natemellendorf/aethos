@@ -28,8 +28,9 @@ public enum GossipV1Reconciliation {
         localHaveItemIDs: Set<GossipV1ItemID>,
         peerMaxWant: UInt64
     ) throws -> [GossipV1ItemID] {
-        let boundedPeerMaxWant = min(peerMaxWant, UInt64(Int.max))
-        let clampedPeerMaxWant = Int(boundedPeerMaxWant)
+        let semanticPeerMaxWantCap = UInt64(GossipV1.MAX_WANT_ITEMS)
+        let boundedPeerMaxWant = min(peerMaxWant, semanticPeerMaxWantCap)
+        let clampedPeerMaxWant = Int(min(boundedPeerMaxWant, UInt64(Int.max)))
 
         do {
             return try GossipV1SummaryReconciliation.computeWant(
@@ -45,6 +46,7 @@ public enum GossipV1Reconciliation {
             case .invalidRange(let field) where field == "max_want":
                 throw GossipV1ReconciliationError.invalidPeerMaxWant
             default:
+                assertionFailure("Unexpected GossipV1FrameError mapped to invalidPeerMaxWant: \(error)")
                 throw GossipV1ReconciliationError.invalidPeerMaxWant
             }
         }

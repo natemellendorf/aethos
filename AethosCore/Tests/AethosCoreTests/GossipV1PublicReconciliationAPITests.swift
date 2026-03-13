@@ -121,6 +121,44 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         }
     }
 
+    func testPublicReconciliation_invalidBloomByteCountTooLongThrows() throws {
+        let item = try itemID(firstByte: 0xAB)
+        let invalidBloom = Data(repeating: 0x00, count: GossipV1.BLOOM_FILTER_BYTES + 1)
+
+        XCTAssertThrowsError(
+            try GossipV1Reconciliation.computeWant(
+                bloomFilterBytes: invalidBloom,
+                candidateItemIDs: [item],
+                localHaveItemIDs: [],
+                peerMaxWant: 1
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? GossipV1ReconciliationError,
+                .invalidBloomByteCount(expected: GossipV1.BLOOM_FILTER_BYTES, actual: invalidBloom.count)
+            )
+        }
+    }
+
+    func testPublicReconciliation_peerMaxWantUInt64MaxIsClamped() throws {
+        let ids = try (0..<(GossipV1.MAX_WANT_ITEMS + 10)).map { i in
+            var bytes = Data(repeating: 0, count: 32)
+            bytes[0] = UInt8(i % 256)
+            bytes[1] = UInt8(i / 256)
+            return try GossipV1ItemID(bytes: bytes)
+        }
+        let peerBloom = GossipV1BloomFilter.build(for: ids)
+
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: Array(ids.reversed()),
+            localHaveItemIDs: [],
+            peerMaxWant: .max
+        )
+
+        XCTAssertLessThanOrEqual(want.count, GossipV1.MAX_WANT_ITEMS)
+    }
+
     private func itemID(firstByte: UInt8) throws -> GossipV1ItemID {
         var bytes = Data(repeating: 0, count: 32)
         bytes[0] = firstByte
