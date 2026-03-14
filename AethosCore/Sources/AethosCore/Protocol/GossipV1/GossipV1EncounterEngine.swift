@@ -89,13 +89,10 @@ public struct GossipV1EncounterEngine: Sendable {
         /// application-level storage.
         public let acceptedTransferItemIDs: [GossipV1ItemID]
 
-        /// Item IDs acknowledged by the most recent inbound `RECEIPT` frame.
+        /// Item IDs from the most recent inbound `RECEIPT` frame accepted by the engine.
         ///
         /// Downstream runtimes can use this seam to mark local outbox entries as acknowledged.
-        public let acknowledgedTransferItemIDs: [GossipV1ItemID]
-
-        /// Alias for accepted transfer IDs that are receipt-eligible in the same ingest cycle.
-        public var receiptEligibleItemIDs: [GossipV1ItemID] { acceptedTransferItemIDs }
+        public let acceptedReceiptItemIDs: [GossipV1ItemID]
 
         /// Non-fatal validation errors encountered while processing an inbound frame.
         ///
@@ -206,7 +203,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [],
                 acceptedTransferItemIDs: [],
-                acknowledgedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: []
             )
 
@@ -215,7 +212,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [],
                 acceptedTransferItemIDs: [],
-                acknowledgedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: []
             )
 
@@ -225,7 +222,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: transfer.map { [$0] } ?? [],
                 acceptedTransferItemIDs: [],
-                acknowledgedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: []
             )
 
@@ -237,7 +234,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [receipt],
                 acceptedTransferItemIDs: accepted,
-                acknowledgedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: ingest.nonfatalErrors
             )
 
@@ -247,7 +244,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [],
                 acceptedTransferItemIDs: [],
-                acknowledgedTransferItemIDs: receipt.received,
+                acceptedReceiptItemIDs: receipt.received,
                 nonfatalValidationErrors: []
             )
 
@@ -256,7 +253,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [],
                 acceptedTransferItemIDs: [],
-                acknowledgedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: []
             )
         }
