@@ -645,6 +645,12 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         }
         XCTAssertEqual(accepted.flatMap { $0 }, [a.itemID, c.itemID])
 
+        let acceptedReceipts = snapshot.compactMap { event -> [GossipV1ItemID]? in
+            guard case .didAcceptReceipt(itemIDs: let ids) = event else { return nil }
+            return ids
+        }
+        XCTAssertTrue(acceptedReceipts.isEmpty)
+
         // Must surface a non-fatal error for the expired object.
         let errors = snapshot.compactMap { event -> GossipV1TransportError? in
             guard case .didEncounterError(let err) = event else { return nil }
@@ -658,6 +664,70 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             return false
         })
     }
+
+    func testReceiveBytes_receiptEventEmittedOnlyWhenReceiptAccepted_notWhenOnlyObserved() throws {
+        let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+        let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+
+        let envelopeBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(42))]))
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+        let store = RequestServingStore(
+            itemID: itemID,
+            envelopeBytes: envelopeBytes,
+            expiryUnixMs: 4_102_444_800_000,
+            hopCount: 0
+        )
+
+        let events = Locked<[GossipV1StreamAdapter.Event]>([])
+        let hooks = GossipV1StreamAdapter.Hooks(
+            onSend: { _ in },
+            onEvent: { event in
+                events.withLock { $0.append(event) }
+            }
+        )
+
+        var adapter = GossipV1StreamAdapter(
+            engine: engine,
+            clock: FixedClock(nowMs: 1_000),
+            store: store,
+            isAuthenticatedRelayTransport: { false },
+            hooks: hooks
+        )
+
+        let helloBytes = try GossipV1TestSupport.fixtureData("hello.cbor")
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(helloBytes))
+
+        let request = try GossipV1RequestFrame(want: [itemID])
+        try adapter.receiveBytes(try GossipV1Framing.encodeStreamFrame(GossipV1Frame.request(request).encode()))
+
+        let receipt = try GossipV1ReceiptFrame(received: [itemID])
+        let receiptBytes = try GossipV1Framing.encodeStreamFrame(GossipV1Frame.receipt(receipt).encode())
+
+        // First RECEIPT is accepted.
+        try adapter.receiveBytes(receiptBytes)
+        // Second RECEIPT is only observed and rejected (no immediately preceding outbound TRANSFER).
+        try adapter.receiveBytes(receiptBytes)
+
+        let snapshot = events.withLock { $0 }
+
+        let observedReceipts = snapshot.compactMap { event -> GossipV1Frame? in
+            guard case .didReceiveFrame(.receipt(let frame)) = event else { return nil }
+            return .receipt(frame)
+        }
+        XCTAssertEqual(observedReceipts.count, 2)
+
+        let acceptedReceipts = snapshot.compactMap { event -> [GossipV1ItemID]? in
+            guard case .didAcceptReceipt(itemIDs: let ids) = event else { return nil }
+            return ids
+        }
+        XCTAssertEqual(acceptedReceipts, [[itemID]])
+
+        XCTAssertTrue(snapshot.contains { event in
+            if case .didEncounterError(.encounterValidation(.receiptWithoutPrecedingTransfer)) = event { return true }
+            return false
+        })
+    }
+
 }
 
 // MARK: - Minimal test helpers (scoped to this file)
@@ -685,6 +755,31 @@ private final class InMemoryGossipStore: @unchecked Sendable, GossipV1EncounterE
     func eligibleItemIDs(nowMs _: UInt64) throws -> [GossipV1ItemID] { [] }
     func fetch(_: GossipV1ItemID) throws -> (envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16)? { nil }
     func existingHopCount(_: GossipV1ItemID) throws -> UInt16? { nil }
+    func ingest(_: GossipV1ItemID, envelopeBytes _: Data, expiryUnixMs _: UInt64, hopCount _: UInt16) throws {}
+}
+
+private final class RequestServingStore: @unchecked Sendable, GossipV1EncounterEngine.Store {
+    private let itemID: GossipV1ItemID
+    private let envelopeBytes: Data
+    private let expiryUnixMs: UInt64
+    private let hopCount: UInt16
+
+    init(itemID: GossipV1ItemID, envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16) {
+        self.itemID = itemID
+        self.envelopeBytes = envelopeBytes
+        self.expiryUnixMs = expiryUnixMs
+        self.hopCount = hopCount
+    }
+
+    func eligibleItemIDs(nowMs _: UInt64) throws -> [GossipV1ItemID] { [itemID] }
+
+    func fetch(_ itemID: GossipV1ItemID) throws -> (envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16)? {
+        guard itemID == self.itemID else { return nil }
+        return (envelopeBytes: envelopeBytes, expiryUnixMs: expiryUnixMs, hopCount: hopCount)
+    }
+
+    func existingHopCount(_: GossipV1ItemID) throws -> UInt16? { nil }
+
     func ingest(_: GossipV1ItemID, envelopeBytes _: Data, expiryUnixMs _: UInt64, hopCount _: UInt16) throws {}
 }
 

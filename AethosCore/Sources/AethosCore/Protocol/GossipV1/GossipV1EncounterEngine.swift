@@ -82,7 +82,17 @@ public struct GossipV1EncounterEngine: Sendable {
     public struct InboundResult: Equatable, Sendable {
         public let state: State
         public let outbound: [GossipV1Frame]
+
+        /// Item IDs accepted from the most recent inbound `TRANSFER` frame.
+        ///
+        /// These IDs are durably ingested and are immediately eligible to be mirrored into
+        /// application-level storage.
         public let acceptedTransferItemIDs: [GossipV1ItemID]
+
+        /// Item IDs from the most recent inbound `RECEIPT` frame accepted by the engine.
+        ///
+        /// Downstream runtimes can use this seam to mark local outbox entries as acknowledged.
+        public let acceptedReceiptItemIDs: [GossipV1ItemID]
 
         /// Non-fatal validation errors encountered while processing an inbound frame.
         ///
@@ -189,10 +199,22 @@ public struct GossipV1EncounterEngine: Sendable {
         switch frame {
         case .hello(let hello):
             try handleHello(hello)
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
+            return InboundResult(
+                state: state,
+                outbound: [],
+                acceptedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
+                nonfatalValidationErrors: []
+            )
 
         case .summary:
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
+            return InboundResult(
+                state: state,
+                outbound: [],
+                acceptedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
+                nonfatalValidationErrors: []
+            )
 
         case .request(let request):
             let transfer = try handleInboundRequest(request, clock: clock, store: store)
@@ -200,6 +222,7 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: transfer.map { [$0] } ?? [],
                 acceptedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: []
             )
 
@@ -211,15 +234,28 @@ public struct GossipV1EncounterEngine: Sendable {
                 state: state,
                 outbound: [receipt],
                 acceptedTransferItemIDs: accepted,
+                acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: ingest.nonfatalErrors
             )
 
         case .receipt(let receipt):
             try handleInboundReceipt(receipt)
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
+            return InboundResult(
+                state: state,
+                outbound: [],
+                acceptedTransferItemIDs: [],
+                acceptedReceiptItemIDs: receipt.received,
+                nonfatalValidationErrors: []
+            )
 
         case .relayIngest:
-            return InboundResult(state: state, outbound: [], acceptedTransferItemIDs: [], nonfatalValidationErrors: [])
+            return InboundResult(
+                state: state,
+                outbound: [],
+                acceptedTransferItemIDs: [],
+                acceptedReceiptItemIDs: [],
+                nonfatalValidationErrors: []
+            )
         }
     }
 
