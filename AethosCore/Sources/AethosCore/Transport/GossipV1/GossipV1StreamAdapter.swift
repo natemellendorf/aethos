@@ -27,6 +27,7 @@ public struct GossipV1StreamAdapter: Sendable {
         case didSendFrame(GossipV1Frame)
         case didChangeState(from: GossipV1EncounterEngine.State, to: GossipV1EncounterEngine.State)
         case didAcceptTransfer(itemIDs: [GossipV1ItemID])
+        case didAcknowledgeTransfer(itemIDs: [GossipV1ItemID])
         case didEncounterError(GossipV1TransportError)
     }
 
@@ -253,6 +254,9 @@ public struct GossipV1StreamAdapter: Sendable {
             }
             if !result.acceptedTransferItemIDs.isEmpty {
                 hooks.onEvent(.didAcceptTransfer(itemIDs: result.acceptedTransferItemIDs))
+            }
+            if !result.acknowledgedTransferItemIDs.isEmpty {
+                hooks.onEvent(.didAcknowledgeTransfer(itemIDs: result.acknowledgedTransferItemIDs))
             }
 
             // Surface non-fatal per-object validation errors (e.g. mixed-validity TRANSFER).

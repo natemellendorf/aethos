@@ -645,6 +645,12 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         }
         XCTAssertEqual(accepted.flatMap { $0 }, [a.itemID, c.itemID])
 
+        let acknowledged = snapshot.compactMap { event -> [GossipV1ItemID]? in
+            guard case .didAcknowledgeTransfer(itemIDs: let ids) = event else { return nil }
+            return ids
+        }
+        XCTAssertTrue(acknowledged.isEmpty)
+
         // Must surface a non-fatal error for the expired object.
         let errors = snapshot.compactMap { event -> GossipV1TransportError? in
             guard case .didEncounterError(let err) = event else { return nil }
@@ -658,6 +664,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
             return false
         })
     }
+
 }
 
 // MARK: - Minimal test helpers (scoped to this file)

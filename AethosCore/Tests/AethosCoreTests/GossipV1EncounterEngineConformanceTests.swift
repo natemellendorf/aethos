@@ -75,6 +75,8 @@ func gossipV1_engine_inboundRequest_emptyWant_isValidNoOp_andProducesNoOutboundT
     let result = try engine.ingestInboundFrame(.request(request), clock: clock, store: store)
     #expect(result.outbound.isEmpty)
     #expect(result.acceptedTransferItemIDs.isEmpty)
+    #expect(result.receiptEligibleItemIDs.isEmpty)
+    #expect(result.acknowledgedTransferItemIDs.isEmpty)
     #expect(result.nonfatalValidationErrors.isEmpty)
 }
 
@@ -95,12 +97,16 @@ func gossipV1_engine_expirySkew_allowsJustBeyondCutoff_andRejectsAtBoundary() th
     let okTransfer = try GossipV1TransferFrame(objects: [okObj])
     let okResult = try engine.ingestInboundFrame(.transfer(okTransfer), clock: clock, store: store)
     #expect(okResult.acceptedTransferItemIDs == [id])
+    #expect(okResult.receiptEligibleItemIDs == [id])
+    #expect(okResult.acknowledgedTransferItemIDs.isEmpty)
 
     // At the boundary, cutoff >= expiry rejects.
     let badObj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: boundary, hopCount: 0)
     let badTransfer = GossipV1TransferFrame(unsafeObjects: [badObj])
     let badResult = try engine.ingestInboundFrame(.transfer(badTransfer), clock: clock, store: store)
     #expect(badResult.acceptedTransferItemIDs.isEmpty)
+    #expect(badResult.receiptEligibleItemIDs.isEmpty)
+    #expect(badResult.acknowledgedTransferItemIDs.isEmpty)
     #expect(badResult.nonfatalValidationErrors == [.transferExpired(nowUnixMs: now, expiryUnixMs: boundary)])
 }
 
@@ -141,6 +147,8 @@ func gossipV1_engine_enforcesExpirySkewBoundary_30000ms() throws {
 
     let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
     #expect(result.acceptedTransferItemIDs.isEmpty)
+    #expect(result.receiptEligibleItemIDs.isEmpty)
+    #expect(result.acknowledgedTransferItemIDs.isEmpty)
     #expect(result.nonfatalValidationErrors == [.transferExpired(nowUnixMs: now, expiryUnixMs: expiry)])
 }
 
@@ -160,6 +168,8 @@ func gossipV1_engine_rejectsHopRegression_usingStoreQuery() throws {
 
     let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
     #expect(result.acceptedTransferItemIDs.isEmpty)
+    #expect(result.receiptEligibleItemIDs.isEmpty)
+    #expect(result.acknowledgedTransferItemIDs.isEmpty)
     #expect(result.nonfatalValidationErrors == [.hopRegression(existing: 10, incoming: 9)])
 }
 
@@ -278,6 +288,8 @@ func gossipV1_engine_inboundTransfer_validationIsAllOrNothing_noPartialIngestOnD
     // valid objects are still ingested.
     let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
     #expect(result.acceptedTransferItemIDs == [idA])
+    #expect(result.receiptEligibleItemIDs == [idA])
+    #expect(result.acknowledgedTransferItemIDs.isEmpty)
     #expect(store.ingestedItemIDs == [idA])
     #expect(result.nonfatalValidationErrors == [.transferExpired(nowUnixMs: 1_000, expiryUnixMs: expiryBad)])
 }
@@ -321,6 +333,8 @@ func gossipV1_engine_inboundTransfer_acceptsHopEqual_asIdempotent() throws {
     let transfer = try GossipV1TransferFrame(objects: [obj])
     let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
     #expect(result.acceptedTransferItemIDs == [id])
+    #expect(result.receiptEligibleItemIDs == [id])
+    #expect(result.acknowledgedTransferItemIDs.isEmpty)
     #expect(store.ingestCountByID[id] == 1)
 }
 
@@ -682,6 +696,8 @@ func gossipV1_engine_happyPathCycle_summary_request_transfer_receipt() throws {
     // TRANSFER from A.
     let receiptResult = try engineB.ingestInboundFrame(.transfer(transfer), clock: clock, store: storeB)
     #expect(receiptResult.acceptedTransferItemIDs == [itemID])
+    #expect(receiptResult.receiptEligibleItemIDs == [itemID])
+    #expect(receiptResult.acknowledgedTransferItemIDs.isEmpty)
     #expect(receiptResult.outbound.count == 1)
     guard case .receipt(let receipt) = receiptResult.outbound.first else {
         return #expect(Bool(false), "expected receipt outbound")
@@ -689,7 +705,10 @@ func gossipV1_engine_happyPathCycle_summary_request_transfer_receipt() throws {
     #expect(receipt.received == [itemID])
 
     // RECEIPT from B.
-    _ = try engineA.ingestInboundFrame(.receipt(receipt), clock: clock, store: storeA)
+    let ackResult = try engineA.ingestInboundFrame(.receipt(receipt), clock: clock, store: storeA)
+    #expect(ackResult.acknowledgedTransferItemIDs == [itemID])
+    #expect(ackResult.acceptedTransferItemIDs.isEmpty)
+    #expect(ackResult.receiptEligibleItemIDs.isEmpty)
 }
 
 @Test

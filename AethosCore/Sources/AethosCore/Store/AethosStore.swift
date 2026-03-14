@@ -156,11 +156,23 @@ public final class AethosStore {
         case acked = 3
     }
 
+    struct QueuedOutboxEnvelopeRow: Equatable, Sendable {
+        let payload: Data
+        let expiryUnixMs: UInt64
+    }
+
+    struct GossipObjectRow: Equatable, Sendable {
+        let itemID: Data
+        let envelopeBytes: Data
+        let expiryUnixMs: Int64
+        let hopCount: Int64
+    }
+
     private let db: OpaquePointer
 
     // MARK: Schema version
 
-    private static let currentSchemaVersion: Int = 6
+    private static let currentSchemaVersion: Int = 7
 
     public init(path: URL) throws {
         try FileManager.default.createDirectory(
@@ -389,6 +401,80 @@ public final class AethosStore {
         }
 
         return items
+    }
+
+    func getQueuedOutboxEnvelope(itemID: Data) throws -> QueuedOutboxEnvelopeRow? {
+        let sql = """
+        SELECT payload, expires_at
+        FROM outbox
+        WHERE id = ? AND kind = ? AND status = ?
+        LIMIT 1;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindData(stmt, index: 1, data: itemID)
+        try bindText(stmt, index: 2, text: OutboxItem.Kind.envelope.rawValue)
+        try bindInt32(stmt, index: 3, value: OutboxStatus.queued.rawValue)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            guard let payload = columnData(stmt, index: 0) else {
+                throw StoreError.sqliteError("Unexpected NULL payload in outbox")
+            }
+
+            let expiryUnixMs: UInt64
+            if let expirySeconds = columnNullableInt64(stmt, index: 1) {
+                guard expirySeconds >= 0 else {
+                    throw StoreError.sqliteError("Invalid negative expires_at in outbox")
+                }
+                let clampedSeconds = UInt64(expirySeconds)
+                if clampedSeconds > (UInt64.max / 1000) {
+                    expiryUnixMs = UInt64.max
+                } else {
+                    expiryUnixMs = clampedSeconds * 1000
+                }
+            } else {
+                expiryUnixMs = UInt64.max
+            }
+
+            return QueuedOutboxEnvelopeRow(payload: payload, expiryUnixMs: expiryUnixMs)
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    func listQueuedOutboxEnvelopeItemIDs(eligibleAfterUnixMs cutoffUnixMs: Int64) throws -> [GossipV1ItemID] {
+        let sql = """
+        SELECT id
+        FROM outbox
+        WHERE kind = ?
+        AND status = ?
+        AND (expires_at IS NULL OR (expires_at * 1000) > ?)
+        ORDER BY id ASC;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: OutboxItem.Kind.envelope.rawValue)
+        try bindInt32(stmt, index: 2, value: OutboxStatus.queued.rawValue)
+        try bindInt64(stmt, index: 3, value: cutoffUnixMs)
+
+        var ids: [GossipV1ItemID] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            guard let itemBytes = columnData(stmt, index: 0) else {
+                throw StoreError.sqliteError("Unexpected NULL id in outbox")
+            }
+            guard let itemID = try? GossipV1ItemID(bytes: itemBytes) else {
+                throw StoreError.sqliteError("Invalid outbox envelope item_id length")
+            }
+            ids.append(itemID)
+        }
+        return ids
     }
 
     public func markDelivered(itemId: Data) throws {
@@ -1026,6 +1112,108 @@ public final class AethosStore {
         return hashes
     }
 
+    func upsertGossipObject(itemID: Data, envelopeBytes: Data, expiryUnixMs: Int64, hopCount: Int64) throws {
+        guard itemID.count == 32 else {
+            throw StoreError.sqliteError("gossip_objects.item_id must be 32 bytes")
+        }
+        guard expiryUnixMs >= 0 else {
+            throw StoreError.sqliteError("gossip_objects.expiry_unix_ms must be >= 0")
+        }
+        guard (0...Int64(UInt16.max)).contains(hopCount) else {
+            throw StoreError.sqliteError("gossip_objects.hop_count must be in 0...65535")
+        }
+
+        let sql = """
+        INSERT INTO gossip_objects (item_id, envelope_bytes, expiry_unix_ms, hop_count)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(item_id) DO UPDATE SET
+            envelope_bytes = excluded.envelope_bytes,
+            expiry_unix_ms = excluded.expiry_unix_ms,
+            hop_count = excluded.hop_count;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        try bindData(stmt, index: 1, data: itemID)
+        try bindData(stmt, index: 2, data: envelopeBytes)
+        try bindInt64(stmt, index: 3, value: expiryUnixMs)
+        try bindInt64(stmt, index: 4, value: hopCount)
+        try stepDone(stmt)
+    }
+
+    func getGossipObject(itemID: Data) throws -> GossipObjectRow? {
+        let sql = """
+        SELECT item_id, envelope_bytes, expiry_unix_ms, hop_count
+        FROM gossip_objects
+        WHERE item_id = ?
+        LIMIT 1;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindData(stmt, index: 1, data: itemID)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            guard let rowItemID = columnData(stmt, index: 0),
+                  let envelopeBytes = columnData(stmt, index: 1)
+            else {
+                throw StoreError.sqliteError("Unexpected NULL column in gossip_objects")
+            }
+
+            let expiryUnixMs = columnInt64(stmt, index: 2)
+            let hopCount = columnInt64(stmt, index: 3)
+
+            guard rowItemID.count == 32 else {
+                throw StoreError.sqliteError("Invalid gossip_objects item_id length")
+            }
+            guard expiryUnixMs >= 0 else {
+                throw StoreError.sqliteError("Invalid negative gossip_objects expiry_unix_ms")
+            }
+            guard (0...Int64(UInt16.max)).contains(hopCount) else {
+                throw StoreError.sqliteError("Invalid gossip_objects hop_count")
+            }
+
+            return GossipObjectRow(
+                itemID: rowItemID,
+                envelopeBytes: envelopeBytes,
+                expiryUnixMs: expiryUnixMs,
+                hopCount: hopCount
+            )
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    func listGossipObjectItemIDs(eligibleAfterUnixMs cutoffUnixMs: Int64) throws -> [GossipV1ItemID] {
+        let sql = """
+        SELECT item_id
+        FROM gossip_objects
+        WHERE expiry_unix_ms > ?
+        ORDER BY item_id ASC;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindInt64(stmt, index: 1, value: cutoffUnixMs)
+
+        var ids: [GossipV1ItemID] = []
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            guard let itemBytes = columnData(stmt, index: 0) else {
+                throw StoreError.sqliteError("Unexpected NULL item_id in gossip_objects")
+            }
+            guard let itemID = try? GossipV1ItemID(bytes: itemBytes) else {
+                throw StoreError.sqliteError("Invalid gossip_objects item_id length")
+            }
+            ids.append(itemID)
+        }
+        return ids
+    }
+
     private func markTransfersEvicted(ids: [String], now: Date) throws {
         let nowSec = Self.epochSeconds(now)
         let sql = "UPDATE transfers SET evicted = 1, status = 'canceled', updated_at = ? WHERE transfer_id = ?;"
@@ -1080,6 +1268,7 @@ public final class AethosStore {
             try migrateV3toV4()
             try migrateV4toV5()
             try migrateV5toV6()
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 1:
             try migrateV1toV2()
@@ -1087,23 +1276,32 @@ public final class AethosStore {
             try migrateV3toV4()
             try migrateV4toV5()
             try migrateV5toV6()
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 2:
             try migrateV2toV3()
             try migrateV3toV4()
             try migrateV4toV5()
             try migrateV5toV6()
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 3:
             try migrateV3toV4()
             try migrateV4toV5()
             try migrateV5toV6()
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 4:
             try migrateV4toV5()
+            try migrateV5toV6()
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 5:
             try migrateV5toV6()
+            try migrateV6toV7()
+            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
+        case 6:
+            try migrateV6toV7()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case Self.currentSchemaVersion:
             return
@@ -1201,6 +1399,19 @@ public final class AethosStore {
             PRIMARY KEY (message_id, destination_wayfarer_id)
         );
         CREATE INDEX IF NOT EXISTS idx_delivery_receipts_received_at ON delivery_receipts(received_at);
+        """)
+    }
+
+    private func migrateV6toV7() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS gossip_objects (
+            item_id BLOB PRIMARY KEY NOT NULL,
+            envelope_bytes BLOB NOT NULL,
+            expiry_unix_ms INTEGER NOT NULL,
+            hop_count INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gossip_objects_expiry_item_id
+        ON gossip_objects(expiry_unix_ms, item_id);
         """)
     }
 

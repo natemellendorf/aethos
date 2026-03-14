@@ -105,9 +105,9 @@ func deliveryReceiptDeduplication() throws {
 
     let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
 
-    // Verify schema version is 6
+    // Verify schema version is 7
     let version = try store.__debugUserVersion()
-    #expect(version == 6)
+    #expect(version == 7)
 
     let messageId = Data("test-message-id".utf8)
     let destinationWayfarerId = "abc123"

@@ -19,9 +19,9 @@ func schemaMigrationAddsPeersTable() throws {
     #expect(peers.count == 1)
     #expect(peers[0].wayfarerId == String(repeating: "a", count: 64))
 
-    // Verify schema version is 6
+    // Verify schema version is 7
     let version = try store.__debugUserVersion()
-    #expect(version == 6)
+    #expect(version == 7)
 }
 
 // MARK: - Upsert Peer Seen
