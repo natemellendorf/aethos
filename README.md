@@ -123,10 +123,10 @@ Key documents:
 
 Additional references:
 
-- Architecture decisions: `docs/adr/`
+- Architecture decisions: [docs/adr/](docs/adr/)
 - Interoperability fixtures: `Fixtures/Protocol/gossip-v1/`
 - Core canonical object encoding: `docs/protocol.md`
-- ADR-0002 runtime reconciliation architecture: `docs/adr/ADR-0002-runtime-architecture-gossip-v1.md`
+- ADR-0002 runtime reconciliation architecture: [docs/adr/ADR-0002-runtime-architecture-gossip-v1.md](docs/adr/ADR-0002-runtime-architecture-gossip-v1.md)
 - Protocol engine reference implementation: `AethosCore/Sources/AethosCore/Protocol/GossipV1/*`
 - Transport stream adapter reference implementation: `AethosCore/Sources/AethosCore/Transport/GossipV1/*`
 
@@ -162,3 +162,7 @@ Like a feather floating on the wind.
 No single node controls a message’s path.
 
 The network itself carries it.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
