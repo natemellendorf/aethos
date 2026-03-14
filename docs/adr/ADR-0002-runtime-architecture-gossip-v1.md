@@ -7,9 +7,9 @@
 
 Aethos Gossip V1 is often approached with a relay-RPC mental model:
 
-- “Send message to relay”
-- “Pull messages from relay”
-- “Ack so the relay stops sending”
+- "Send message to relay"
+- "Pull messages from relay"
+- "Ack so the relay stops sending"
 
 That model does not match Gossip V1 semantics. Gossip V1 is an object reconciliation system driven by encounters and durable object identity:
 
@@ -24,7 +24,13 @@ Without a canonical runtime architecture, implementations risk conflating transp
 
 Gossip V1 implementations MUST use an object-reconciliation runtime model, not a relay-RPC model.
 
-The canonical data model is:
+## Scope (and relationship to other specs)
+
+This ADR defines the canonical *runtime layering* for the transport-neutral Gossip V1 reconciliation loop (`HELLO`/`SUMMARY`/`REQUEST`/`TRANSFER`/`RECEIPT`) specified in `docs/protocol/*`.
+
+It does not replace or weaken any normative wire contracts in `docs/protocol/*` or `docs/spec/*` (see ADR-0001). In particular, deployments may expose RPC-shaped relay APIs (for example `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md` with `send`/`pull`/`ack`) as product/transport interfaces. Those interfaces MUST NOT be used as the mental model for Gossip V1 correctness semantics.
+
+The canonical runtime flow is:
 
 1. Compose immutable objects.
 2. Persist objects in a content-addressed object store.
@@ -32,7 +38,7 @@ The canonical data model is:
 4. Transfer missing objects by `item_id`.
 5. Project local objects into product-facing views.
 
-The relay-RPC framing (“send/pull/ack queue semantics”) is explicitly rejected for Gossip V1.
+The relay-RPC framing ("send/pull/ack queue semantics") is explicitly rejected for Gossip V1.
 
 ### Canonical Components
 
@@ -70,6 +76,8 @@ Responsibilities:
 - Execute Gossip V1 encounter state machine.
 - Reconcile local/peer inventory using protocol frames.
 - Drive request/transfer/receipt exchange by `item_id`.
+- Persist accepted inbound objects to the Object Store by `item_id`.
+- Emit `RECEIPT` as defined by Gossip V1 frame semantics.
 
 Non-responsibilities:
 
@@ -138,6 +146,8 @@ Inbound explanation:
 - Received objects are validated and persisted by identity.
 - Projections update local views from store state, not from transport callbacks.
 
+Note on acknowledgements: Gossip V1 `RECEIPT` acknowledges receipt of `item_id`s for the *immediately preceding* `TRANSFER` in that direction. It is not a durable "queue ack", and it MUST NOT be treated as an authorization to delete or stop replicating an object beyond local pruning/replication policy.
+
 ## Client and Relay Symmetry
 
 Protocol roles are symmetric: both clients and relays participate in the same reconciliation loop (`SUMMARY`/`REQUEST`/`TRANSFER`/`RECEIPT`) over the same object identity rules.
@@ -148,7 +158,7 @@ Relays differ operationally (durability profile, admission/prioritization policy
 
 - Clear separation between reconciliation semantics and transport mechanics.
 - Deterministic, idempotent convergence across heterogeneous runtimes.
-- Easier portability: iOS, Linux, and relay implementations share one mental model.
+- Easier portability: client and relay implementations across heterogeneous runtimes share one mental model.
 - Tradeoff: teams must avoid convenient but incorrect queue/RPC abstractions.
 - Risk: projection and policy concerns may leak into encounter or transport layers if boundaries are not enforced.
 
@@ -156,8 +166,8 @@ Relays differ operationally (durability profile, admission/prioritization policy
 
 - Keep transport strictly below the Encounter Engine.
 - Make Object Store the source of truth for both outbound eligibility and inbound materialization.
-- Drive UI/app behavior from projections over stored objects, not from transient transport events.
-- Preserve the same component boundaries for iOS, Linux, and relay runtimes even when packaged differently.
+- Drive application behavior from projections over stored objects, not from transient transport events.
+- Preserve the same component boundaries across client and relay implementations in heterogeneous runtimes, even when packaged differently.
 - Treat policy as pluggable preference/scheduling logic; keep it non-normative.
 
 ## Non-goals
