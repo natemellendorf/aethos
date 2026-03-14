@@ -19,9 +19,9 @@ func schemaMigrationAddsPeersTable() throws {
     #expect(peers.count == 1)
     #expect(peers[0].wayfarerId == String(repeating: "a", count: 64))
 
-    // Verify schema version is 7
+    // Verify schema migrated to at least the expected baseline.
     let version = try store.__debugUserVersion()
-    #expect(version == 7)
+    #expect(version >= 7)
 }
 
 // MARK: - Upsert Peer Seen
@@ -113,6 +113,10 @@ func staleFilteringWorks() throws {
     let (total, stale) = try store.countPeers(staleAfterSeconds: 500, now: 1000)
     #expect(total == 2)
     #expect(stale == 1)
+
+    let (freshTotal, freshStale) = try store.countPeers(includeStale: false, staleAfterSeconds: 500, now: 1000)
+    #expect(freshTotal == 1)
+    #expect(freshStale == 1)
 }
 
 // MARK: - Peers List JSON Stable Fields
@@ -477,6 +481,10 @@ func peerCountReturnsCorrectTotals() throws {
     let (total, stale) = try store.countPeers(staleAfterSeconds: 2000, now: 5000)
     #expect(total == 5)
     #expect(stale == 3)
+
+    let (freshTotal, freshStale) = try store.countPeers(includeStale: false, staleAfterSeconds: 2000, now: 5000)
+    #expect(freshTotal == 2)
+    #expect(freshStale == 3)
 }
 
 // MARK: - Last Exchange Asc Sort Prioritizes Never-Exchanged

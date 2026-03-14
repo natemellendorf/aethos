@@ -1343,11 +1343,11 @@ public final class AethosStore {
     private func migrateV2toV3() throws {
         // Add custody, TTL, and eviction columns to the transfers table.
         // Default custody is 'origin' for existing rows (all existing are outbound-created).
-        try exec("ALTER TABLE transfers ADD COLUMN custody TEXT NOT NULL DEFAULT 'origin';")
-        try exec("ALTER TABLE transfers ADD COLUMN ttl_seconds INTEGER;")
-        try exec("ALTER TABLE transfers ADD COLUMN expires_at INTEGER;")
-        try exec("ALTER TABLE transfers ADD COLUMN completed_at INTEGER;")
-        try exec("ALTER TABLE transfers ADD COLUMN evicted INTEGER NOT NULL DEFAULT 0;")
+        try addColumnIfMissing(table: "transfers", column: "custody", definition: "TEXT NOT NULL DEFAULT 'origin'")
+        try addColumnIfMissing(table: "transfers", column: "ttl_seconds", definition: "INTEGER")
+        try addColumnIfMissing(table: "transfers", column: "expires_at", definition: "INTEGER")
+        try addColumnIfMissing(table: "transfers", column: "completed_at", definition: "INTEGER")
+        try addColumnIfMissing(table: "transfers", column: "evicted", definition: "INTEGER NOT NULL DEFAULT 0")
 
         // Index for eviction queries.
         try exec("CREATE INDEX IF NOT EXISTS transfers_custody_idx ON transfers(custody);")
@@ -1702,15 +1702,31 @@ public final class AethosStore {
         try stepDone(stmt)
     }
 
-    /// Count peers, with optional staleness filtering.
+    /// Count peers with optional stale-peer inclusion.
+    ///
+    /// - Parameters:
+    ///   - includeStale: When `true`, `total` counts all peers. When `false`, `total` counts only
+    ///     peers whose `last_seen_at >= now - staleAfterSeconds`.
+    ///   - staleAfterSeconds: Staleness threshold in seconds.
+    ///   - now: Current Unix seconds used to compute staleness cutoff.
+    /// - Returns: `(total, stale)` where `stale` always counts peers with
+    ///   `last_seen_at < now - staleAfterSeconds`.
     public func countPeers(includeStale: Bool = true, staleAfterSeconds: Int64 = 86400, now: Int64) throws -> (total: Int, stale: Int) {
-        let totalSQL = "SELECT COUNT(*) FROM peers;"
+        let cutoff = now - staleAfterSeconds
+        let totalSQL: String
+        if includeStale {
+            totalSQL = "SELECT COUNT(*) FROM peers;"
+        } else {
+            totalSQL = "SELECT COUNT(*) FROM peers WHERE last_seen_at >= ?;"
+        }
         let totalStmt = try prepare(totalSQL)
         defer { sqlite3_finalize(totalStmt) }
+        if !includeStale {
+            try bindInt64(totalStmt, index: 1, value: cutoff)
+        }
         guard sqlite3_step(totalStmt) == SQLITE_ROW else { throw sqliteError() }
         let total = Int(sqlite3_column_int(totalStmt, 0))
 
-        let cutoff = now - staleAfterSeconds
         let staleSQL = "SELECT COUNT(*) FROM peers WHERE last_seen_at < ?;"
         let staleStmt = try prepare(staleSQL)
         defer { sqlite3_finalize(staleStmt) }
@@ -1719,6 +1735,24 @@ public final class AethosStore {
         let stale = Int(sqlite3_column_int(staleStmt, 0))
 
         return (total, stale)
+    }
+
+    private func addColumnIfMissing(table: String, column: String, definition: String) throws {
+        guard try !tableHasColumn(table: table, column: column) else { return }
+        try exec("ALTER TABLE \(table) ADD COLUMN \(column) \(definition);")
+    }
+
+    private func tableHasColumn(table: String, column: String) throws -> Bool {
+        let stmt = try prepare("PRAGMA table_info(\(table));")
+        defer { sqlite3_finalize(stmt) }
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { return false }
+            if rc != SQLITE_ROW { throw sqliteError() }
+            if columnText(stmt, index: 1) == column {
+                return true
+            }
+        }
     }
 
     private func readPeerRow(_ stmt: OpaquePointer) -> Peer {
