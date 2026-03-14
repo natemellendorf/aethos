@@ -79,6 +79,7 @@ See `docs/protocol/gossip.md` and `docs/protocol/frames.md`.
   - `docs/protocol/replication.md` (store–carry–forward replication contract)
   - `docs/protocol/scoring.md` (non-normative policy guidance)
 - Core canonical object encoding: `docs/protocol.md`
+- Architecture decisions: [docs/adr/](docs/adr/) (see [ADR-0002 runtime reconciliation architecture](docs/adr/ADR-0002-runtime-architecture-gossip-v1.md))
 - Interoperability fixtures: `Fixtures/Protocol/gossip-v1/`
 
 ## License
