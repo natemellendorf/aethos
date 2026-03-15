@@ -50,7 +50,7 @@ func gossipV1_loopback_adapterInterop_fullEncounter_happyPath_summary_request_tr
 
     // A has one eligible object; B starts empty.
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(42))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 42)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     storeA.setEligible([itemID])
@@ -162,7 +162,7 @@ func gossipV1_loopback_adapterInterop_idempotency_sameObjectTransferredAgain_noD
     let storeB = GossipV1InMemoryStore()
 
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
 
@@ -299,7 +299,7 @@ func gossipV1_loopback_adapterInterop_invalidTransfer_rejected_noStoreEffect_non
     #expect(endpointB.state == .active)
 
     // Expired transfer object should be rejected by engine.
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(9))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 9)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     let expiryUnixMs = clock.nowMs + GossipV1.CLOCK_SKEW_TOLERANCE_MS // cutoff >= expiry rejects.
     let obj = try GossipV1TransferFrame.Object(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiryUnixMs, hopCount: 1)
@@ -452,7 +452,7 @@ func gossipV1_loopback_adapterInterop_invalidTransfer_hopRegression_rejected_noS
     #expect(endpointB.state == .active)
 
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(99))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 99)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
 
     // Seed B with higher hop; incoming is lower => deterministic hop regression.
@@ -485,7 +485,7 @@ func gossipV1_loopback_adapterInterop_partialEncounter_resume_requestAgain_conve
 
     // A has one transferable item.
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(123))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 123)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     storeA.setEligible([itemID])

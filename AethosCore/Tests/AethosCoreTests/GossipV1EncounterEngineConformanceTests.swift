@@ -88,7 +88,7 @@ func gossipV1_engine_expirySkew_allowsJustBeyondCutoff_andRejectsAtBoundary() th
     let clock = FixedClock(nowMs: now)
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(7))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 7)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     let boundary = now + GossipV1.CLOCK_SKEW_TOLERANCE_MS
 
@@ -120,7 +120,7 @@ func gossipV1_engine_rejectsTransferItemIdMismatch() throws {
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
 
     // Build object with mismatched item_id (frame init should throw).
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let wrongID = try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32))
     #expect(throws: GossipV1FrameError.transferItemIDMismatch) {
         _ = try GossipV1TransferFrame.Object(itemID: wrongID, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
@@ -136,7 +136,7 @@ func gossipV1_engine_enforcesExpirySkewBoundary_30000ms() throws {
     let clock = FixedClock(nowMs: now)
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     let expiry = now + GossipV1.CLOCK_SKEW_TOLERANCE_MS // cutoff >= expiry rejects.
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
@@ -156,7 +156,7 @@ func gossipV1_engine_rejectsHopRegression_usingStoreQuery() throws {
     let store = InMemoryGossipStore()
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     store.setHopCount(id: id, hop: 10)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 9)
@@ -186,7 +186,11 @@ func gossipV1_engine_rejectsOversizeRequest_andOversizeTransferBytes() throws {
 
     // Transfer oversize (construct objects directly to bypass decoder enforcement).
     let bigPayload = Data(repeating: 0xAA, count: GossipV1.MAX_TRANSFER_BYTES + 1)
-    let bigEnvelopeBytes = try CanonicalCBOREncoder().encode(.bytes(bigPayload))
+    let bigEnvelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+        toWayfarerId: Data(repeating: 0xAA, count: 32),
+        manifestId: Data(repeating: 0xBB, count: 32),
+        body: bigPayload
+    )
     let actual = bigEnvelopeBytes.count
     let bigID = GossipV1ItemID.derive(fromEnvelopeBytes: bigEnvelopeBytes)
     let obj = try GossipV1TransferFrame.Object(itemID: bigID, envelopeBytes: bigEnvelopeBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
@@ -216,7 +220,7 @@ func gossipV1_engine_inboundTransfer_rejectsTooManyObjects_andRejectsOversizeSum
 
     let expiry: UInt64 = 4_102_444_800_000
     let objs: [GossipV1TransferFrame.Object] = try (0..<3).map { i in
-        let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(UInt64(i)))]))
+        let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: UInt64(i))
         let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
         return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     }
@@ -228,8 +232,16 @@ func gossipV1_engine_inboundTransfer_rejectsTooManyObjects_andRejectsOversizeSum
 
     // Oversize sum: bypass frame-level enforcement by using unsafeObjects.
     let bigPayload = Data(repeating: 0xAA, count: GossipV1.MAX_TRANSFER_BYTES / 2 + 16)
-    let env1 = try CanonicalCBOREncoder().encode(.bytes(bigPayload))
-    let env2 = try CanonicalCBOREncoder().encode(.bytes(bigPayload))
+    let env1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+        toWayfarerId: Data(repeating: 0x10, count: 32),
+        manifestId: Data(repeating: 0x11, count: 32),
+        body: bigPayload
+    )
+    let env2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+        toWayfarerId: Data(repeating: 0x12, count: 32),
+        manifestId: Data(repeating: 0x13, count: 32),
+        body: bigPayload
+    )
     let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: env1)
     let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: env2)
     let o1 = try GossipV1TransferFrame.Object(itemID: id1, envelopeBytes: env1, expiryUnixMs: expiry, hopCount: 0)
@@ -270,8 +282,8 @@ func gossipV1_engine_inboundTransfer_validationIsAllOrNothing_noPartialIngestOnD
     let expiryOk: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1
     let expiryBad: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS
 
-    let envA = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-    let envB = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envA = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envB = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let idA = GossipV1ItemID.derive(fromEnvelopeBytes: envA)
     let idB = GossipV1ItemID.derive(fromEnvelopeBytes: envB)
 
@@ -318,7 +330,7 @@ func gossipV1_engine_inboundTransfer_acceptsHopEqual_asIdempotent() throws {
     let clock = FixedClock(nowMs: 1_000)
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(77))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 77)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     store.seedHop(id, hop: 5)
 
@@ -334,11 +346,13 @@ func gossipV1_engine_inboundTransfer_acceptsHopEqual_asIdempotent() throws {
 @Test
 func gossipV1_transferObject_decodeRejectsHopCountOverflow() throws {
     let idHex = String(repeating: "0", count: 64)
+    let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envelopeB64 = GossipV1Base64URL.encode(envelopeBytes)
     let payload: CanonicalCBORValue = .map([
         .init(key: .text("objects"), value: .array([
             .map([
                 .init(key: .text("item_id"), value: .text(idHex)),
-                .init(key: .text("envelope_b64"), value: .text("AA")),
+                .init(key: .text("envelope_b64"), value: .text(envelopeB64)),
                 .init(key: .text("expiry_unix_ms"), value: .unsigned(0)),
                 .init(key: .text("hop_count"), value: .unsigned(UInt64(UInt16.max) + 1)),
             ]),
@@ -381,13 +395,14 @@ func gossipV1_transferObject_decodeRejectsInvalidBase64URLAlphabet() throws {
 
 @Test
 func gossipV1_transferObject_decodeRejectsItemIDMismatch() throws {
-    // "AA" decodes to a single 0x00 byte, so the derived item_id cannot be all zeros.
+    let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 9)
+    let envelopeB64 = GossipV1Base64URL.encode(envelopeBytes)
     let idHex = String(repeating: "0", count: 64)
     let payload: CanonicalCBORValue = .map([
         .init(key: .text("objects"), value: .array([
             .map([
                 .init(key: .text("item_id"), value: .text(idHex)),
-                .init(key: .text("envelope_b64"), value: .text("AA")),
+                .init(key: .text("envelope_b64"), value: .text(envelopeB64)),
                 .init(key: .text("expiry_unix_ms"), value: .unsigned(0)),
                 .init(key: .text("hop_count"), value: .unsigned(0)),
             ]),
@@ -435,9 +450,9 @@ func gossipV1_summaryDatagram_isDeterministic_forFixedEligibleSet() throws {
 
     // Fixed eligible item set.
     let expiry: UInt64 = 4_102_444_800_000
-    let envA = try CanonicalCBOREncoder().encode(.map([.init(key: .text("a"), value: .unsigned(1))]))
-    let envB = try CanonicalCBOREncoder().encode(.map([.init(key: .text("b"), value: .unsigned(2))]))
-    let envC = try CanonicalCBOREncoder().encode(.map([.init(key: .text("c"), value: .unsigned(3))]))
+    let envA = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envB = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
+    let envC = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 3)
     let idA = GossipV1ItemID.derive(fromEnvelopeBytes: envA)
     let idB = GossipV1ItemID.derive(fromEnvelopeBytes: envB)
     let idC = GossipV1ItemID.derive(fromEnvelopeBytes: envC)
@@ -516,7 +531,7 @@ func gossipV1_engine_buildTransfer_throwsHelloRequiredFirst_beforeAnyHello() thr
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
     var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
 
@@ -530,7 +545,7 @@ func gossipV1_engine_buildTransfer_throwsPeerCapsUnknown_afterHelloButBeforePeer
     let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
     var engine = GossipV1EncounterEngine(_testing: .init(localHello: localHello), state: .active, peerCaps: nil)
 
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
 
@@ -549,7 +564,7 @@ func gossipV1_engine_enforcesLocalHelloMaxTransfer_onInboundTransfer() throws {
 
     let expiry: UInt64 = 4_102_444_800_000
     let objs: [GossipV1TransferFrame.Object] = try (0..<3).map { i in
-        let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(UInt64(i)))]))
+        let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: UInt64(i))
         let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
         return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     }
@@ -572,7 +587,7 @@ func gossipV1_engine_enforcesPeerHelloMaxTransfer_onOutboundBuildTransfer() thro
 
     let expiry: UInt64 = 4_102_444_800_000
     let objs: [GossipV1TransferFrame.Object] = try (0..<2).map { i in
-        let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(UInt64(i)))]))
+        let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: UInt64(i))
         let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
         return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     }
@@ -596,7 +611,11 @@ func gossipV1_engine_rejectsInboundTransferTotalEnvelopeBytesOverMax_atEngineLev
     let expiry: UInt64 = 4_102_444_800_000
 
     func makeObject(seed: UInt8) throws -> GossipV1TransferFrame.Object {
-        let envBytes = try CanonicalCBOREncoder().encode(.bytes(Data(repeating: seed, count: perObject)))
+        let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+            toWayfarerId: Data(repeating: seed, count: 32),
+            manifestId: Data(repeating: seed ^ 0xFF, count: 32),
+            body: Data(repeating: seed, count: perObject)
+        )
         let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
         return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     }
@@ -621,8 +640,8 @@ func gossipV1_engine_doesNotForwardHopOverflowedItems() throws {
     _ = try engine.ingestInboundFrame(.hello(peerHello), clock: clock, store: store)
 
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes1 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-    let envBytes2 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let idForwardable = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
     let idOverflow = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)
 
@@ -652,7 +671,7 @@ func gossipV1_engine_doesNotForwardExpiredItems_evenIfRequested() throws {
     let peerHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
     _ = try engine.ingestInboundFrame(.hello(peerHello), clock: FixedClock(nowMs: 0), store: store)
 
-    let envBytesExpired = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(9))]))
+    let envBytesExpired = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 9)
     let idExpired = GossipV1ItemID.derive(fromEnvelopeBytes: envBytesExpired)
 
     // Boundary: cutoff >= expiry rejects. So expiry = now + skew is expired.
@@ -672,7 +691,7 @@ func gossipV1_engine_happyPathCycle_summary_request_transfer_receipt() throws {
     let storeA = InMemoryGossipStore()
 
     let expiry: UInt64 = 4_102_444_800_000
-    let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(42))]))
+    let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 42)
     let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
     storeA.put(itemID: itemID, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
     storeA.setEligible([itemID])
@@ -727,8 +746,8 @@ func gossipV1_engine_enforcesReceiptSubsetRule() throws {
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
 
     // Seed last outbound transfer ids.
-    let envBytes1 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-    let envBytes2 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
     let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)
     let expiry: UInt64 = 4_102_444_800_000
@@ -779,8 +798,8 @@ func gossipV1_engine_receiptMustBeForImmediatelyPrecedingOutboundTransfer() thro
     let store = InMemoryGossipStore()
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: clock, store: store)
 
-    let envBytes1 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-    let envBytes2 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+    let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
     let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)
     let expiry: UInt64 = 4_102_444_800_000

@@ -109,7 +109,7 @@ func gossipV1_invariants_duplicateValidImportsDoNotChangeFinalState() throws {
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: GossipV1TestSupport.FixedClock(nowMs: 0), store: store)
 
     let expiryOk: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1
-    let env = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(7))]))
+    let env = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 7)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: env)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: env, expiryUnixMs: expiryOk, hopCount: 0)
     let transfer = try GossipV1TransferFrame(objects: [obj])

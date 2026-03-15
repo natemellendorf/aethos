@@ -230,7 +230,7 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
                     XCTAssertEqual(
                         err as? GossipV1FramingError,
                         .invalidDatagramFrame(
-                            underlying: .transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_294)
+                            underlying: .transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_395)
                         )
                     )
                 }

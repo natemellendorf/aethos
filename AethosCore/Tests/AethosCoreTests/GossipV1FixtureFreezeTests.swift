@@ -55,8 +55,8 @@ private enum GossipV1FixtureFrames {
 
     static func transfer() throws -> GossipV1TransferFrame {
         // Matches Fixtures/Protocol/gossip-v1/transfer.json.
-        let envBytes1 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-        let envBytes2 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+        let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+        let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
 
         let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
         let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)

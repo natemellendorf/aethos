@@ -13,12 +13,12 @@ func gossipV1_recovery_mixedValidityTransfer_commitsOnlyValidObjects_andIsolates
 
     _ = try engine.ingestInboundFrame(.hello(localHello), clock: GossipV1TestSupport.FixedClock(nowMs: 0), store: store)
 
-    let envGood = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let envGood = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let idGood = GossipV1ItemID.derive(fromEnvelopeBytes: envGood)
     let expiryOk: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1
     let goodObj = try GossipV1TransferFrame.Object(itemID: idGood, envelopeBytes: envGood, expiryUnixMs: expiryOk, hopCount: 0)
 
-    let envExpired = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+    let envExpired = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
     let idExpired = GossipV1ItemID.derive(fromEnvelopeBytes: envExpired)
     let expiryExpired: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS
     let expiredObj = try GossipV1TransferFrame.Object(itemID: idExpired, envelopeBytes: envExpired, expiryUnixMs: expiryExpired, hopCount: 0)
