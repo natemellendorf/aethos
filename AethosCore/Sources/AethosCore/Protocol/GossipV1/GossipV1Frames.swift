@@ -611,6 +611,7 @@ private extension GossipV1SummaryFrame {
     static let requiredKeys = ["bloom_filter", "item_count"]
     static let previewItemIDsKey = "preview_item_ids"
     static let previewCursorKey = "preview_cursor"
+    static let optionalKeys = [previewItemIDsKey, previewCursorKey]
 
     func payloadCBOR() -> CanonicalCBORValue {
         var entries: [CanonicalCBORValue.MapEntry] = [
@@ -630,6 +631,15 @@ private extension GossipV1SummaryFrame {
     static func decodePayload(_ payload: CanonicalCBORValue) throws -> GossipV1SummaryFrame {
         let dict = try GossipV1CBOR.requireMap(payload, field: "payload")
         try GossipV1CBOR.requirePayloadContainsRequiredKeys(dict, required: requiredKeys)
+
+        let actualKeys = Set(dict.keys)
+        let allowedKeys = Set(requiredKeys + optionalKeys)
+        guard actualKeys.isSubset(of: allowedKeys) else {
+            throw GossipV1FrameError.payloadKeysMismatch(
+                expected: (requiredKeys + optionalKeys).sorted(),
+                actual: dict.keys.sorted()
+            )
+        }
 
         let bloom = try GossipV1CBOR.requireBytes(dict["bloom_filter"]!, field: "bloom_filter")
         let itemCount = try GossipV1CBOR.requireUnsigned(dict["item_count"]!, field: "item_count")

@@ -56,7 +56,7 @@ Identity derivation:
 
 For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates required schema or limits, including:
 
-- unknown payload fields for frame types other than `SUMMARY`,
+- unknown payload fields,
 - missing required fields,
 - malformed encoding,
 - malformed base64url envelope encoding,
@@ -65,7 +65,7 @@ For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates req
 - expired objects,
 - invalid/overflow `hop_count`.
 
-For `SUMMARY`, receivers MUST require `bloom_filter` and `item_count`, MAY accept optional preview fields, and SHOULD tolerate/ignore additional unknown payload keys for forward compatibility.
+For `SUMMARY`, receivers MUST require `bloom_filter` and `item_count`, MAY accept optional `preview_item_ids` and `preview_cursor`, and MUST reject any additional unknown payload keys.
 
 When violations are frame-local and recoverable, receiver MAY continue session; repeated protocol violations SHOULD end session.
 

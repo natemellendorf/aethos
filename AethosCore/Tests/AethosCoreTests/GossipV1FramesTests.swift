@@ -47,7 +47,7 @@ final class GossipV1FramesTests: XCTestCase {
         XCTAssertEqual(decoded, .summary(summary))
     }
 
-    func testSummaryPayloadUnknownKeyIgnored_forForwardCompatibility() throws {
+    func testSummaryPayloadUnknownKeyRejected() throws {
         let a = try GossipV1ItemID(bytes: Data(repeating: 0x10, count: 32))
         let bytes = try CanonicalCBOREncoder().encode(
             .map([
@@ -61,11 +61,36 @@ final class GossipV1FramesTests: XCTestCase {
             ])
         )
 
+        XCTAssertThrowsError(try GossipV1Frame.decode(bytes: bytes)) { error in
+            guard case .payloadKeysMismatch(let expected, let actual) = error as? GossipV1FrameError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(expected, ["bloom_filter", "item_count", "preview_cursor", "preview_item_ids"])
+            XCTAssertEqual(actual, ["bloom_filter", "future", "item_count", "preview_item_ids"])
+        }
+    }
+
+    func testSummaryPayloadWithPreviewKeysDecodes() throws {
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x10, count: 32))
+        let b = try GossipV1ItemID(bytes: Data(repeating: 0x20, count: 32))
+        let bytes = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("type"), value: .text(GossipV1FrameType.SUMMARY.rawValue)),
+                .init(key: .text("payload"), value: .map([
+                    .init(key: .text("bloom_filter"), value: .bytes(Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES))),
+                    .init(key: .text("item_count"), value: .unsigned(2)),
+                    .init(key: .text("preview_item_ids"), value: .array([.text(a.hex), .text(b.hex)])),
+                    .init(key: .text("preview_cursor"), value: .text(b.hex)),
+                ])),
+            ])
+        )
+
         let decoded = try GossipV1Frame.decode(bytes: bytes)
         guard case .summary(let summary) = decoded else {
             return XCTFail("Expected summary")
         }
-        XCTAssertEqual(summary.previewItemIDs, [a])
+        XCTAssertEqual(summary.previewItemIDs, [a, b])
+        XCTAssertEqual(summary.previewCursor, b)
     }
 
     func testSummaryPreviewValidation_rejectsTooManyItemsUnsortedDuplicatesAndInvalidCursor() throws {
