@@ -16,7 +16,7 @@ func gossipV1_clockBoundary_justBeforeExpiryIsAccepted() throws {
 
     // cutoff < expiry => accepted.
     let expiry = cutoff + 1
-    let env = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let env = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: env)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: env, expiryUnixMs: expiry, hopCount: 0)
     let transfer = try GossipV1TransferFrame(objects: [obj])
@@ -37,7 +37,7 @@ func gossipV1_clockBoundary_exactBoundaryIsRejected() throws {
     let clock = GossipV1TestSupport.FixedClock(nowMs: now)
     let expiry = now + GossipV1.CLOCK_SKEW_TOLERANCE_MS // cutoff >= expiry => rejected
 
-    let env = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let env = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: env)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: env, expiryUnixMs: expiry, hopCount: 0)
     let transfer = try GossipV1TransferFrame(objects: [obj])
@@ -58,7 +58,7 @@ func gossipV1_clockBoundary_justAfterExpiryIsRejected() throws {
     let clock = GossipV1TestSupport.FixedClock(nowMs: now)
     let expiry = now + GossipV1.CLOCK_SKEW_TOLERANCE_MS - 1
 
-    let env = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
+    let env = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: env)
     let obj = try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: env, expiryUnixMs: expiry, hopCount: 0)
     let transfer = try GossipV1TransferFrame(objects: [obj])
@@ -82,7 +82,7 @@ func gossipV1_clockBoundary_expiredItemsNotForwardedEvenIfRequested() throws {
     let clock = GossipV1TestSupport.FixedClock(nowMs: now)
     let expiry = now + GossipV1.CLOCK_SKEW_TOLERANCE_MS // cutoff >= expiry => expired
 
-    let env = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(9))]))
+    let env = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 9)
     let id = GossipV1ItemID.derive(fromEnvelopeBytes: env)
     store.put(itemID: id, envelopeBytes: env, expiryUnixMs: expiry, hopCount: 0)
     store.setEligible([id])

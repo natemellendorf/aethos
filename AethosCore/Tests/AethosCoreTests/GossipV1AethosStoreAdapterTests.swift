@@ -126,9 +126,5 @@ func gossipV1_storeAdapter_canIncludeQueuedOutboxEnvelopesPolicy() throws {
 }
 
 private func envelopeBytes(seed: UInt64) throws -> Data {
-    try CanonicalCBOREncoder().encode(
-        .map([
-            .init(key: .text("seed"), value: .unsigned(seed)),
-        ])
-    )
+    try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: seed)
 }

@@ -362,8 +362,8 @@ private extension GossipV1FramesTests {
     }
 
     func transferFixtureFrame() throws -> GossipV1Frame {
-        let envBytes1 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(1))]))
-        let envBytes2 = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(2))]))
+        let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
+        let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
 
         let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
         let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)

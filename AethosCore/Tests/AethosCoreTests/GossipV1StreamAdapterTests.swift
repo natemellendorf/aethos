@@ -152,7 +152,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         let errors = errorEvents.withLock { $0 }
         XCTAssertEqual(errors.count, 1)
-        XCTAssertEqual(errors.first, .invalidFrame(.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_294)))
+        XCTAssertEqual(errors.first, .invalidFrame(.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_395)))
     }
 
     func testReceiveBytes_stopImmediatelyAfterTermination_remainingFramesInSameBufferNotProcessed() throws {
@@ -522,7 +522,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         // Create an inbound TRANSFER that violates local max_transfer (16) by having 17 objects.
         let expiry: UInt64 = 4_102_444_800_000
         let objs: [GossipV1TransferFrame.Object] = try (0..<17).map { i in
-            let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(UInt64(i)))]))
+            let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: UInt64(i))
             let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
             return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
         }
@@ -621,7 +621,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         let expiryExpired: UInt64 = 1_000 + GossipV1.CLOCK_SKEW_TOLERANCE_MS
 
         func makeObject(x: UInt64, expiry: UInt64) throws -> GossipV1TransferFrame.Object {
-            let envBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(x))]))
+            let envBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: x)
             let id = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes)
             return try GossipV1TransferFrame.Object(itemID: id, envelopeBytes: envBytes, expiryUnixMs: expiry, hopCount: 0)
         }
@@ -669,7 +669,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
         let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
         let engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
 
-        let envelopeBytes = try CanonicalCBOREncoder().encode(.map([.init(key: .text("x"), value: .unsigned(42))]))
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 42)
         let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
         let store = RequestServingStore(
             itemID: itemID,

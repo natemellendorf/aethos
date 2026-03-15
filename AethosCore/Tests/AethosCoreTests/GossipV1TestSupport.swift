@@ -78,6 +78,32 @@ enum GossipV1TestSupport {
         )
     }
 
+    static func makeTransferEnvelopeBytes(
+        toWayfarerId: Data,
+        manifestId: Data,
+        body: Data
+    ) throws -> Data {
+        try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("to_wayfarer_id"), value: .bytes(toWayfarerId)),
+                .init(key: .text("manifest_id"), value: .bytes(manifestId)),
+                .init(key: .text("body"), value: .bytes(body)),
+            ])
+        )
+    }
+
+    static func makeTransferEnvelopeBytes(seed: UInt64) throws -> Data {
+        let seedByte = UInt8(truncatingIfNeeded: seed)
+        let toWayfarerId = Data(repeating: seedByte, count: 32)
+        let manifestId = Data(repeating: seedByte ^ 0xFF, count: 32)
+        let body = Data([seedByte, seedByte &+ 1])
+        return try makeTransferEnvelopeBytes(
+            toWayfarerId: toWayfarerId,
+            manifestId: manifestId,
+            body: body
+        )
+    }
+
     struct FixedClock: GossipV1EncounterEngine.Clock {
         let nowMs: UInt64
         func nowUnixMs() -> UInt64 { nowMs }

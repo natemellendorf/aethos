@@ -40,6 +40,8 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case transferTooManyObjects(max: Int, actual: Int)
     case transferTotalEnvelopeBytesTooLarge(max: Int, actual: Int)
     case transferEnvelopeNotCanonical
+    case transferEnvelopeNotMap
+    case transferEnvelopeSchemaMismatch(expected: [String], actual: [String])
     case transferItemIDMismatch
 
     case duplicateItemID
@@ -342,6 +344,7 @@ public struct GossipV1TransferFrame: Equatable, Sendable {
             guard GossipV1TransferFrame.isCanonicalCBORBytes(envelopeBytes) else {
                 throw GossipV1FrameError.transferEnvelopeNotCanonical
             }
+            try GossipV1TransferFrame.validateEnvelopeSchema(envelopeBytes)
             self.itemID = itemID
             self.envelopeBytes = envelopeBytes
             self.expiryUnixMs = expiryUnixMs
@@ -710,6 +713,7 @@ private extension GossipV1RequestFrame {
 
 private extension GossipV1TransferFrame {
     static let requiredKeys = ["objects"]
+    static let requiredEnvelopeKeys = ["to_wayfarer_id", "manifest_id", "body"]
 
     func payloadCBOR() -> CanonicalCBORValue {
         .map([
@@ -752,6 +756,27 @@ private extension GossipV1TransferFrame {
         } catch {
             return false
         }
+    }
+
+    static func validateEnvelopeSchema(_ bytes: Data) throws {
+        let value = try CanonicalCBORDecoder().decode(bytes)
+        guard case .map(let entries) = value else {
+            throw GossipV1FrameError.transferEnvelopeNotMap
+        }
+
+        let dict = try GossipV1CBOR.textKeyedMap(entries)
+        let expected = Set(requiredEnvelopeKeys)
+        let actual = Set(dict.keys)
+        guard expected == actual else {
+            throw GossipV1FrameError.transferEnvelopeSchemaMismatch(
+                expected: requiredEnvelopeKeys.sorted(),
+                actual: dict.keys.sorted()
+            )
+        }
+
+        _ = try GossipV1CBOR.requireBytes(dict["to_wayfarer_id"]!, field: "to_wayfarer_id")
+        _ = try GossipV1CBOR.requireBytes(dict["manifest_id"]!, field: "manifest_id")
+        _ = try GossipV1CBOR.requireBytes(dict["body"]!, field: "body")
     }
 
     // Expiry semantics are validated at the engine boundary with an injected clock.
