@@ -16,7 +16,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 1. `item_id` MUST be derived from raw canonical serialized envelope bytes and encoded as lowercase hex.
 2. Envelope bytes MUST be immutable after creation.
-3. Sender identity MUST come from authenticated envelope data, never transport metadata.
+3. Sender identity MUST come from canonical/authenticated object data, never transport metadata.
 4. All gossip frames MUST use one shared canonical wire encoding and framing model.
 5. `hop_count` MUST increment by exactly 1 on forward and MUST NOT regress.
 6. Expired objects (`expiry_unix_ms`) MUST NOT be forwarded.
@@ -101,6 +101,7 @@ Transport responsibilities:
 - authenticated channel properties (where applicable).
 
 Transport implementations MUST NOT modify frame semantics, hash derivation, or acceptance behavior.
+Transport peer identifiers are metadata only and MUST NOT override canonical message author attribution.
 
 ## 10.1 Relay responsibilities
 
@@ -135,3 +136,11 @@ This ordering is local policy only. It MUST NOT change wire validity, interopera
 - Reject malformed/oversize frames early.
 - Never infer sender identity from bearer metadata alone.
 - Keep deterministic correctness independent of scoring policy.
+
+## 14. Extension namespace discipline
+
+For extension-safe metadata containers (for example message extension metadata):
+
+- Unknown keys MAY be accepted only inside explicitly extension-safe optional containers.
+- Unknown structural fields outside those containers MUST be rejected.
+- Reserved namespaces `aethos.*` and `sys.*` are not application extension space and MUST be rejected when carried as third-party extension keys.

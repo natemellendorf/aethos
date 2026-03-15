@@ -387,7 +387,7 @@ public actor RelayLink {
         // Store in inbox
         try? await inboxStore.put(
             msgId: frame.msgId,
-            from: message.from,
+            from: message.transportPeer,
             receivedAt: receivedAt,
             wireBytes: Data(rawJson.utf8)
         )

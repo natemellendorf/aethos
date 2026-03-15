@@ -11,9 +11,16 @@ public enum CanonicalEncoderV1 {
         case sealedEnvelope = 7
     }
 
+    public enum TypeDiscriminatorSpace {
+        public static let coreRange: ClosedRange<UInt8> = 1...127
+        public static let reservedFutureRange: ClosedRange<UInt8> = 128...255
+    }
+
     public enum MessageField: UInt8 {
         case createdAtUnixMs = 1
-        case body = 2
+        case authorWayfarerId = 2
+        case body = 3
+        case extensionMetadata = 4
     }
 
     public enum EnvelopeField: UInt8 {
@@ -118,7 +125,12 @@ public enum CanonicalEncoderV1 {
         tsRaw.appendInt64(message.createdAtUnixMs)
         out.appendField(id: MessageField.createdAtUnixMs.rawValue, raw: tsRaw)
 
+        out.appendField(id: MessageField.authorWayfarerId.rawValue, raw: message.authorWayfarerId)
+
         out.appendField(id: MessageField.body.rawValue, raw: message.body)
+        if let extensionMetadata = message.extensionMetadata {
+            out.appendField(id: MessageField.extensionMetadata.rawValue, raw: extensionMetadata)
+        }
         return out
     }
 
@@ -207,13 +219,18 @@ public enum CanonicalEncoderV1 {
             throw CanonicalDecoderError.invalidType
         }
 
-        var signingPub = Data()
-        var exchangePub = Data()
+        var signingPub: Data?
+        var exchangePub: Data?
+        var seenFields: Set<UInt8> = []
 
         while !r.isAtEnd {
             guard let fid = r.readUInt8() else { break }
             guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
             guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
+
+            guard seenFields.insert(fid).inserted else {
+                throw CanonicalDecoderError.duplicateField(fid)
+            }
 
             switch fid {
             case PublicIdentityField.signingPublicKey.rawValue:
@@ -221,8 +238,15 @@ public enum CanonicalEncoderV1 {
             case PublicIdentityField.exchangePublicKey.rawValue:
                 exchangePub = raw
             default:
-                break
+                throw CanonicalDecoderError.unknownField(fid)
             }
+        }
+
+        guard let signingPub else {
+            throw CanonicalDecoderError.missingRequiredField(PublicIdentityField.signingPublicKey.rawValue)
+        }
+        guard let exchangePub else {
+            throw CanonicalDecoderError.missingRequiredField(PublicIdentityField.exchangePublicKey.rawValue)
         }
 
         return (keyTypeTag, signingPub, exchangePub)
@@ -240,22 +264,37 @@ public enum CanonicalEncoderV1 {
             throw CanonicalDecoderError.invalidType
         }
 
-        var manifests: [String] = []
-        var generatedAtUnixMs: Int64 = 0
+        var manifests: [String]?
+        var generatedAtUnixMs: Int64?
+        var seenFields: Set<UInt8> = []
 
         while !r.isAtEnd {
             guard let fid = r.readUInt8() else { break }
             guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
             guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
 
+            guard seenFields.insert(fid).inserted else {
+                throw CanonicalDecoderError.duplicateField(fid)
+            }
+
             switch fid {
             case InventoryField.manifests.rawValue:
                 manifests = try parseStringArray(raw)
             case InventoryField.generatedAtUnixMs.rawValue:
-                if raw.count == 8 { generatedAtUnixMs = readInt64BE(raw) }
+                guard raw.count == 8 else {
+                    throw CanonicalDecoderError.invalidFieldLength(fieldId: fid, expected: 8, actual: raw.count)
+                }
+                generatedAtUnixMs = readInt64BE(raw)
             default:
-                break
+                throw CanonicalDecoderError.unknownField(fid)
             }
+        }
+
+        guard let manifests else {
+            throw CanonicalDecoderError.missingRequiredField(InventoryField.manifests.rawValue)
+        }
+        guard let generatedAtUnixMs else {
+            throw CanonicalDecoderError.missingRequiredField(InventoryField.generatedAtUnixMs.rawValue)
         }
 
         return InventoryV1(version: pv, manifests: manifests, generatedAtUnixMs: generatedAtUnixMs)
@@ -273,19 +312,28 @@ public enum CanonicalEncoderV1 {
             throw CanonicalDecoderError.invalidType
         }
 
-        var want: [String] = []
+        var want: [String]?
+        var seenFields: Set<UInt8> = []
 
         while !r.isAtEnd {
             guard let fid = r.readUInt8() else { break }
             guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
             guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
 
+            guard seenFields.insert(fid).inserted else {
+                throw CanonicalDecoderError.duplicateField(fid)
+            }
+
             switch fid {
             case InventoryRequestField.want.rawValue:
                 want = try parseStringArray(raw)
             default:
-                break
+                throw CanonicalDecoderError.unknownField(fid)
             }
+        }
+
+        guard let want else {
+            throw CanonicalDecoderError.missingRequiredField(InventoryRequestField.want.rawValue)
         }
 
         return InventoryRequestV1(version: pv, want: want)
@@ -299,34 +347,98 @@ public enum CanonicalEncoderV1 {
         else {
             throw CanonicalDecoderError.invalidType
         }
-        guard let pv = ProtocolVersion(rawValue: version) else {
+        guard let pv = ProtocolVersion(rawValue: version), pv == .v2 else {
             throw CanonicalDecoderError.invalidType
         }
 
-        var createdAtUnixMs: Int64 = 0
-        var body = Data()
+        var createdAtUnixMs: Int64?
+        var authorWayfarerId: Data?
+        var body: Data?
+        var extensionMetadata: Data?
+        var seenFields: Set<UInt8> = []
 
         while !r.isAtEnd {
             guard let fid = r.readUInt8() else { break }
             guard let len = r.readUInt32() else { throw CanonicalDecoderError.truncated }
             guard let raw = r.readData(count: Int(len)) else { throw CanonicalDecoderError.truncated }
 
+            guard seenFields.insert(fid).inserted else {
+                throw CanonicalDecoderError.duplicateField(fid)
+            }
+
             switch fid {
             case MessageField.createdAtUnixMs.rawValue:
-                if raw.count == 8 { createdAtUnixMs = readInt64BE(raw) }
+                guard raw.count == 8 else {
+                    throw CanonicalDecoderError.invalidFieldLength(fieldId: fid, expected: 8, actual: raw.count)
+                }
+                createdAtUnixMs = readInt64BE(raw)
+            case MessageField.authorWayfarerId.rawValue:
+                guard raw.count == 32 else {
+                    throw CanonicalDecoderError.invalidFieldLength(fieldId: fid, expected: 32, actual: raw.count)
+                }
+                authorWayfarerId = raw
             case MessageField.body.rawValue:
                 body = raw
+            case MessageField.extensionMetadata.rawValue:
+                try validateExtensionMetadata(raw)
+                extensionMetadata = raw
             default:
-                break
+                throw CanonicalDecoderError.unknownField(fid)
             }
         }
 
-        return MessageV1(version: pv, createdAtUnixMs: createdAtUnixMs, body: body)
+        guard let createdAtUnixMs else {
+            throw CanonicalDecoderError.missingRequiredField(MessageField.createdAtUnixMs.rawValue)
+        }
+        guard let authorWayfarerId else {
+            throw CanonicalDecoderError.missingRequiredField(MessageField.authorWayfarerId.rawValue)
+        }
+        guard let body else {
+            throw CanonicalDecoderError.missingRequiredField(MessageField.body.rawValue)
+        }
+
+        return MessageV1(
+            version: pv,
+            createdAtUnixMs: createdAtUnixMs,
+            authorWayfarerId: authorWayfarerId,
+            body: body,
+            extensionMetadata: extensionMetadata
+        )
     }
 
     public enum CanonicalDecoderError: Swift.Error, Equatable {
         case invalidType
         case truncated
+        case missingRequiredField(UInt8)
+        case invalidFieldLength(fieldId: UInt8, expected: Int, actual: Int)
+        case duplicateField(UInt8)
+        case unknownField(UInt8)
+        case invalidExtensionMetadata
+        case reservedExtensionMetadataKey(String)
+    }
+
+    public enum ExtensionMetadataNamespace {
+        public static let reservedPrefixes: [String] = ["aethos.", "sys."]
+    }
+
+    private static func validateExtensionMetadata(_ raw: Data) throws {
+        let decoded = try CanonicalCBORDecoder().decode(raw)
+        guard case .map(let entries) = decoded else {
+            throw CanonicalDecoderError.invalidExtensionMetadata
+        }
+
+        for entry in entries {
+            guard case .text(let key) = entry.key else {
+                throw CanonicalDecoderError.invalidExtensionMetadata
+            }
+            if isReservedExtensionMetadataKey(key) {
+                throw CanonicalDecoderError.reservedExtensionMetadataKey(key)
+            }
+        }
+    }
+
+    private static func isReservedExtensionMetadataKey(_ key: String) -> Bool {
+        ExtensionMetadataNamespace.reservedPrefixes.contains { key.hasPrefix($0) }
     }
 
     private static func parseStringArray(_ raw: Data) throws -> [String] {

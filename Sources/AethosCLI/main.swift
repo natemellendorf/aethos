@@ -1603,7 +1603,8 @@ struct CLI {
                     "message_id": row.messageId.hexString,
                     "kind": row.kind,
                     "direction": row.direction.rawValue,
-                    "peer_from": row.peerFrom ?? NSNull(),
+                    "author_wayfarer_id": row.authorWayfarerId ?? NSNull(),
+                    "received_from_peer_id": row.receivedFromPeerId ?? NSNull(),
                     "peer_to": row.peerTo ?? NSNull(),
                     "created_at": iso8601(row.createdAt),
                 ]
@@ -1637,7 +1638,7 @@ struct CLI {
         }
 
         let decodedBody: String
-        if row.kind == "message.v1" {
+        if row.kind == "message.v2" {
             if let m = try? CanonicalEncoderV1.decodeMessage(canonical: row.canonical),
                let s = String(data: m.body, encoding: .utf8) {
                 decodedBody = s
@@ -1652,7 +1653,8 @@ struct CLI {
             "message_id": row.messageId.hexString,
             "kind": row.kind,
             "direction": row.direction.rawValue,
-            "peer_from": row.peerFrom ?? NSNull(),
+            "author_wayfarer_id": row.authorWayfarerId ?? NSNull(),
+            "received_from_peer_id": row.receivedFromPeerId ?? NSNull(),
             "peer_to": row.peerTo ?? NSNull(),
             "created_at": iso8601(row.createdAt),
             "canonical_hex": row.canonical.hexString,
@@ -1669,7 +1671,8 @@ struct CLI {
             print("message_id:  \(row.messageId.hexString)")
             print("kind:        \(row.kind)")
             print("direction:   \(row.direction.rawValue)")
-            print("peer_from:   \(row.peerFrom ?? "")")
+            print("author:      \(row.authorWayfarerId ?? "")")
+            print("from_peer:   \(row.receivedFromPeerId ?? "")")
             print("peer_to:     \(row.peerTo ?? "")")
             print("created_at:  \(iso8601(row.createdAt))")
             print("canonical:   \(row.canonical.hexString)")

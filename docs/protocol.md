@@ -1,71 +1,103 @@
-# Aethos Protocol v1 (MVP0)
+# Aethos Canonical Object Protocol (MVP0)
 
-Note: Scope split is strict.
-- `docs/spec/*` defines wire-level transports, frames, and protocol semantics.
-- `docs/protocol.md` defines core structures and their canonical byte encodings used by those wire contracts.
+This document defines canonical object bytes, object identity derivation, and strict decoding rules.
 
-Timestamp note: fields suffixed `UnixMs` use Unix epoch milliseconds (`UInt64`). Some transport-level contracts use Unix epoch seconds where explicitly specified.
+## 1. Scope and authority
 
-Frozen decisions:
-- CBOR for application payload content profiles (schema not defined in this document)
-- SHA-256 IDs
-- Ed25519 identity + receipt signatures
-- 32KB chunks (32768 bytes)
-- Envelope contains toWayfarerId (visible in MVP0)
+- `docs/protocol.md` is authoritative for canonical object encoding/decoding.
+- `docs/protocol/frames.md` is authoritative for gossip frame contracts.
+- Transport metadata and canonical object data are separate by design.
 
-Artifacts:
-- EnvelopeV1
-- ManifestV1
-- ChunkV1
-- ReceiptV1
+## 2. Frozen decisions
 
-## Canonical Bytes v1
+- Canonical object IDs use SHA-256 over canonical bytes.
+- Signatures use Ed25519.
+- CBOR is used where profile docs specify CBOR payloads.
+- Envelope includes `toWayfarerId` in MVP0.
 
-MVP0 uses a deterministic, byte-for-byte stable encoding for computing IDs.
+## 3. Canonical field envelope
 
-Encoding (per message):
-- `v`: 1 byte protocol version (currently `1`)
-- `t`: 1 byte type discriminator
-- Then a sequence of fields in stable order:
-  - `fieldId`: 1 byte
-  - `len`: 4 bytes big-endian `UInt32`
+Canonical object bytes use this binary format:
+
+- `version`: 1 byte
+- `type`: 1 byte
+- repeated fields in fixed order:
+  - `field_id`: 1 byte
+  - `len`: 4 byte big-endian unsigned length
   - `raw`: `len` bytes
 
-Integer raw encodings:
-- Timestamps: big-endian fixed-width `UInt64`
-- Array counts: big-endian fixed-width `UInt32`
+Decoders MUST fail closed when:
 
-Optional fields:
-- Always present; when nil, encode `len = 0` and no `raw` bytes.
+- required fields are missing,
+- required field lengths are malformed,
+- field IDs are duplicated,
+- unknown structural fields appear,
+- protocol version/type is unsupported.
 
-Arrays (`[Data]`) inside a field's `raw` bytes:
-- `count`: `UInt32`
-- For each item: `[len: UInt32][bytes]`
+No backward compatibility parsing is defined for author-less message objects.
 
-Type discriminators:
-- EnvelopeV1: `1`
-- ManifestV1: `2`
-- ReceiptV1: `4`
+## 4. Type discriminator allocation and reserved space
 
-### EnvelopeV1 Canonical Fields
+- Core object type range: `1...127`
+- Reserved future object type range: `128...255`
 
-Field ids (in order):
-- `1` toWayfarerId (bytes, exactly 32 raw bytes)
-- `2` manifestId (bytes)
-- `3` body (bytes)
+Currently assigned:
 
-`toWayfarerId` MUST be the 32-byte WayfarerID value (SHA-256 digest bytes), NOT the Ed25519 public key bytes.
+- `1`: envelope
+- `2`: manifest
+- `3`: message
+- `4`: receipt
+- `5`: inventory
+- `6`: inventory_request
+- `7`: sealed_envelope
 
-### ManifestV1 Canonical Fields
+Unsupported object type values MUST be rejected deterministically.
 
-Field ids (in order):
-- `1` totalSize (`UInt64` raw)
-- `2` chunkIds (`[Data]` raw array encoding)
+## 5. Message object contract (breaking v2)
 
-### ReceiptV1 Canonical Fields
+`MessageV1` now has a v2 wire contract and MUST decode only at `version=2`.
 
-Field ids (in order):
-- `1` envelopeId (bytes)
-- `2` manifestId (bytes)
-- `3` receivedAtUnixMs (`UInt64` raw)
-- `4` signature (bytes, optional; present with `len=0` when nil)
+Field IDs:
+
+- `1` `createdAtUnixMs` (`Int64`, 8 bytes)
+- `2` `authorWayfarerId` (32 raw bytes, required)
+- `3` `body` (bytes, required)
+- `4` `extensionMetadata` (optional CBOR map)
+
+Canonical author semantics:
+
+- `authorWayfarerId` is the only authoritative sender identity for a message object.
+- Transport peer identity (`received_from`, relay peer ID, socket peer, etc.) is metadata only.
+- Transport metadata MUST NOT override canonical author attribution.
+
+Hash/signature implications:
+
+- `authorWayfarerId` is inside canonical bytes.
+- Changing canonical author changes canonical bytes and therefore object hash/signature material.
+
+## 6. Extensibility discipline
+
+Structural unknowns:
+
+- Unknown structural fields are forbidden and MUST be rejected.
+
+Extension-safe container:
+
+- Unknown keys are only tolerated in `extensionMetadata` (message field `4`).
+- `extensionMetadata` MUST be a CBOR map with text keys.
+
+Reserved extension namespaces:
+
+- `aethos.*` reserved for core protocol evolution.
+- `sys.*` reserved for runtime/system use.
+
+Payloads using reserved prefixes in `extensionMetadata` MUST be rejected.
+
+## 7. Transport metadata separation
+
+Stores and APIs SHOULD persist both:
+
+- canonical author (`author_wayfarer_id`), and
+- transport peer metadata (`received_from_peer_id`) when available.
+
+These values represent different trust domains and MUST remain separate fields.

@@ -228,32 +228,39 @@ public struct ErrorFrame: Codable, Sendable {
 /// A received message parsed from the wire format, ready for application use.
 public struct ReceivedMessage: Sendable, Identifiable {
     public let id: String  // msgId
-    public let from: WayfarerID
+    public let transportPeer: WayfarerID
+    public let canonicalAuthor: WayfarerID
     public let payload: Data
     public let receivedAt: Date
     public let wireBytes: Data  // Original CBOR wire bytes for storage
 
     public init(
         msgId: String,
-        from: WayfarerID,
+        transportPeer: WayfarerID,
+        canonicalAuthor: WayfarerID,
         payload: Data,
         receivedAt: Date,
         wireBytes: Data
     ) {
         self.id = msgId
-        self.from = from
+        self.transportPeer = transportPeer
+        self.canonicalAuthor = canonicalAuthor
         self.payload = payload
         self.receivedAt = receivedAt
         self.wireBytes = wireBytes
     }
 
     public init?(msgId: String, fromHex: String, payloadB64: String, receivedAt: Date, wireBytes: Data) {
-        guard let from = WayfarerID(hexString: fromHex),
-              let payload = try? WireBase64.decodeUrl(payloadB64) else {
+        guard let transportPeer = WayfarerID(hexString: fromHex),
+              let payload = try? WireBase64.decodeUrl(payloadB64),
+              let message = try? CanonicalEncoderV1.decodeMessage(canonical: payload),
+              let canonicalAuthor = WayfarerID(data: message.authorWayfarerId)
+        else {
             return nil
         }
         self.id = msgId
-        self.from = from
+        self.transportPeer = transportPeer
+        self.canonicalAuthor = canonicalAuthor
         self.payload = payload
         self.receivedAt = receivedAt
         self.wireBytes = wireBytes

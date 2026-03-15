@@ -45,13 +45,22 @@ public struct InboxItem: Equatable, Sendable {
     public let id: Data
     public let kind: Kind
     public let payload: Data
+    public let receivedFromPeerId: String?
     public let receivedAt: Date
     public let expiresAt: Date?
 
-    public init(id: Data, kind: Kind, payload: Data, receivedAt: Date, expiresAt: Date? = nil) {
+    public init(
+        id: Data,
+        kind: Kind,
+        payload: Data,
+        receivedFromPeerId: String? = nil,
+        receivedAt: Date,
+        expiresAt: Date? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.payload = payload
+        self.receivedFromPeerId = receivedFromPeerId
         self.receivedAt = receivedAt
         self.expiresAt = expiresAt
     }
@@ -125,7 +134,8 @@ public final class AethosStore {
         public let messageId: Data
         public let kind: String
         public let direction: Direction
-        public let peerFrom: String?
+        public let authorWayfarerId: String?
+        public let receivedFromPeerId: String?
         public let peerTo: String?
         public let createdAt: Date
         public let canonical: Data
@@ -134,7 +144,8 @@ public final class AethosStore {
             messageId: Data,
             kind: String,
             direction: Direction,
-            peerFrom: String?,
+            authorWayfarerId: String?,
+            receivedFromPeerId: String?,
             peerTo: String?,
             createdAt: Date,
             canonical: Data
@@ -142,7 +153,8 @@ public final class AethosStore {
             self.messageId = messageId
             self.kind = kind
             self.direction = direction
-            self.peerFrom = peerFrom
+            self.authorWayfarerId = authorWayfarerId
+            self.receivedFromPeerId = receivedFromPeerId
             self.peerTo = peerTo
             self.createdAt = createdAt
             self.canonical = canonical
@@ -172,7 +184,7 @@ public final class AethosStore {
 
     // MARK: Schema version
 
-    private static let currentSchemaVersion: Int = 7
+    private static let currentSchemaVersion: Int = 8
 
     public init(path: URL) throws {
         try FileManager.default.createDirectory(
@@ -257,6 +269,13 @@ public final class AethosStore {
     // MARK: Outbox
 
     public func enqueue(item: OutboxItem) throws {
+        let decodedMessage: MessageV1?
+        if item.kind == .message {
+            decodedMessage = try CanonicalEncoderV1.decodeMessage(canonical: item.payload)
+        } else {
+            decodedMessage = nil
+        }
+
         let sql = """
         INSERT OR IGNORE INTO outbox (id, kind, payload, status, enqueued_at, updated_at, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?);
@@ -277,12 +296,13 @@ public final class AethosStore {
         try stepDone(stmt)
 
         // Messages are durable protocol objects; record them as outbound.
-        if item.kind == .message {
+        if let message = decodedMessage {
             try recordMessage(MessageRow(
                 messageId: item.id,
-                kind: "message.v1",
+                kind: "message.v2",
                 direction: .outbound,
-                peerFrom: nil,
+                authorWayfarerId: Hex.encode(message.authorWayfarerId),
+                receivedFromPeerId: nil,
                 peerTo: nil,
                 createdAt: item.enqueuedAt,
                 canonical: item.payload
@@ -504,6 +524,13 @@ public final class AethosStore {
     // MARK: Inbox
 
     public func recordReceived(item: InboxItem) throws {
+        let decodedMessage: MessageV1?
+        if item.kind == .message {
+            decodedMessage = try CanonicalEncoderV1.decodeMessage(canonical: item.payload)
+        } else {
+            decodedMessage = nil
+        }
+
         let sql = """
         INSERT OR IGNORE INTO inbox (id, kind, payload, received_at, expires_at)
         VALUES (?, ?, ?, ?, ?);
@@ -520,14 +547,13 @@ public final class AethosStore {
         try stepDone(stmt)
 
         // Messages are durable protocol objects; record them as inbound.
-        if item.kind == .message {
-            // Best-effort: only record if the payload looks like MessageV1.
-            guard (try? CanonicalEncoderV1.decodeMessage(canonical: item.payload)) != nil else { return }
+        if let message = decodedMessage {
             try recordMessage(MessageRow(
                 messageId: item.id,
-                kind: "message.v1",
+                kind: "message.v2",
                 direction: .inbound,
-                peerFrom: nil,
+                authorWayfarerId: Hex.encode(message.authorWayfarerId),
+                receivedFromPeerId: item.receivedFromPeerId,
                 peerTo: nil,
                 createdAt: item.receivedAt,
                 canonical: item.payload
@@ -1269,6 +1295,7 @@ public final class AethosStore {
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 1:
             try migrateV1toV2()
@@ -1277,6 +1304,7 @@ public final class AethosStore {
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 2:
             try migrateV2toV3()
@@ -1284,24 +1312,32 @@ public final class AethosStore {
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 3:
             try migrateV3toV4()
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 4:
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 5:
             try migrateV5toV6()
             try migrateV6toV7()
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 6:
             try migrateV6toV7()
+            try migrateV7toV8()
+            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
+        case 7:
+            try migrateV7toV8()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case Self.currentSchemaVersion:
             return
@@ -1412,6 +1448,51 @@ public final class AethosStore {
         );
         CREATE INDEX IF NOT EXISTS idx_gossip_objects_expiry_item_id
         ON gossip_objects(expiry_unix_ms, item_id);
+        """)
+    }
+
+    private func migrateV7toV8() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS messages (
+            message_id BLOB PRIMARY KEY NOT NULL,
+            kind TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            author_wayfarer_id TEXT NOT NULL,
+            received_from_peer_id TEXT,
+            peer_to TEXT,
+            created_at INTEGER NOT NULL,
+            canonical BLOB NOT NULL
+        );
+        """)
+
+        let hasLegacyPeerFrom = try tableHasColumn(table: "messages", column: "peer_from")
+
+        try addColumnIfMissing(
+            table: "messages",
+            column: "author_wayfarer_id",
+            definition: "TEXT"
+        )
+        try addColumnIfMissing(
+            table: "messages",
+            column: "received_from_peer_id",
+            definition: "TEXT"
+        )
+
+        if hasLegacyPeerFrom {
+            try exec("""
+            UPDATE messages
+            SET received_from_peer_id = peer_from
+            WHERE received_from_peer_id IS NULL
+              AND peer_from IS NOT NULL
+              AND peer_from != '';
+            """)
+        }
+
+        try exec("""
+        CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+        CREATE INDEX IF NOT EXISTS idx_messages_direction_created_at ON messages(direction, created_at);
+        CREATE INDEX IF NOT EXISTS idx_messages_kind_created_at ON messages(kind, created_at);
+        CREATE INDEX IF NOT EXISTS idx_messages_author_created_at ON messages(author_wayfarer_id, created_at);
         """)
     }
 
@@ -1532,9 +1613,19 @@ public final class AethosStore {
     // MARK: Messages
 
     public func recordMessage(_ row: MessageRow) throws {
+        guard row.kind == "message.v2" else {
+            throw StoreError.sqliteError("messages.kind must be message.v2")
+        }
+
+        let decoded = try CanonicalEncoderV1.decodeMessage(canonical: row.canonical)
+        let canonicalAuthorWayfarerId = Hex.encode(decoded.authorWayfarerId)
+        guard row.authorWayfarerId == canonicalAuthorWayfarerId else {
+            throw StoreError.sqliteError("author_wayfarer_id must match canonical message author")
+        }
+
         let sql = """
-        INSERT OR IGNORE INTO messages (message_id, kind, direction, peer_from, peer_to, created_at, canonical)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT OR IGNORE INTO messages (message_id, kind, direction, author_wayfarer_id, received_from_peer_id, peer_to, created_at, canonical)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -1542,16 +1633,17 @@ public final class AethosStore {
         try bindData(stmt, index: 1, data: row.messageId)
         try bindText(stmt, index: 2, text: row.kind)
         try bindText(stmt, index: 3, text: row.direction.rawValue)
-        try bindNullableText(stmt, index: 4, text: row.peerFrom)
-        try bindNullableText(stmt, index: 5, text: row.peerTo)
-        try bindInt64(stmt, index: 6, value: Self.epochSeconds(row.createdAt))
-        try bindData(stmt, index: 7, data: row.canonical)
+        try bindNullableText(stmt, index: 4, text: row.authorWayfarerId)
+        try bindNullableText(stmt, index: 5, text: row.receivedFromPeerId)
+        try bindNullableText(stmt, index: 6, text: row.peerTo)
+        try bindInt64(stmt, index: 7, value: Self.epochSeconds(row.createdAt))
+        try bindData(stmt, index: 8, data: row.canonical)
         try stepDone(stmt)
     }
 
     public func listMessages(limit: Int = 100) throws -> [MessageRow] {
         let sql = """
-        SELECT message_id, kind, direction, peer_from, peer_to, created_at, canonical
+        SELECT message_id, kind, direction, author_wayfarer_id, received_from_peer_id, peer_to, created_at, canonical
         FROM messages
         ORDER BY created_at DESC, rowid DESC
         LIMIT ?;
@@ -1569,16 +1661,26 @@ public final class AethosStore {
             guard let id = columnData(stmt, index: 0),
                   let kind = columnText(stmt, index: 1),
                   let directionStr = columnText(stmt, index: 2),
-                  let canonical = columnData(stmt, index: 6)
+                  let canonical = columnData(stmt, index: 7)
             else {
                 throw StoreError.sqliteError("Unexpected NULL column in messages")
             }
 
-            let peerFrom = columnText(stmt, index: 3)
-            let peerTo = columnText(stmt, index: 4)
-            let createdAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 5)))
+            let authorWayfarerId = columnText(stmt, index: 3)
+            let receivedFromPeerId = columnText(stmt, index: 4)
+            let peerTo = columnText(stmt, index: 5)
+            let createdAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 6)))
             let direction = MessageRow.Direction(rawValue: directionStr) ?? .inbound
-            rows.append(MessageRow(messageId: id, kind: kind, direction: direction, peerFrom: peerFrom, peerTo: peerTo, createdAt: createdAt, canonical: canonical))
+            rows.append(MessageRow(
+                messageId: id,
+                kind: kind,
+                direction: direction,
+                authorWayfarerId: authorWayfarerId,
+                receivedFromPeerId: receivedFromPeerId,
+                peerTo: peerTo,
+                createdAt: createdAt,
+                canonical: canonical
+            ))
         }
 
         return rows
@@ -1586,7 +1688,7 @@ public final class AethosStore {
 
     public func getMessage(id: Data) throws -> MessageRow? {
         let sql = """
-        SELECT message_id, kind, direction, peer_from, peer_to, created_at, canonical
+        SELECT message_id, kind, direction, author_wayfarer_id, received_from_peer_id, peer_to, created_at, canonical
         FROM messages
         WHERE message_id = ?
         LIMIT 1;
@@ -1601,15 +1703,25 @@ public final class AethosStore {
             guard let msgId = columnData(stmt, index: 0),
                   let kind = columnText(stmt, index: 1),
                   let directionStr = columnText(stmt, index: 2),
-                  let canonical = columnData(stmt, index: 6)
+                  let canonical = columnData(stmt, index: 7)
             else {
                 throw StoreError.sqliteError("Unexpected NULL column in messages")
             }
-            let peerFrom = columnText(stmt, index: 3)
-            let peerTo = columnText(stmt, index: 4)
-            let createdAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 5)))
+            let authorWayfarerId = columnText(stmt, index: 3)
+            let receivedFromPeerId = columnText(stmt, index: 4)
+            let peerTo = columnText(stmt, index: 5)
+            let createdAt = Date(timeIntervalSince1970: TimeInterval(columnInt64(stmt, index: 6)))
             let direction = MessageRow.Direction(rawValue: directionStr) ?? .inbound
-            return MessageRow(messageId: msgId, kind: kind, direction: direction, peerFrom: peerFrom, peerTo: peerTo, createdAt: createdAt, canonical: canonical)
+            return MessageRow(
+                messageId: msgId,
+                kind: kind,
+                direction: direction,
+                authorWayfarerId: authorWayfarerId,
+                receivedFromPeerId: receivedFromPeerId,
+                peerTo: peerTo,
+                createdAt: createdAt,
+                canonical: canonical
+            )
         case SQLITE_DONE:
             return nil
         default:

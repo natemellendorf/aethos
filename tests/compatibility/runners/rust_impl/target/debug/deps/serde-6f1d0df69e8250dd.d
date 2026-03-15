@@ -1,0 +1,14 @@
+/home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/deps/serde-6f1d0df69e8250dd.d: /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/build/serde-252a9bbeccb60cd9/out/private.rs
+
+/home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/deps/libserde-6f1d0df69e8250dd.rlib: /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/build/serde-252a9bbeccb60cd9/out/private.rs
+
+/home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/deps/libserde-6f1d0df69e8250dd.rmeta: /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/build/serde-252a9bbeccb60cd9/out/private.rs
+
+/home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/build/serde-252a9bbeccb60cd9/out/private.rs:
+
+# env-dep:OUT_DIR=/home/alpha/repos/aethos/tests/compatibility/runners/rust_impl/target/debug/build/serde-252a9bbeccb60cd9/out

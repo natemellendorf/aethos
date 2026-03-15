@@ -284,7 +284,11 @@ func base64DecodeInvalid() {
 func receivedMessageFromValidData() {
     let msgId = "msg-001"
     let fromHex = "a1b2c3d4e5f607182938475664738290abcdef1234567890abcdef0123456789"
-    let payloadB64 = "aGVsbG8="  // "hello"
+    let author = Data(repeating: 0xa1, count: 32)
+    let canonicalMessage = CanonicalEncoderV1.encode(
+        MessageV1(createdAtUnixMs: 123_456, authorWayfarerId: author, body: Data("hello".utf8))
+    )
+    let payloadB64 = WireBase64.encode(canonicalMessage)
     let receivedAt = Date(timeIntervalSince1970: 1234567890)
     let wireBytes = Data("{}".utf8)
 
@@ -298,8 +302,9 @@ func receivedMessageFromValidData() {
 
     #expect(message != nil)
     #expect(message?.id == msgId)
-    #expect(message?.from.rawValue == fromHex.lowercased())
-    #expect(String(data: message?.payload ?? Data(), encoding: .utf8) == "hello")
+    #expect(message?.transportPeer.rawValue == fromHex.lowercased())
+    #expect(message?.canonicalAuthor.rawValue == author.hexString)
+    #expect(message?.payload == canonicalMessage)
 }
 
 @Test
@@ -338,6 +343,66 @@ func receivedMessageFromInvalidWayfarerId() {
     )
 
     #expect(message == nil)
+}
+
+@Test
+func receivedMessageRejectsPayloadWithoutCanonicalAuthor() {
+    let msgId = "msg-002"
+    let fromHex = "a1b2c3d4e5f607182938475664738290abcdef1234567890abcdef0123456789"
+    let invalidCanonical = Data(hex: "01030100000008000000000000000103000000026869")
+    let payloadB64 = WireBase64.encode(invalidCanonical)
+
+    let message = ReceivedMessage(
+        msgId: msgId,
+        fromHex: fromHex,
+        payloadB64: payloadB64,
+        receivedAt: Date(),
+        wireBytes: Data("{}".utf8)
+    )
+
+    #expect(message == nil)
+}
+
+@Test
+func receivedMessagePreservesTransportPeerWhenPeerDiffersFromCanonicalAuthor() {
+    let msgId = "msg-003"
+    let transportPeerHex = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    let canonicalAuthor = Data(repeating: 0xaa, count: 32)
+    let canonicalPayload = CanonicalEncoderV1.encode(
+        MessageV1(createdAtUnixMs: 12, authorWayfarerId: canonicalAuthor, body: Data("relay".utf8))
+    )
+    let payloadB64 = WireBase64.encode(canonicalPayload)
+
+    let message = ReceivedMessage(
+        msgId: msgId,
+        fromHex: transportPeerHex,
+        payloadB64: payloadB64,
+        receivedAt: Date(),
+        wireBytes: Data("{}".utf8)
+    )
+
+    #expect(message != nil)
+    #expect(message?.transportPeer.rawValue == transportPeerHex)
+    #expect(message?.canonicalAuthor.rawValue == canonicalAuthor.hexString)
+    #expect(message?.transportPeer != message?.canonicalAuthor)
+}
+
+private extension Data {
+    init(hex: String) {
+        var bytes = Data()
+        bytes.reserveCapacity(hex.count / 2)
+
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            let slice = hex[index..<next]
+            let byte = UInt8(slice, radix: 16)!
+            bytes.append(byte)
+            index = next
+        }
+
+        self = bytes
+    }
 }
 
 // MARK: - RelayLinkConfig Tests

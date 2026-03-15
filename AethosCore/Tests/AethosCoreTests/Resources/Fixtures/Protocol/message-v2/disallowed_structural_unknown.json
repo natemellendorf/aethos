@@ -1,0 +1,5 @@
+{
+  "canonicalHex": "0203010000000800000000000000020200000020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc03000000026f6b7f00000001ff",
+  "transportPeerHex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expectedAuthorWayfarerId": ""
+}

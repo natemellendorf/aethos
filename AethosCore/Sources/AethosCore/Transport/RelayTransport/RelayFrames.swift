@@ -11,6 +11,14 @@ import Foundation
 /// Federation scaffold frames: relayPeerHello, relayInventory, relayForward
 public enum RelayFrame: Equatable, Sendable {
 
+    public enum TypeSpace {
+        public static let legacyControlRange: ClosedRange<UInt8> = 0x01...0x0F
+        public static let clientRange: ClosedRange<UInt8> = 0x10...0x1F
+        public static let relayRange: ClosedRange<UInt8> = 0x20...0x2F
+        public static let reservedFutureRange: ClosedRange<UInt8> = 0x30...0xEF
+        public static let reservedErrorRange: ClosedRange<UInt8> = 0xF0...0xFF
+    }
+
     // -- Client frames --
 
     /// Client announces itself to a relay with its wayfarer ID.
@@ -69,6 +77,20 @@ public enum RelayFrame: Equatable, Sendable {
     public static let relayInventoryTypeId: UInt8 = 0x21
     public static let relayForwardTypeId: UInt8 = 0x22
     public static let envelopeTypeId: UInt8 = 0x01
+
+    public static let assignedTypeIDs: [UInt8] = [
+        envelopeTypeId,
+        ackTypeId,
+        nackTypeId,
+        heartbeatTypeId,
+        heartbeatAckTypeId,
+        clientHelloTypeId,
+        publishTypeId,
+        deliverTypeId,
+        relayPeerHelloTypeId,
+        relayInventoryTypeId,
+        relayForwardTypeId,
+    ]
 
     /// Encode the frame for wire transport.
     /// Uses custom binary framing with length-prefixed payloads.

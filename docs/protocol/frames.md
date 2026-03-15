@@ -46,6 +46,16 @@ Protocol magic decision for v1:
 - Stream bearers: each frame **MUST** be prefixed by a 32-bit big-endian unsigned length (`frame_len`), followed by exactly `frame_len` bytes of canonical CBOR envelope.
 - `frame_len` **MUST NOT** exceed `MAX_FRAME_BYTES`.
 
+Relay binary frame type space allocation (for `RelayFrame` transport framing):
+
+- `0x01...0x0F`: legacy/control
+- `0x10...0x1F`: client-relay operational frames
+- `0x20...0x2F`: relay-relay/federation scaffold frames
+- `0x30...0xEF`: reserved for future protocol assignment
+- `0xF0...0xFF`: reserved error/control escape space
+
+Values in reserved ranges that are not explicitly assigned **MUST** be rejected.
+
 ## 3. Common scalar definitions
 
 - `item_id`: lowercase hex SHA-256 digest, exactly 64 chars (`[0-9a-f]{64}`).
@@ -357,6 +367,17 @@ Additional Recommended Vectors:
 3. Missing required fields **MUST** be rejected.
 4. Invalid hash, malformed encoding, malformed base64url, or expired objects **MUST** be rejected.
 5. Bearer metadata **MUST NOT** alter acceptance semantics.
+6. Bearer peer identity metadata **MUST NOT** override canonical object authorship.
+
+## 6.1 Status/error namespace reservation
+
+String status/error code namespaces are reserved as follows:
+
+- `AUTH_*`: authentication and identity failures
+- `PROTO_*`: deterministic protocol/schema failures
+- `TRANSIENT_*`: retryable transport/runtime faults
+
+Implementations **MUST NOT** reinterpret unknown namespaces as successful outcomes.
 
 ## 7. Forwarding semantics anchor
 

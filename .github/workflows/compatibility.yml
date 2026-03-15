@@ -1,0 +1,32 @@
+name: compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  protocol-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare runner scripts
+        run: chmod +x tests/compatibility/runners/go_runner tests/compatibility/runners/rust_runner tests/compatibility/runners/swift_runner
+
+      - name: Run compatibility harness
+        run: python3 tests/compatibility/harness.py --verbose

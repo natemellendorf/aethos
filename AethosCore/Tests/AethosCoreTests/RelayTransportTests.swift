@@ -108,6 +108,27 @@ func relayFrameDecodeReturnsNilForInvalidType() throws {
     #expect(decoded == nil)
 }
 
+@Test
+func relayFrameAssignedTypeIDsAvoidReservedRanges() {
+    let ids = RelayFrame.assignedTypeIDs
+    #expect(Set(ids).count == ids.count)
+
+    for id in ids {
+        #expect(!RelayFrame.TypeSpace.reservedFutureRange.contains(id))
+        #expect(!RelayFrame.TypeSpace.reservedErrorRange.contains(id))
+    }
+}
+
+@Test
+func relayFrameDecodeRejectsReservedFutureTypeID() throws {
+    var bytes = Data([0x30])
+    var length: UInt32 = 0
+    bytes.append(contentsOf: withUnsafeBytes(of: &length) { Data($0) })
+
+    let decoded = try RelayFrame.decode(bytes)
+    #expect(decoded == nil)
+}
+
 // MARK: - Federation Frame Encode/Decode Tests
 
 @Test

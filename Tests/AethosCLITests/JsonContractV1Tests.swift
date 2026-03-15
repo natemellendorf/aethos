@@ -192,9 +192,10 @@ func messagesListJsonContractV1_snapshot() throws {
 func messagesShowJsonContractV1_snapshot() throws {
     let msg: [String: Any] = [
         "message_id": String(repeating: "0", count: 64),
-        "kind": "message.v1",
+        "kind": "message.v2",
         "direction": "inbound",
-        "peer_from": NSNull(),
+        "author_wayfarer_id": String(repeating: "a", count: 64),
+        "received_from_peer_id": NSNull(),
         "peer_to": NSNull(),
         "created_at": "1970-01-01T00:00:00Z",
         "canonical_hex": "",
