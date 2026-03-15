@@ -157,6 +157,115 @@ Mixed-validity semantics:
 3. A receiver MUST accept all valid objects even when one or more objects in the same frame are invalid.
 4. Object-level rejections MUST be treated as non-fatal (they MUST NOT terminate the encounter).
 
+#### 5.4.1 Canonical Envelope schema and serialization semantics
+
+The Envelope is the canonical payload unit in gossip transfer. It is encoded as a canonical CBOR map.
+
+Canonical Envelope schema (required keys):
+
+```cbor
+{
+  to_wayfarer_id: bstr(32),
+  manifest_id: bstr(32),
+  body: bstr
+}
+```
+
+Field definitions:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `to_wayfarer_id` | `bstr(32)` | Yes | 32-byte destination Wayfarer identifier. |
+| `manifest_id` | `bstr(32)` | Yes | 32-byte manifest identifier for the payload. |
+| `body` | `bstr` | Yes | Opaque payload bytes carried by the envelope. |
+
+Canonical serialization requirements:
+
+1. Envelope serialization **MUST** use canonical deterministic CBOR encoding (RFC 8949 deterministic encoding).
+2. Envelope map keys **MUST** be UTF-8 strings.
+3. Envelope map keys **MUST** follow canonical CBOR key ordering.
+4. Implementations **MUST** produce deterministic output bytes for the same logical envelope.
+5. Pseudo procedure: `envelope_bytes = CBOR.canonical_encode(Envelope)`.
+6. Non-canonical CBOR, JSON, and custom binary envelope formats **MUST NOT** be used for gossip transfer.
+
+Item ID derivation:
+
+1. `item_id` **MUST** be derived as `SHA256(envelope_bytes)`.
+2. The hash **MUST** be computed over the exact serialized envelope bytes.
+3. Any serialization change changes `item_id`.
+4. Relays **MUST NOT** modify envelope bytes.
+
+TRANSFER frame encoding requirements:
+
+1. `TRANSFER.objects[].envelope_b64` **MUST** contain `base64url(envelope_bytes)`.
+2. `envelope_b64` **MUST** use the base64url alphabet with no padding.
+3. `envelope_b64` content **MUST** represent canonical envelope bytes exactly.
+
+Short JSON example:
+
+```json
+{
+  "type": "TRANSFER",
+  "payload": {
+    "objects": [
+      {
+        "item_id": "4d7d8d41f37f7d3cf2f0e8d0df43c275ec8d6ca1f8d89a78fb2f932f72f31c5a",
+        "envelope_b64": "omRib2R5RWhlbGxva21hbmlmZXN0X2lkWCBERERERERERERERERERERERERERERERERERERERERERW50b193YXlmYXJlcl9pZFggQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+        "expiry_unix_ms": 1735689600000,
+        "hop_count": 0
+      }
+    ]
+  }
+}
+```
+
+Decoder validation rules:
+
+1. Decoder **MUST** base64url-decode `envelope_b64`.
+2. Decoder **MUST** verify `sha256(decoded_envelope_bytes)` equals the declared `item_id`.
+3. Decoder **MUST** decode `decoded_envelope_bytes` as CBOR.
+4. Decoder **MUST** validate the Envelope schema (`to_wayfarer_id`, `manifest_id`, `body` with required types).
+5. Invalid objects **MUST** be rejected.
+6. Rejection of one object **MUST NOT** terminate processing of other objects in the same `TRANSFER` frame.
+
+Forward compatibility:
+
+1. Future envelope versions **MAY** add keys.
+2. Receivers **MUST** ignore unknown envelope keys.
+3. Existing keys **MUST NOT** change meaning.
+
+Security properties:
+
+1. Canonical serialization provides integrity-stable hashing.
+2. Deterministic encoding provides deterministic deduplication by `item_id`.
+3. Relay neutrality requires relays to treat envelope bytes as immutable.
+
+Implementation guidance:
+
+| Language | Library | Guidance |
+| --- | --- | --- |
+| Go | `fxamacker/cbor` | **MUST** enable canonical/deterministic encoding mode. |
+| Rust | `serde_cbor` (deterministic mode) | **MUST** enable deterministic/canonical serialization mode. |
+| Swift | `SwiftCBOR` | **MUST** configure canonical CBOR emission. |
+
+Testing recommendations:
+
+1. Implementations **SHOULD** include test vectors for deterministic envelope bytes.
+2. Implementations **SHOULD** include test vectors for canonical key ordering.
+3. Implementations **SHOULD** include test vectors for `item_id` hash derivation from serialized bytes.
+4. Implementations **SHOULD** include test vectors for base64url encode/decode round-trip of canonical bytes.
+
+Example reference flow:
+
+```text
+1) Build Envelope with body = h'68656c6c6f' ("hello") plus 32-byte to_wayfarer_id and manifest_id.
+2) Canonically CBOR-encode Envelope to envelope_bytes.
+3) Compute item_id = SHA256(envelope_bytes).
+4) Encode envelope_b64 = base64url(envelope_bytes) with no padding.
+5) Transmit in TRANSFER.objects[] with item_id and envelope_b64.
+6) Receiver decodes base64url, re-hashes bytes, validates item_id, decodes CBOR, validates schema, then accepts object.
+```
+
 ### 5.5 RECEIPT (`type="RECEIPT"`)
 
 Required payload fields:
