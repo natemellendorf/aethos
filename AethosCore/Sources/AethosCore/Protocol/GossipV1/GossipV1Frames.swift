@@ -35,6 +35,7 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case summaryPreviewNotLexicographicallySorted
     case summaryPreviewCursorWithoutItems
     case summaryPreviewCursorMustEqualLastPreviewItem
+    @available(*, deprecated, message: "Obsolete since cursor invariants now require equality with the last preview item; this case is no longer emitted.")
     case summaryPreviewCursorBeforeLastPreviewItem
     case transferTooManyObjects(max: Int, actual: Int)
     case transferTotalEnvelopeBytesTooLarge(max: Int, actual: Int)
