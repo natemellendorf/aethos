@@ -29,9 +29,10 @@ All frames **MUST** use this envelope:
 ```
 
 - `type` **MUST** be one of: `"HELLO"`, `"SUMMARY"`, `"REQUEST"`, `"TRANSFER"`, `"RECEIPT"`, `"RELAY_INGEST"`.
-- `payload` **MUST** contain exactly the required fields for that frame type.
+- `payload` key handling for `GOSSIP_VERSION=1`:
+  - For all frame types except `SUMMARY`, payload keys **MUST** match exactly the required fields for that frame type.
+  - For `SUMMARY`, payload **MUST** include required fields, MAY include defined optional preview fields, and unknown payload keys **SHOULD** be ignored for forward compatibility.
 - Unknown top-level envelope keys **MUST** be ignored for forward compatibility.
-- Unknown required payload fields for `GOSSIP_VERSION=1` **MUST** cause frame rejection.
 
 Protocol magic decision for v1:
 
@@ -97,10 +98,20 @@ Required payload fields:
 - `bloom_filter: bstr` (exactly `BLOOM_FILTER_BYTES` bytes)
 - `item_count: uint`
 
+Optional payload fields:
+
+- `preview_item_ids: array<item_id>`
+- `preview_cursor: item_id`
+
 Validation:
 
 1. `bloom_filter` length **MUST** equal `BLOOM_FILTER_BYTES`.
 2. `item_count` **MUST** equal local eligible object count at emission time.
+3. `preview_item_ids` length **MUST** be `<= MAX_SUMMARY_PREVIEW_ITEMS`.
+4. `preview_item_ids` entries **MUST** be unique.
+5. `preview_item_ids` entries **MUST** be sorted by bytewise lexicographic order of decoded digest bytes (ascending).
+6. If `preview_item_ids` is empty, `preview_cursor` **MUST** be absent.
+7. If `preview_cursor` is present, it **MUST** equal the last element of `preview_item_ids`.
 
 ### 5.3 REQUEST (`type="REQUEST"`)
 

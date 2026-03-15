@@ -31,6 +31,11 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
 
     case wantTooManyItems(max: Int, actual: Int)
     case wantNotLexicographicallySorted
+    case summaryPreviewTooManyItems(max: Int, actual: Int)
+    case summaryPreviewNotLexicographicallySorted
+    case summaryPreviewCursorWithoutItems
+    case summaryPreviewCursorMustEqualLastPreviewItem
+    case summaryPreviewCursorBeforeLastPreviewItem
     case transferTooManyObjects(max: Int, actual: Int)
     case transferTotalEnvelopeBytesTooLarge(max: Int, actual: Int)
     case transferEnvelopeNotCanonical
@@ -225,20 +230,62 @@ public struct GossipV1HelloFrame: Equatable, Sendable {
 public struct GossipV1SummaryFrame: Equatable, Sendable {
     public let bloomFilter: Data
     public let itemCount: UInt64
+    public let previewItemIDs: [GossipV1ItemID]
+    public let previewCursor: GossipV1ItemID?
 
-    public init(bloomFilter: Data, itemCount: UInt64) throws {
+    public init(
+        bloomFilter: Data,
+        itemCount: UInt64,
+        previewItemIDs: [GossipV1ItemID] = [],
+        previewCursor: GossipV1ItemID? = nil
+    ) throws {
         guard bloomFilter.count == GossipV1.BLOOM_FILTER_BYTES else {
             throw GossipV1FrameError.invalidBloomByteCount(
                 expected: GossipV1.BLOOM_FILTER_BYTES,
                 actual: bloomFilter.count
             )
         }
+        guard previewItemIDs.count <= GossipV1.MAX_SUMMARY_PREVIEW_ITEMS else {
+            throw GossipV1FrameError.summaryPreviewTooManyItems(
+                max: GossipV1.MAX_SUMMARY_PREVIEW_ITEMS,
+                actual: previewItemIDs.count
+            )
+        }
+        guard Self.isLexicographicallySortedByRawDigestBytes(previewItemIDs) else {
+            throw GossipV1FrameError.summaryPreviewNotLexicographicallySorted
+        }
+        guard Set(previewItemIDs).count == previewItemIDs.count else {
+            throw GossipV1FrameError.duplicateItemID
+        }
+        if previewItemIDs.isEmpty {
+            guard previewCursor == nil else {
+                throw GossipV1FrameError.summaryPreviewCursorWithoutItems
+            }
+        } else if let previewCursor {
+            guard previewCursor == previewItemIDs.last else {
+                throw GossipV1FrameError.summaryPreviewCursorMustEqualLastPreviewItem
+            }
+        }
         self.bloomFilter = bloomFilter
         self.itemCount = itemCount
+        self.previewItemIDs = previewItemIDs
+        self.previewCursor = previewCursor
     }
 
     public func encode() -> Data {
         GossipV1CBOR.encodeEnvelope(type: .SUMMARY, payload: payloadCBOR())
+    }
+
+    private static func isLexicographicallySortedByRawDigestBytes(_ ids: [GossipV1ItemID]) -> Bool {
+        guard ids.count >= 2 else { return true }
+        for i in 1..<ids.count {
+            let previous = ids[i - 1].rawBytes()
+            let next = ids[i].rawBytes()
+            if DataLexicographic.compare(previous, next) == .orderedDescending {
+                return false
+            }
+        }
+        return true
     }
 }
 
@@ -446,6 +493,17 @@ internal enum GossipV1CBOR {
         }
     }
 
+    static func requirePayloadContainsRequiredKeys(_ payload: [String: CanonicalCBORValue], required: [String]) throws {
+        let requiredSet = Set(required)
+        let actualSet = Set(payload.keys)
+        guard requiredSet.isSubset(of: actualSet) else {
+            throw GossipV1FrameError.payloadKeysMismatch(
+                expected: required.sorted(),
+                actual: payload.keys.sorted()
+            )
+        }
+    }
+
     static func requireText(_ value: CanonicalCBORValue, field: String) throws -> String {
         guard case .text(let s) = value else { throw GossipV1FrameError.invalidScalar(field: field) }
         return s
@@ -551,22 +609,56 @@ private extension GossipV1HelloFrame {
 
 private extension GossipV1SummaryFrame {
     static let requiredKeys = ["bloom_filter", "item_count"]
+    static let previewItemIDsKey = "preview_item_ids"
+    static let previewCursorKey = "preview_cursor"
 
     func payloadCBOR() -> CanonicalCBORValue {
-        .map([
+        var entries: [CanonicalCBORValue.MapEntry] = [
             .init(key: .text("bloom_filter"), value: .bytes(bloomFilter)),
             .init(key: .text("item_count"), value: .unsigned(itemCount)),
-        ])
+            .init(
+                key: .text(Self.previewItemIDsKey),
+                value: .array(previewItemIDs.map { .text($0.hex) })
+            ),
+        ]
+        if let previewCursor {
+            entries.append(.init(key: .text(Self.previewCursorKey), value: .text(previewCursor.hex)))
+        }
+        return .map(entries)
     }
 
     static func decodePayload(_ payload: CanonicalCBORValue) throws -> GossipV1SummaryFrame {
         let dict = try GossipV1CBOR.requireMap(payload, field: "payload")
-        try GossipV1CBOR.requireExactPayloadKeys(dict, required: requiredKeys)
+        try GossipV1CBOR.requirePayloadContainsRequiredKeys(dict, required: requiredKeys)
 
         let bloom = try GossipV1CBOR.requireBytes(dict["bloom_filter"]!, field: "bloom_filter")
         let itemCount = try GossipV1CBOR.requireUnsigned(dict["item_count"]!, field: "item_count")
 
-        return try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: itemCount)
+        let previewItemIDs: [GossipV1ItemID]
+        if let previewItemIDsValue = dict[previewItemIDsKey] {
+            let previewArray = try GossipV1CBOR.requireArray(previewItemIDsValue, field: previewItemIDsKey)
+            previewItemIDs = try previewArray.map { value in
+                let previewHex = try GossipV1CBOR.requireText(value, field: previewItemIDsKey)
+                return try GossipV1CBOR.parseItemID(hex: previewHex, field: previewItemIDsKey)
+            }
+        } else {
+            previewItemIDs = []
+        }
+
+        let previewCursor: GossipV1ItemID?
+        if let previewCursorValue = dict[previewCursorKey] {
+            let previewCursorHex = try GossipV1CBOR.requireText(previewCursorValue, field: previewCursorKey)
+            previewCursor = try GossipV1CBOR.parseItemID(hex: previewCursorHex, field: previewCursorKey)
+        } else {
+            previewCursor = nil
+        }
+
+        return try GossipV1SummaryFrame(
+            bloomFilter: bloom,
+            itemCount: itemCount,
+            previewItemIDs: previewItemIDs,
+            previewCursor: previewCursor
+        )
     }
 }
 

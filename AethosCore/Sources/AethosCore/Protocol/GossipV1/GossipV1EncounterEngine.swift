@@ -136,11 +136,21 @@ public struct GossipV1EncounterEngine: Sendable {
         .hello(config.localHello)
     }
 
-    public func buildSummary(clock: some Clock, store: some Store) throws -> GossipV1Frame {
+    public func buildSummary(
+        clock: some Clock,
+        store: some Store,
+        previewStartAfter: GossipV1ItemID? = nil
+    ) throws -> GossipV1Frame {
         let nowMs = clock.nowUnixMs()
         let eligible = try store.eligibleItemIDs(nowMs: nowMs)
         let bloom = GossipV1BloomFilter.build(for: eligible)
-        let frame = try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: UInt64(eligible.count))
+        let preview = GossipV1SummaryPreview.generate(eligibleSorted: eligible, startAfter: previewStartAfter)
+        let frame = try GossipV1SummaryFrame(
+            bloomFilter: bloom,
+            itemCount: UInt64(eligible.count),
+            previewItemIDs: preview.preview,
+            previewCursor: preview.cursor
+        )
         return .summary(frame)
     }
 
