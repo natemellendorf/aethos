@@ -143,4 +143,23 @@ final class GossipV1ReconciliationTests: XCTestCase {
                 .map { $0 }
         )
     }
+
+    func testReconciliationIncludesUnknownPeerPreviewIDs_evenOutsideCandidateSet() throws {
+        let previewUnknown = try GossipV1ItemID(bytes: Data(repeating: 0x0A, count: 32))
+        let candidateKnown = try GossipV1ItemID(bytes: Data(repeating: 0x0B, count: 32))
+
+        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+        let want = try GossipV1SummaryReconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateKnown],
+            peerPreviewItemIDs: [previewUnknown],
+            localHaveItemIDs: [],
+            peerMaxWant: 128
+        )
+
+        let expected = [previewUnknown, candidateKnown].sorted(by: {
+            DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
+        })
+        XCTAssertEqual(want, expected)
+    }
 }

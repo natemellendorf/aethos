@@ -159,6 +159,25 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
         XCTAssertLessThanOrEqual(want.count, GossipV1.MAX_WANT_ITEMS)
     }
 
+    func testPublicReconciliation_includesUnknownPeerPreviewIDs_evenOutsideCandidates() throws {
+        let previewUnknown = try itemID(firstByte: 0xF0)
+        let candidateKnown = try itemID(firstByte: 0x01)
+        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateKnown],
+            peerPreviewItemIDs: [previewUnknown],
+            localHaveItemIDs: [],
+            peerMaxWant: 128
+        )
+
+        let expected = [previewUnknown, candidateKnown].sorted {
+            $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
+        }
+        XCTAssertEqual(want, expected)
+    }
+
     private func itemID(firstByte: UInt8) throws -> GossipV1ItemID {
         var bytes = Data(repeating: 0, count: 32)
         bytes[0] = firstByte

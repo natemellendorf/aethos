@@ -8,6 +8,7 @@ public enum GossipV1 {
 
     public static let MAX_FRAME_BYTES: Int = 1_048_576
     public static let MAX_WANT_ITEMS: Int = 256
+    public static let MAX_SUMMARY_PREVIEW_ITEMS: Int = 64
     public static let MAX_TRANSFER_ITEMS: Int = 32
     public static let MAX_TRANSFER_BYTES: Int = 524_288
 

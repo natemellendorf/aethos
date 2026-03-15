@@ -25,6 +25,7 @@ public enum GossipV1Reconciliation {
     public static func computeWant(
         bloomFilterBytes: Data,
         candidateItemIDs: [GossipV1ItemID],
+        peerPreviewItemIDs: [GossipV1ItemID] = [],
         localHaveItemIDs: Set<GossipV1ItemID>,
         peerMaxWant: UInt64
     ) throws -> [GossipV1ItemID] {
@@ -36,6 +37,7 @@ public enum GossipV1Reconciliation {
             return try GossipV1SummaryReconciliation.computeWant(
                 bloomFilterBytes: bloomFilterBytes,
                 candidateItemIDs: candidateItemIDs,
+                peerPreviewItemIDs: peerPreviewItemIDs,
                 localHaveItemIDs: localHaveItemIDs,
                 peerMaxWant: clampedPeerMaxWant
             )
@@ -65,6 +67,7 @@ internal enum GossipV1SummaryReconciliation {
     static func computeWant(
         bloomFilterBytes: Data,
         candidateItemIDs: [GossipV1ItemID],
+        peerPreviewItemIDs: [GossipV1ItemID] = [],
         localHaveItemIDs: Set<GossipV1ItemID>,
         peerMaxWant: Int
     ) throws -> [GossipV1ItemID] {
@@ -81,20 +84,26 @@ internal enum GossipV1SummaryReconciliation {
         let maxItems = min(peerMaxWant, GossipV1.MAX_WANT_ITEMS)
         guard maxItems > 0 else { return [] }
 
+        let previewUnknown = peerPreviewItemIDs.lazy
+            .filter { !localHaveItemIDs.contains($0) }
+
         // Filter candidates to only items we don't already have and the peer bloom might contain.
         // `candidateItemIDs` may include local-have IDs; we filter them out deterministically.
-        let filtered = candidateItemIDs
+        let bloomFiltered = candidateItemIDs
             .lazy
             .filter { !localHaveItemIDs.contains($0) }
             .filter { GossipV1BloomFilter.mightContain($0, bloom: bloomFilterBytes) }
-            .sorted(by: { DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending })
+        let prioritizedCombined = Array(previewUnknown) + Array(bloomFiltered)
+        let sortedCombined = prioritizedCombined.sorted(by: {
+            DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
+        })
 
         // Deterministically de-duplicate (REQUEST forbids duplicates).
         var out: [GossipV1ItemID] = []
-        out.reserveCapacity(min(candidateItemIDs.count, maxItems))
+        out.reserveCapacity(min(candidateItemIDs.count + peerPreviewItemIDs.count, maxItems))
 
         var last: GossipV1ItemID?
-        for id in filtered {
+        for id in sortedCombined {
             if id == last { continue }
             out.append(id)
             last = id

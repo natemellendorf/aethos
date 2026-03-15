@@ -13,6 +13,108 @@ final class GossipV1FramesTests: XCTestCase {
         try assertRoundTripAndFixture(frame: frame, fixtureFileName: "summary.cbor")
     }
 
+    func testSummaryDecode_oldPayloadWithoutPreviewFields_defaultsToEmptyPreview() throws {
+        let bytes = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("type"), value: .text(GossipV1FrameType.SUMMARY.rawValue)),
+                .init(key: .text("payload"), value: .map([
+                    .init(key: .text("bloom_filter"), value: .bytes(Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES))),
+                    .init(key: .text("item_count"), value: .unsigned(0)),
+                ])),
+            ])
+        )
+
+        let decoded = try GossipV1Frame.decode(bytes: bytes)
+        guard case .summary(let summary) = decoded else {
+            return XCTFail("Expected summary")
+        }
+        XCTAssertTrue(summary.previewItemIDs.isEmpty)
+        XCTAssertNil(summary.previewCursor)
+    }
+
+    func testSummaryPreviewRoundTrip_usesDigestBytes_notHexText() throws {
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x10, count: 32))
+        let b = try GossipV1ItemID(bytes: Data(repeating: 0x20, count: 32))
+        let bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
+        let summary = try GossipV1SummaryFrame(
+            bloomFilter: bloom,
+            itemCount: 2,
+            previewItemIDs: [a, b],
+            previewCursor: b
+        )
+
+        let decoded = try GossipV1Frame.decode(bytes: GossipV1Frame.summary(summary).encode())
+        XCTAssertEqual(decoded, .summary(summary))
+    }
+
+    func testSummaryPayloadUnknownKeyIgnored_forForwardCompatibility() throws {
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x10, count: 32))
+        let bytes = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("type"), value: .text(GossipV1FrameType.SUMMARY.rawValue)),
+                .init(key: .text("payload"), value: .map([
+                    .init(key: .text("bloom_filter"), value: .bytes(Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES))),
+                    .init(key: .text("item_count"), value: .unsigned(1)),
+                    .init(key: .text("preview_item_ids"), value: .array([.bytes(a.rawBytes())])),
+                    .init(key: .text("future"), value: .unsigned(1)),
+                ])),
+            ])
+        )
+
+        let decoded = try GossipV1Frame.decode(bytes: bytes)
+        guard case .summary(let summary) = decoded else {
+            return XCTFail("Expected summary")
+        }
+        XCTAssertEqual(summary.previewItemIDs, [a])
+    }
+
+    func testSummaryPreviewValidation_rejectsTooManyItemsAndUnsortedAndCursorBeforeLast() throws {
+        let bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
+        let a = try GossipV1ItemID(bytes: Data(repeating: 0x01, count: 32))
+        let b = try GossipV1ItemID(bytes: Data(repeating: 0x02, count: 32))
+        let tooManyPreviewIDs: [GossipV1ItemID] = try (0...GossipV1.MAX_SUMMARY_PREVIEW_ITEMS).map { i in
+            var bytes = Data(repeating: 0, count: 32)
+            bytes[0] = UInt8(i)
+            return try GossipV1ItemID(bytes: bytes)
+        }
+
+        XCTAssertThrowsError(
+            try GossipV1SummaryFrame(
+                bloomFilter: bloom,
+                itemCount: UInt64(GossipV1.MAX_SUMMARY_PREVIEW_ITEMS + 1),
+                previewItemIDs: tooManyPreviewIDs,
+                previewCursor: nil
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? GossipV1FrameError,
+                .summaryPreviewTooManyItems(max: GossipV1.MAX_SUMMARY_PREVIEW_ITEMS, actual: GossipV1.MAX_SUMMARY_PREVIEW_ITEMS + 1)
+            )
+        }
+
+        XCTAssertThrowsError(
+            try GossipV1SummaryFrame(
+                bloomFilter: bloom,
+                itemCount: 2,
+                previewItemIDs: [b, a],
+                previewCursor: nil
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .summaryPreviewNotLexicographicallySorted)
+        }
+
+        XCTAssertThrowsError(
+            try GossipV1SummaryFrame(
+                bloomFilter: bloom,
+                itemCount: 2,
+                previewItemIDs: [a, b],
+                previewCursor: a
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .summaryPreviewCursorBeforeLastPreviewItem)
+        }
+    }
+
     func testRequestRoundTripAndMatchesFixtureBytes() throws {
         let frame = try requestFixtureFrame()
         try assertRoundTripAndFixture(frame: frame, fixtureFileName: "request.cbor")
@@ -194,7 +296,12 @@ private extension GossipV1FramesTests {
 
     func summaryFixtureFrame() throws -> GossipV1Frame {
         let bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
-        let summary = try GossipV1SummaryFrame(bloomFilter: bloom, itemCount: 0)
+        let summary = try GossipV1SummaryFrame(
+            bloomFilter: bloom,
+            itemCount: 0,
+            previewItemIDs: [],
+            previewCursor: nil
+        )
         return .summary(summary)
     }
 
