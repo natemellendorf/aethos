@@ -28,13 +28,23 @@ What is missing is explicit client policy guidance for operating across multiple
 
 ## Decision
 
+### Scope and RFC2119 boundary
+
+This ADR defines client-side replication/de-escalation policy for Gossip V1 objects deduped by `item_id`.
+
+Per [`docs/protocol/gossip.md`](../protocol/gossip.md) and [`docs/protocol/replication.md`](../protocol/replication.md), `item_id` remains the deduplication identity invariant for Gossip objects.
+
+Other layers may use additional identifiers (for example, client-relay `msg_id`/`ack` in [`docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`](../spec/CLIENT_RELAY_PROTOCOL_V1.md) and federation `envelope_id`/`relay_ack` in [`docs/spec/FEDERATION_PROTOCOL_V1.md`](../spec/FEDERATION_PROTOCOL_V1.md)), but those do not change Gossip object identity or dedup semantics.
+
+RFC2119 keywords in this ADR constrain local policy behavior only; wire-level requirements remain in `docs/protocol/*` and `docs/spec/*`.
+
 ### 1) Multi-relay propagation is valid and expected
 
 Clients MAY concurrently replicate eligible objects through multiple relays. Receiving duplicate deliveries from different relays is normal in a multi-path system.
 
 ### 2) Deduplication is by `item_id`
 
-Clients and relays MUST treat `item_id` as the canonical identity key and perform idempotent deduplication by `item_id` only.
+Per [`docs/protocol/gossip.md`](../protocol/gossip.md), `item_id` is the canonical identity key and deduplication is idempotent by `item_id` only.
 
 ### 3) Healthy redundancy, not blind flooding
 
@@ -54,8 +64,8 @@ Blind flooding (unbounded replication to every available relay/peer) is explicit
 
 For each eligible outbound object, clients SHOULD:
 
-1. Start with a small, diverse relay set (typically 2-3 classes/operators when available).
-2. Apply bounded initial fan-out, then adapt based on evidence.
+1. Start with bounded initial fan-out to a small, diverse relay set (typically 2-3 relays across classes/operators when available).
+2. Expand holder diversity over time via encounters/opportunistic replication toward broader holder targets (for example 6-8 when feasible, per replication guidance).
 3. Prioritize relays with recent success for the destination cohort.
 4. Keep per-item attempt state keyed by `item_id`.
 5. Continue opportunistic replication across encounters until de-escalation conditions are met.
@@ -66,11 +76,15 @@ This is policy guidance only and does not introduce wire/protocol changes.
 
 Clients MAY reduce replication intensity for an item only when there is evidence, such as:
 
-- authenticated relay-ingest durability signals consistent with protocol guidance,
+- authenticated durable relay-ingest signals on authenticated relay transport, consistent with [`docs/protocol/gossip.md`](../protocol/gossip.md) and [`docs/protocol/replication.md`](../protocol/replication.md),
+- evidence of multi-class and multi-operator holding for the same `item_id` (independent holders, not only repeated observations from one operator path),
+- recipient receipt/delivery evidence when available (for example `DeviceReceipt` scope in [`docs/spec/RECEIPTS.md`](../spec/RECEIPTS.md) or equivalent recipient delivery confirmation in the active transport/spec),
 - repeated independent path observations of the same `item_id`,
 - approaching expiry or local storage-pressure policy triggers.
 
-Unauthenticated signals MUST NOT be used as sole justification for pruning or replication de-escalation.
+Per [`docs/spec/RECEIPTS.md`](../spec/RECEIPTS.md), relay/federation acceptance evidence and recipient delivery evidence are distinct and MUST NOT be conflated.
+
+Per [`docs/protocol/gossip.md`](../protocol/gossip.md) and [`docs/protocol/replication.md`](../protocol/replication.md), unauthenticated signals MUST NOT be used as sole justification for pruning or replication de-escalation.
 
 ### 7) Example scenario
 
