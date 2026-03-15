@@ -289,6 +289,67 @@ Validation and trust:
 2. RELAY_INGEST **MUST** be trusted only when received on authenticated relay transport.
 3. Unauthenticated RELAY_INGEST **MUST NOT** influence pruning or replication de-escalation.
 
+## Canonical Envelope Test Vector
+
+This section defines a concrete canonical Envelope test vector for cross-implementation conformance.
+Implementations **MUST** reproduce these exact bytes and derived values.
+
+### Test Vector 1 — Minimal Envelope
+
+Conceptual Envelope object:
+
+```cbor
+{
+  to_wayfarer_id: h'1111111111111111111111111111111111111111111111111111111111111111',
+  manifest_id: h'2222222222222222222222222222222222222222222222222222222222222222',
+  body: h'68656c6c6f' ; "hello"
+}
+```
+
+Canonical key order is `body`, `manifest_id`, `to_wayfarer_id`.
+
+Reference values:
+
+1. Canonical CBOR hex (`envelope_bytes`):
+
+```text
+a364626f64794568656c6c6f6b6d616e69666573745f6964582022222222222222222222222222222222222222222222222222222222222222226e746f5f77617966617265725f696458201111111111111111111111111111111111111111111111111111111111111111
+```
+
+2. SHA-256 digest (`item_id`):
+
+```text
+cead451f4f6da41d34d4afabf0429103335d1bf356dd29a1c51b60430d8d46cc
+```
+
+3. Base64url (no padding) of `envelope_bytes` (`envelope_b64`):
+
+```text
+o2Rib2R5RWhlbGxva21hbmlmZXN0X2lkWCAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIm50b193YXlmYXJlcl9pZFggERERERERERERERERERERERERERERERERERERERERERE
+```
+
+Verification pipeline:
+
+1. Construct the conceptual Envelope object exactly as shown.
+2. Canonically CBOR-encode to `envelope_bytes`.
+3. Compute `item_id = SHA256(envelope_bytes)`.
+4. Compute `envelope_b64 = base64url(envelope_bytes)` with no padding.
+5. Assert exact byte-for-byte match with the three reference values above.
+
+Decoder validation test:
+
+1. Decoder **MUST** base64url-decode `envelope_b64` and recover the exact canonical bytes above.
+2. Decoder **MUST** verify `sha256(decoded_envelope_bytes) == item_id`.
+3. Decoder **MUST** decode CBOR and validate required Envelope keys and types.
+4. Any mismatch **MUST** be rejected as invalid object data.
+
+Additional Recommended Vectors:
+
+1. Same logical Envelope with intentionally non-canonical key insertion order (encoder must still emit canonical bytes).
+2. Same fields with `body = h''` (empty payload) to verify canonical length handling.
+3. Negative vector where one byte of `envelope_b64` is altered (hash check must fail).
+4. Negative vector where canonical bytes are valid CBOR but key type is not `tstr` (schema check must fail).
+
 ## 6. Deterministic rejection/acceptance rules
 
 1. Deduplication **MUST** be by `item_id` only.
