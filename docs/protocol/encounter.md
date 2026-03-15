@@ -94,6 +94,7 @@ Definitions:
 
 - `candidateItemIDs`: receiver-side candidate item IDs that the receiver believes it might be missing and believes the peer might have.
   Implementations MUST treat `candidateItemIDs` as a set of item IDs; duplicates MUST be ignored.
+- `peerPreviewItemIDs`: optional IDs from peer `SUMMARY.preview_item_ids`; these MAY include IDs not in `candidateItemIDs`.
 - `localHaveItemIDs`: the receiver's locally-stored item IDs (the set the receiver “has”).
 
 Rules:
@@ -103,14 +104,19 @@ Rules:
     - `localHaveItemIDs` is the receiver's local inventory.
  2. Eligible candidate set: define `eligibleItemIDs` as the de-duplicated `candidateItemIDs` with any IDs present in `localHaveItemIDs` removed.
     - `candidateItemIDs` MUST NOT include any item IDs that are present in `localHaveItemIDs`.
- 3. Bloom filter constraint: for any `item_id` included in `REQUEST.want`, the peer Bloom filter MUST indicate it *might contain* that `item_id`.
- 4. Ordering: define `orderedItemIDs` as `eligibleItemIDs` filtered to those whose Bloom check returns “might contain”, then bytewise lexicographically sorted by the decoded digest bytes of `item_id` (not by hex string order).
- 5. Truncation: `REQUEST.want` MUST equal the first `N` items of `orderedItemIDs`, where `N = min(peer.max_want, MAX_WANT_ITEMS)`.
+  3. Preview-unknown subset: define `previewUnknownItemIDs` as de-duplicated `peerPreviewItemIDs` with any IDs present in `localHaveItemIDs` removed.
+  4. Bloom filter constraint: for any `item_id` included in `REQUEST.want`, the peer Bloom filter MUST indicate it *might contain* that `item_id`.
+  5. Candidate ordering model:
+     - Define `previewEligibleItemIDs` as `previewUnknownItemIDs` filtered by Bloom “might contain”.
+     - Define `candidateEligibleItemIDs` as `eligibleItemIDs` filtered by Bloom “might contain”.
+     - Build `selectedItemIDs` by taking unique items from `previewEligibleItemIDs` first, then filling remaining capacity from unique items in `candidateEligibleItemIDs`.
+  6. Truncation and final ordering: let `N = min(peer.max_want, MAX_WANT_ITEMS)`. After selection under this cap, `REQUEST.want` MUST be bytewise lexicographically sorted by decoded digest bytes of `item_id` (not by hex string order).
 
 Implications:
 
 - `REQUEST.want` MUST be unique by `item_id`.
-- If an `item_id` is present in `eligibleItemIDs`, the Bloom check returns “might contain”, and it is within the first `N` items of `orderedItemIDs`, it MUST be included in `REQUEST.want`. (Items beyond the first `N` are not included due to truncation.)
+- If an `item_id` is present in `previewEligibleItemIDs` and is within the preview-priority selection under `N`, it MUST be included in `REQUEST.want`.
+- Remaining capacity after preview-priority selection MUST be filled from `candidateEligibleItemIDs` deterministically.
 
 Note: Bloom filters have false positives but no false negatives. A receiver MAY request items the peer does not actually have; this is acceptable.
 
