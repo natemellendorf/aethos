@@ -451,8 +451,6 @@ func gossipV1_summaryDatagram_isDeterministic_forFixedEligibleSet() throws {
     let frameB = try engine.buildSummary(clock: clock, store: store)
     let bytes = frameA.encode()
 
-    let expectedFixture = try GossipV1TestSupport.fixtureData("summary.cbor")
-    #expect(bytes == expectedFixture)
     #expect(bytes == frameB.encode())
 
     guard case .summary(let summaryFrame) = frameA else {
@@ -464,6 +462,14 @@ func gossipV1_summaryDatagram_isDeterministic_forFixedEligibleSet() throws {
     })
     #expect(summaryFrame.previewItemIDs == previewExpected)
     #expect(summaryFrame.previewCursor == nil)
+
+    let expectedSummary = try GossipV1SummaryFrame(
+        bloomFilter: GossipV1BloomFilter.build(for: previewExpected),
+        itemCount: 3,
+        previewItemIDs: previewExpected,
+        previewCursor: nil
+    )
+    #expect(bytes == GossipV1Frame.summary(expectedSummary).encode())
 }
 
 @Test

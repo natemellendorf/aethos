@@ -162,7 +162,7 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
     func testPublicReconciliation_includesUnknownPeerPreviewIDs_evenOutsideCandidates() throws {
         let previewUnknown = try itemID(firstByte: 0xF0)
         let candidateKnown = try itemID(firstByte: 0x01)
-        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+        let peerBloom = GossipV1BloomFilter.build(for: [previewUnknown, candidateKnown])
 
         let want = try GossipV1Reconciliation.computeWant(
             bloomFilterBytes: peerBloom,
@@ -176,6 +176,43 @@ final class GossipV1PublicReconciliationAPITests: XCTestCase {
             $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
         }
         XCTAssertEqual(want, expected)
+    }
+
+    func testPublicReconciliation_previewUnknownPriority_survivesSmallPeerMaxWantTruncation() throws {
+        let preview1 = try itemID(firstByte: 0xF0)
+        let preview2 = try itemID(firstByte: 0xF1)
+        let candidateLowA = try itemID(firstByte: 0x01)
+        let candidateLowB = try itemID(firstByte: 0x02)
+
+        let peerBloom = GossipV1BloomFilter.build(for: [preview1, preview2, candidateLowA, candidateLowB])
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateLowB, candidateLowA],
+            peerPreviewItemIDs: [preview2, preview1],
+            localHaveItemIDs: [],
+            peerMaxWant: 2
+        )
+
+        let expected = [preview1, preview2].sorted {
+            $0.rawBytes().lexicographicallyPrecedes($1.rawBytes())
+        }
+        XCTAssertEqual(want, expected)
+    }
+
+    func testPublicReconciliation_previewUnknownFilteredByBloom() throws {
+        let previewUnknown = try itemID(firstByte: 0xDD)
+        let candidateKnown = try itemID(firstByte: 0x11)
+        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+
+        let want = try GossipV1Reconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateKnown],
+            peerPreviewItemIDs: [previewUnknown],
+            localHaveItemIDs: [],
+            peerMaxWant: 8
+        )
+
+        XCTAssertEqual(want, [candidateKnown])
     }
 
     private func itemID(firstByte: UInt8) throws -> GossipV1ItemID {

@@ -148,7 +148,7 @@ final class GossipV1ReconciliationTests: XCTestCase {
         let previewUnknown = try GossipV1ItemID(bytes: Data(repeating: 0x0A, count: 32))
         let candidateKnown = try GossipV1ItemID(bytes: Data(repeating: 0x0B, count: 32))
 
-        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+        let peerBloom = GossipV1BloomFilter.build(for: [previewUnknown, candidateKnown])
         let want = try GossipV1SummaryReconciliation.computeWant(
             bloomFilterBytes: peerBloom,
             candidateItemIDs: [candidateKnown],
@@ -161,5 +161,43 @@ final class GossipV1ReconciliationTests: XCTestCase {
             DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
         })
         XCTAssertEqual(want, expected)
+    }
+
+    func testReconciliationPreviewUnknownPriority_survivesSmallPeerMaxWantTruncation() throws {
+        let preview1 = try GossipV1ItemID(bytes: Data(repeating: 0xF0, count: 32))
+        let preview2 = try GossipV1ItemID(bytes: Data(repeating: 0xF1, count: 32))
+        let candidateLowA = try GossipV1ItemID(bytes: Data(repeating: 0x01, count: 32))
+        let candidateLowB = try GossipV1ItemID(bytes: Data(repeating: 0x02, count: 32))
+
+        let peerBloom = GossipV1BloomFilter.build(for: [preview1, preview2, candidateLowA, candidateLowB])
+        let want = try GossipV1SummaryReconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateLowB, candidateLowA],
+            peerPreviewItemIDs: [preview2, preview1],
+            localHaveItemIDs: [],
+            peerMaxWant: 2
+        )
+
+        let expected = [preview1, preview2].sorted(by: {
+            DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
+        })
+        XCTAssertEqual(want, expected)
+    }
+
+    func testReconciliationPreviewUnknownFilteredByBloom() throws {
+        let previewUnknown = try GossipV1ItemID(bytes: Data(repeating: 0xDD, count: 32))
+        let candidateKnown = try GossipV1ItemID(bytes: Data(repeating: 0x11, count: 32))
+
+        // Bloom that includes only candidateKnown.
+        let peerBloom = GossipV1BloomFilter.build(for: [candidateKnown])
+        let want = try GossipV1SummaryReconciliation.computeWant(
+            bloomFilterBytes: peerBloom,
+            candidateItemIDs: [candidateKnown],
+            peerPreviewItemIDs: [previewUnknown],
+            localHaveItemIDs: [],
+            peerMaxWant: 8
+        )
+
+        XCTAssertEqual(want, [candidateKnown])
     }
 }

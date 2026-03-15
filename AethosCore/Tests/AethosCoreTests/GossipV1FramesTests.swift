@@ -32,7 +32,7 @@ final class GossipV1FramesTests: XCTestCase {
         XCTAssertNil(summary.previewCursor)
     }
 
-    func testSummaryPreviewRoundTrip_usesDigestBytes_notHexText() throws {
+    func testSummaryPreviewRoundTrip_usesItemIDHexText() throws {
         let a = try GossipV1ItemID(bytes: Data(repeating: 0x10, count: 32))
         let b = try GossipV1ItemID(bytes: Data(repeating: 0x20, count: 32))
         let bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
@@ -55,7 +55,7 @@ final class GossipV1FramesTests: XCTestCase {
                 .init(key: .text("payload"), value: .map([
                     .init(key: .text("bloom_filter"), value: .bytes(Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES))),
                     .init(key: .text("item_count"), value: .unsigned(1)),
-                    .init(key: .text("preview_item_ids"), value: .array([.bytes(a.rawBytes())])),
+                    .init(key: .text("preview_item_ids"), value: .array([.text(a.hex)])),
                     .init(key: .text("future"), value: .unsigned(1)),
                 ])),
             ])
@@ -68,7 +68,7 @@ final class GossipV1FramesTests: XCTestCase {
         XCTAssertEqual(summary.previewItemIDs, [a])
     }
 
-    func testSummaryPreviewValidation_rejectsTooManyItemsAndUnsortedAndCursorBeforeLast() throws {
+    func testSummaryPreviewValidation_rejectsTooManyItemsUnsortedDuplicatesAndInvalidCursor() throws {
         let bloom = Data(repeating: 0, count: GossipV1.BLOOM_FILTER_BYTES)
         let a = try GossipV1ItemID(bytes: Data(repeating: 0x01, count: 32))
         let b = try GossipV1ItemID(bytes: Data(repeating: 0x02, count: 32))
@@ -107,11 +107,33 @@ final class GossipV1FramesTests: XCTestCase {
             try GossipV1SummaryFrame(
                 bloomFilter: bloom,
                 itemCount: 2,
+                previewItemIDs: [a, a],
+                previewCursor: nil
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .duplicateItemID)
+        }
+
+        XCTAssertThrowsError(
+            try GossipV1SummaryFrame(
+                bloomFilter: bloom,
+                itemCount: 0,
+                previewItemIDs: [],
+                previewCursor: a
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .summaryPreviewCursorWithoutItems)
+        }
+
+        XCTAssertThrowsError(
+            try GossipV1SummaryFrame(
+                bloomFilter: bloom,
+                itemCount: 2,
                 previewItemIDs: [a, b],
                 previewCursor: a
             )
         ) { error in
-            XCTAssertEqual(error as? GossipV1FrameError, .summaryPreviewCursorBeforeLastPreviewItem)
+            XCTAssertEqual(error as? GossipV1FrameError, .summaryPreviewCursorMustEqualLastPreviewItem)
         }
     }
 
