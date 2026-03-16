@@ -39,9 +39,9 @@ final class GossipV1FramesTests: XCTestCase {
         let summary = try GossipV1SummaryFrame(
             bloomFilter: bloom,
             itemCount: 2,
-            previewItemIDs: [a, b],
-            previewCursor: b
+            previewItemIDs: [a, b]
         )
+        XCTAssertEqual(summary.previewCursor, b)
 
         let decoded = try GossipV1Frame.decode(bytes: GossipV1Frame.summary(summary).encode())
         XCTAssertEqual(decoded, .summary(summary))
