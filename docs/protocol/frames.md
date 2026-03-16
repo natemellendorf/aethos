@@ -4,6 +4,8 @@ Status: **Authoritative** frame catalog for the gossip protocol upgrade.
 
 This document is the single source of truth for frame names, field definitions, encoding, validation, and size limits.
 
+Source attribution note: see `docs/protocol/gossip.md` §2.1 for active-contract precedence across protocol/spec/ADR documents.
+
 ## 1. Normative language
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in RFC 2119.

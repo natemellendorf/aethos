@@ -1,5 +1,9 @@
 # Client-Relay Conformance Fixtures
 
+> Archived migration document (historical, non-normative).
+> This fixture plan is retained for migration history only.
+> Active normative transport contracts are defined in `docs/spec/*`.
+
 Status: Draft fixture contract for client-relay protocol alignment
 
 Purpose: define fixture families used as objective evidence for compatibility-matrix updates and canonical-only legacy cleanup.
@@ -155,5 +159,5 @@ Each fixture family below defines minimal objective evidence with explicit **MUS
 - Legacy cleanup plan: [`docs/migration/CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
 - Compatibility matrix: [`docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`](./PROTOCOL_COMPATIBILITY_MATRIX.md)
 - Migration plan: [`docs/migration/protocol_update.md`](./protocol_update.md)
-- Canonical client-relay spec: [`docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`](../spec/CLIENT_RELAY_PROTOCOL_V1.md)
-- Canonical receipt spec: [`docs/spec/RECEIPTS.md`](../spec/RECEIPTS.md)
+- Canonical client-relay spec: [`docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`](../../spec/CLIENT_RELAY_PROTOCOL_V1.md)
+- Canonical receipt spec: [`docs/spec/RECEIPTS.md`](../../spec/RECEIPTS.md)

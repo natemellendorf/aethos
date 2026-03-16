@@ -12,6 +12,22 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 2. This document is the authoritative architecture and invariant contract.
 3. Bearer implementations MUST preserve protocol semantics exactly.
 
+## 2.1 Source attribution and precedence
+
+When sources differ, precedence for active contracts is:
+
+1. `docs/protocol/frames.md` for frame schema, wire encoding, and framing boundaries.
+2. `docs/protocol/*` for transport-neutral Gossip V1 semantics and invariants.
+3. `docs/spec/*` for transport/product API contracts (client-relay, federation, receipts).
+4. `docs/adr/*` for architectural decisions and rationale.
+
+Historical and migration-era materials are non-normative and MUST NOT override active contracts.
+
+Implementation alignment note (current repository):
+
+- Active Gossip V1 transfer objects carry `envelope_b64` for deterministic CBOR envelope bytes; `item_id` is derived as `SHA-256(envelope_bytes)`.
+- The active Gossip V1 object model and framing semantics are implemented by `AethosCore/Sources/AethosCore/Protocol/GossipV1/*`.
+
 ## 3. Protocol invariants (frozen for upgrade)
 
 1. `item_id` MUST be derived from raw canonical serialized envelope bytes and encoded as lowercase hex.

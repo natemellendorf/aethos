@@ -19,6 +19,8 @@ Session objectives:
 
 ## 3. HELLO and identity derivation
 
+Source attribution note: see `docs/protocol/gossip.md` §2.1 for active-contract precedence across protocol/spec/ADR documents.
+
 HELLO fields are defined in `docs/protocol/frames.md`.
 
 Identity rules:

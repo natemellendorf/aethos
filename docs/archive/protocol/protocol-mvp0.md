@@ -1,5 +1,9 @@
 # Aethos Canonical Object Protocol (MVP0)
 
+> Archived historical document (non-normative).
+> This MVP0 object-format document is retained for repository history only.
+> Active normative protocol contracts are defined in `docs/protocol/*` and `docs/spec/*`.
+
 This document defines canonical object bytes, object identity derivation, and strict decoding rules.
 
 ## 1. Scope and authority

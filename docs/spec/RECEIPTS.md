@@ -4,13 +4,13 @@ Status: Canonical v1 receipt semantics
 
 This document defines receipt vocabulary and transport semantics without changing the core `ReceiptV1` structure.
 
-- Core receipt structure (normative): `docs/protocol.md` (`ReceiptV1`)
+- Core receipt structure (normative implementation type): `AethosCore/Sources/AethosCore/Models/ReceiptV1.swift`
 - Client-relay delivery semantics: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - Federation forwarding semantics: `docs/spec/FEDERATION_PROTOCOL_V1.md`
 
 ## 1. `ReceiptV1` Is Unchanged
 
-`ReceiptV1` fields remain exactly as defined in `docs/protocol.md`:
+`ReceiptV1` fields remain:
 
 1. `envelopeId`
 2. `manifestId`
@@ -63,7 +63,7 @@ Because `ReceiptV1` has no built-in scope/kind discriminator:
 Fields:
 
 - `receipt_scope`: string, `device` or `federation`
-- `receipt_v1_b64`: base64url (no padding) canonical `ReceiptV1` bytes from `docs/protocol.md` (`Canonical Bytes v1`)
+- `receipt_v1_b64`: base64url (no padding) canonical `ReceiptV1` bytes
 
 ### 4.2 CBOR transport wrapper (logical equivalent)
 

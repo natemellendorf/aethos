@@ -5,18 +5,15 @@
 
 ## Context
 
-Historically, protocol behavior lived in implementation notes and versioned docs such as:
-
-- `docs/relay-contract-v0.1.md` (client-relay JSON/WebSocket contract)
-- `docs/protocol.md` (core Aethos canonical structures and byte encoding)
+Historically, protocol behavior lived in implementation notes and legacy versioned documents (including the v0.1 relay contract and MVP0 object-format notes).
 
 That made the effective source of truth implicit, and different consumers could treat different docs as normative.
 
 ## Decision
 
-`docs/spec/*` is now the canonical source of truth for wire-level protocol contracts.
+`docs/spec/*` and `docs/protocol/*` are now the canonical sources of truth for active protocol contracts.
 
-Implementations MUST conform to versioned specs in `docs/spec/*`.
+Implementations MUST conform to active contracts in `docs/spec/*` and `docs/protocol/*`.
 
 For v1 contracts introduced with this ADR:
 
@@ -28,11 +25,10 @@ For v1 contracts introduced with this ADR:
 
 Legacy note:
 
-- A legacy transport-neutral sync contract has been removed from this repository. Historical context may exist only in repository history.
+- Historical and migration-era documents are retained separately and are non-normative.
 
 ## Consequences
 
 - Existing docs remain valuable context, but are no longer the canonical contract source.
-- `docs/relay-contract-v0.1.md` is treated as historical/legacy reference.
-- `docs/protocol.md` remains canonical for core data model and canonical byte encoding primitives used by specs.
-- Future protocol changes MUST land as explicit updates/new versions under `docs/spec/*`.
+- Archived legacy and migration materials are historical/non-normative.
+- Future protocol changes MUST land as explicit updates/new versions under `docs/spec/*`, `docs/protocol/*`, or both when applicable.
