@@ -476,13 +476,12 @@ func gossipV1_summaryDatagram_isDeterministic_forFixedEligibleSet() throws {
         DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
     })
     #expect(summaryFrame.previewItemIDs == previewExpected)
-    #expect(summaryFrame.previewCursor == nil)
+    #expect(summaryFrame.previewCursor == previewExpected.last)
 
     let expectedSummary = try GossipV1SummaryFrame(
         bloomFilter: GossipV1BloomFilter.build(for: previewExpected),
         itemCount: 3,
-        previewItemIDs: previewExpected,
-        previewCursor: nil
+        previewItemIDs: previewExpected
     )
     #expect(bytes == GossipV1Frame.summary(expectedSummary).encode())
 }

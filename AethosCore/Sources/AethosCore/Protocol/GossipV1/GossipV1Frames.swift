@@ -260,6 +260,7 @@ public struct GossipV1SummaryFrame: Equatable, Sendable {
         guard Set(previewItemIDs).count == previewItemIDs.count else {
             throw GossipV1FrameError.duplicateItemID
         }
+        var resolvedPreviewCursor = previewCursor
         if previewItemIDs.isEmpty {
             guard previewCursor == nil else {
                 throw GossipV1FrameError.summaryPreviewCursorWithoutItems
@@ -268,11 +269,13 @@ public struct GossipV1SummaryFrame: Equatable, Sendable {
             guard previewCursor == previewItemIDs.last else {
                 throw GossipV1FrameError.summaryPreviewCursorMustEqualLastPreviewItem
             }
+        } else {
+            resolvedPreviewCursor = previewItemIDs.last
         }
         self.bloomFilter = bloomFilter
         self.itemCount = itemCount
         self.previewItemIDs = previewItemIDs
-        self.previewCursor = previewCursor
+        self.previewCursor = resolvedPreviewCursor
     }
 
     public func encode() -> Data {
@@ -621,12 +624,14 @@ private extension GossipV1SummaryFrame {
         var entries: [CanonicalCBORValue.MapEntry] = [
             .init(key: .text("bloom_filter"), value: .bytes(bloomFilter)),
             .init(key: .text("item_count"), value: .unsigned(itemCount)),
-            .init(
-                key: .text(Self.previewItemIDsKey),
-                value: .array(previewItemIDs.map { .text($0.hex) })
-            ),
         ]
         if let previewCursor {
+            entries.append(
+                .init(
+                    key: .text(Self.previewItemIDsKey),
+                    value: .array(previewItemIDs.map { .text($0.hex) })
+                )
+            )
             entries.append(.init(key: .text(Self.previewCursorKey), value: .text(previewCursor.hex)))
         }
         return .map(entries)
