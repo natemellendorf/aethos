@@ -1,5 +1,9 @@
 # Protocol Architecture (Migration Companion)
 
+> Archived migration document (historical, non-normative).
+> This architecture companion is retained for migration history only.
+> Active normative protocol contracts are defined in `docs/protocol/*` and `docs/spec/*`.
+
 Status: Draft companion to `docs/migration/protocol_update.md`
 
 This document maps canonical protocol contracts to architecture layers during migration.

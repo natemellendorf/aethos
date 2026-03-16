@@ -1,6 +1,10 @@
 # Protocol Migration Plan
 ## Canonical roadmap for Aethos protocol alignment and distributed message sync
 
+> Archived migration document (historical, non-normative).
+> Retained for migration history only.
+> Active normative protocol contracts are defined in `docs/protocol/*` and `docs/spec/*`.
+
 ## Status
 Draft
 

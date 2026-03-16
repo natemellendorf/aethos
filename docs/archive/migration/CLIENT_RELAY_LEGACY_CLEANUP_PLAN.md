@@ -1,5 +1,9 @@
 # Client-Relay Legacy Cleanup Plan
 
+> Archived migration document (historical, non-normative).
+> This cleanup plan is retained for migration history only.
+> Active normative transport contracts are defined in `docs/spec/*`.
+
 Status: Draft (defines the proposed canonical-only cutover contract)
 
 ## Purpose

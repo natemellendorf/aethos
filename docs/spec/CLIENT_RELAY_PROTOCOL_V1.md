@@ -5,15 +5,14 @@ Status: Canonical v1 contract (MVP0)
 This document defines the normative client-relay wire protocol.
 
 - Canonical contract source: `docs/spec/*` (see `docs/adr/ADR-0001-protocol-contract-source-of-truth.md`)
-- Historical context: `docs/relay-contract-v0.1.md`
-- Core canonical structures: `docs/protocol.md`
+- Canonical transport-neutral envelope semantics: `docs/protocol/frames.md` (§5.4.1)
 
 ## 1. Transport and Encoding
 
 1. Frames MUST be JSON objects sent as WebSocket text messages.
 2. All keys MUST be snake_case.
 3. `payload_b64` MUST use base64url (RFC 4648 URL-safe alphabet) with no padding.
-4. `payload_b64` bytes MUST decode to canonical `EnvelopeV1` bytes encoded per `Canonical Bytes v1` in `docs/protocol.md`.
+4. `payload_b64` bytes MUST decode to canonical envelope bytes encoded as deterministic CBOR, consistent with `docs/protocol/frames.md` (§5.4.1).
 
 ## 2. Shared Types
 
@@ -71,7 +70,7 @@ Required fields:
 
 - `type`: string, must be `send`
 - `to`: `wayfarer_id`
-- `payload_b64`: string, base64url canonical `EnvelopeV1` bytes
+- `payload_b64`: string, base64url canonical envelope bytes
 
 Optional fields:
 
@@ -164,7 +163,7 @@ Required fields:
 - `type`: string, must be `message`
 - `msg_id`: `msg_id`
 - `from`: `wayfarer_id`
-- `payload_b64`: string, base64url canonical `EnvelopeV1` bytes
+- `payload_b64`: string, base64url canonical envelope bytes
 - `received_at`: `received_at` (Unix epoch seconds)
 
 #### `messages`
@@ -231,7 +230,7 @@ Required fields:
 
 Code semantics note:
 
-- `TO_MISMATCH`: `send.to` does not equal `hex_lower(EnvelopeV1.toWayfarerId)` decoded from `payload_b64`.
+- `TO_MISMATCH`: `send.to` does not equal `hex_lower(to_wayfarer_id_bytes)` decoded from `payload_b64`.
 
 ## 4. Security and Authentication
 
@@ -255,9 +254,9 @@ Code semantics note:
 
 Relay MUST:
 
-1. Decode `payload_b64` as canonical `EnvelopeV1` bytes encoded per `Canonical Bytes v1` in `docs/protocol.md`.
-2. Let `toWayfarerId_bytes` be the decoded `EnvelopeV1.toWayfarerId` raw bytes.
-3. Enforce `send.to == hex_lower(toWayfarerId_bytes)`.
+1. Decode `payload_b64` as canonical envelope bytes.
+2. Decode envelope bytes and read `to_wayfarer_id` raw bytes.
+3. Enforce `send.to == hex_lower(to_wayfarer_id_bytes)`.
 4. If step 3 fails, relay MUST reject and MUST return `error(code=TO_MISMATCH, ...)`.
 5. Validate sender authorization (per Section 4), recipient, and payload semantics.
 6. Durably persist message state, including immutable `received_at` and `expires_at` timestamps.
@@ -268,7 +267,7 @@ Client MUST treat send as unconfirmed until `send_ok` arrives.
 ### 6.2 Retry and idempotency
 
 1. If no `send_ok` within 30 seconds, client SHOULD retry `send`.
-2. `client_msg_id` is OPTIONAL for backward compatibility with `docs/relay-contract-v0.1.md`.
+2. `client_msg_id` is OPTIONAL for backward compatibility with earlier v0.1 deployments.
 3. If client sets `client_msg_id`, it MUST reuse the same value for retries of that same logical send.
 4. If `client_msg_id` is present, relay MUST dedupe by `(sender_wayfarer_id, client_msg_id)` where `sender_wayfarer_id` is the authenticated `hello.wayfarer_id`.
 5. For that dedupe key, the first accepted `send` establishes an idempotency tuple of:

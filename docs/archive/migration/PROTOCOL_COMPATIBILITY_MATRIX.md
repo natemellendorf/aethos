@@ -1,5 +1,9 @@
 # Protocol Compatibility Matrix (Migration Scoreboard)
 
+> Archived migration document (historical, non-normative).
+> This compatibility scoreboard is retained for migration history only.
+> Active normative protocol contracts are defined in `docs/protocol/*` and `docs/spec/*`.
+
 Purpose: track implementation alignment against canonical protocol specs across `aethos-relay` and `aethos-ios`, and map each gap to migration work. Related migration plan: [protocol_update.md](./protocol_update.md).
 
 ## See also

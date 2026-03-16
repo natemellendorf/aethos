@@ -8,6 +8,8 @@ Aethos is a deterministic, store–carry–forward gossip protocol designed for 
 
 `docs/protocol/` is authoritative for Aethos Gossip Protocol (Gossip V1) semantics, invariants, and wire framing.
 
+`docs/spec/` is authoritative for transport/product API contracts (client-relay, federation, receipts).
+
 The canonical transport-neutral gossip protocol is specified in:
 
 - `docs/protocol/gossip.md` (architecture and invariants)
@@ -70,17 +72,25 @@ Relays participate in gossip without changing semantics:
 
 See `docs/protocol/gossip.md` and `docs/protocol/frames.md`.
 
-## Protocol Documentation
+## Documentation Hierarchy
 
-- Authoritative Gossip V1 docs: `docs/protocol/`
-  - `docs/protocol/frames.md` (authoritative wire-frame catalog)
-  - `docs/protocol/gossip.md` (architecture and invariants)
-  - `docs/protocol/encounter.md` (encounter behavior)
-  - `docs/protocol/replication.md` (store–carry–forward replication contract)
-  - `docs/protocol/scoring.md` (non-normative policy guidance)
-- Core canonical object encoding: `docs/protocol.md`
-- Architecture decisions: [docs/adr/](docs/adr/) (see [ADR-0002 runtime reconciliation architecture](docs/adr/ADR-0002-runtime-architecture-gossip-v1.md))
-- Interoperability fixtures: `Fixtures/Protocol/gossip-v1/`
+- `docs/protocol/*` — canonical transport-neutral Gossip V1 semantics and wire framing.
+- `docs/spec/*` — canonical transport/product API contracts.
+- `docs/adr/*` — architectural decisions.
+- `docs/audit/*` — non-normative audit reports.
+- Historical/non-normative material is intentionally excluded from the active authority hierarchy.
+
+Key active protocol references:
+
+- `docs/protocol/frames.md` (authoritative wire-frame catalog)
+- `docs/protocol/gossip.md` (architecture/invariants + source attribution)
+- `docs/protocol/encounter.md` (encounter behavior)
+- `docs/protocol/replication.md` (store–carry–forward replication contract)
+- `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
+- `docs/spec/FEDERATION_PROTOCOL_V1.md`
+- `docs/spec/RECEIPTS.md`
+- `docs/adr/ADR-0002-runtime-architecture-gossip-v1.md`
+- `Fixtures/Protocol/gossip-v1/`
 
 ## License
 

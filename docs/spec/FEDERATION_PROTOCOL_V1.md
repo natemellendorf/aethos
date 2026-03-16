@@ -5,7 +5,7 @@ Status: Canonical v1 contract (relay-relay federation)
 This document defines the relay-to-relay protocol contract for forwarding envelopes across relay boundaries.
 
 - Canonical contract source: `docs/spec/*` (see `docs/adr/ADR-0001-protocol-contract-source-of-truth.md`)
-- Core canonical structures and timestamp conventions: `docs/protocol.md`
+- Canonical transport-neutral envelope semantics: `docs/protocol/frames.md` (§5.4.1)
 
 ## 1. Transport and Encoding
 
@@ -24,7 +24,7 @@ Federation forwarding uses this envelope object:
 
 - `envelope_id`: bytes(32) identifier derived as `SHA-256(payload)` (JSON form: 64-char lowercase hex string)
 - `destination`: bytes(32) WayfarerID destination (logical type is always 32 raw bytes)
-- `payload`: bytes canonical `EnvelopeV1` bytes as defined by `Canonical Bytes v1` in `docs/protocol.md` (JSON form: base64url string, no padding)
+- `payload`: bytes canonical envelope bytes consistent with `docs/protocol/frames.md` (§5.4.1) (JSON form: base64url string, no padding)
 - `created_at`: `UInt64` Unix ms
 - `expires_at`: `UInt64` Unix ms
 - `hop_count`: `UInt32`
@@ -32,14 +32,14 @@ Federation forwarding uses this envelope object:
 
 Derivation rules:
 
-1. `payload` MUST be exactly the canonical encoded `EnvelopeV1` bytes.
+1. `payload` MUST be exactly canonical encoded envelope bytes.
 2. `envelope_id` MUST be the SHA-256 digest of those exact `payload` bytes (`envelope_id = SHA-256(payload)`).
-3. `payload` bytes MUST decode to `EnvelopeV1` per `Canonical Bytes v1` in `docs/protocol.md`; `EnvelopeV1.toWayfarerId` MUST be exactly 32 raw bytes.
-4. Let `destination_bytes` be the logical destination value and `toWayfarerId_bytes` be decoded from `EnvelopeV1.toWayfarerId`; `destination_bytes` MUST equal `toWayfarerId_bytes`.
+3. `payload` bytes MUST decode to the canonical envelope map; `to_wayfarer_id` MUST be exactly 32 raw bytes.
+4. Let `destination_bytes` be the logical destination value and `to_wayfarer_id_bytes` be decoded from envelope payload; `destination_bytes` MUST equal `to_wayfarer_id_bytes`.
 
 Representation rules:
 
-- JSON transports: `destination` MUST be represented as exactly 64 lowercase hex characters and MUST equal `hex_lower(toWayfarerId_bytes)`.
+- JSON transports: `destination` MUST be represented as exactly 64 lowercase hex characters and MUST equal `hex_lower(to_wayfarer_id_bytes)`.
 - CBOR/bytes transports: `destination` MUST be represented as raw 32 bytes.
 
 ## 3. Frame Types

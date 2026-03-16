@@ -1,5 +1,9 @@
 # RelayLink v0.1 Contract
 
+> Archived historical document (non-normative).
+> This v0.1 contract is retained only for historical context.
+> Active normative transport contracts are defined under `docs/spec/*`.
+
 Status: Historical/legacy reference. Canonical v1 client-relay contract is `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`.
 
 > WARNING (v0.1 vs v1 divergence):
