@@ -30,7 +30,7 @@ This document defines:
 - [Legacy cleanup plan](./CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md)
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Compatibility matrix](./PROTOCOL_COMPATIBILITY_MATRIX.md)
-- [Gossip v1 protocol docs](../protocol/gossip.md)
+- [Gossip v1 protocol docs](../../protocol/gossip.md)
 
 ---
 
@@ -253,7 +253,7 @@ Without a divergence audit, later changes become ambiguous. It becomes difficult
 ### Step 1.1 — Create master compatibility matrix in aethos
 Create:
 
-`docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+`docs/archive/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
 
 This file should include a table with columns like:
 - feature / field / semantic
@@ -708,9 +708,9 @@ Defined in future security roadmap.
 The following documents should exist and be kept up to date.
 
 ## In aethos
-- `docs/migration/protocol_update.md` (this canonical migration plan)
-- `docs/migration/protocol_architecture.md`
-- `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
+- `docs/archive/migration/protocol_update.md` (this canonical migration plan)
+- `docs/archive/migration/protocol_architecture.md`
+- `docs/archive/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
@@ -854,13 +854,13 @@ Client-relay cleanup has progressed far enough to kick off **Phase 4/5 work** (t
 - Relay-side canonical cleanup is sufficiently complete to begin Phase 4 integration work.
 - Gossip protocol is specified in `docs/protocol/*`; implementation rollout is in progress.
 - Local peer discovery is in progress, with iOS now implementing Bonjour/mDNS discovery + peer table + diagnostics.
-- The migration scoreboard for both residual cutover items and Phase 4/5 kickoff status is maintained in `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
+- The migration scoreboard for both residual cutover items and Phase 4/5 kickoff status is maintained in `docs/archive/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
 ## Action 1
-Keep this migration plan current in `docs/migration/protocol_update.md`.
+Keep this migration plan current in `docs/archive/migration/protocol_update.md`.
 
 ## Action 2
-Create or update `docs/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
+Create or update `docs/archive/migration/PROTOCOL_COMPATIBILITY_MATRIX.md`.
 
 Note: this kickoff does not authorize immediate removal of all legacy client-relay compatibility paths; canonical-only cutover remains evidence-gated by fixtures + matrix per `CLIENT_RELAY_LEGACY_CLEANUP_PLAN.md`.
 

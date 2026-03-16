@@ -12,12 +12,12 @@ Purpose: track implementation alignment against canonical protocol specs across 
 - [Client-relay conformance fixtures](./CLIENT_RELAY_CONFORMANCE_FIXTURES.md)
 - [Migration plan](./protocol_update.md)
 - [Architecture companion](./protocol_architecture.md)
-- [Gossip v1 protocol docs](../protocol/gossip.md)
-- [Gossip v1 interoperability fixtures](../../Fixtures/Protocol/gossip-v1/README.md)
+- [Gossip v1 protocol docs](../../protocol/gossip.md)
+- [Gossip v1 interoperability fixtures](../../../Fixtures/Protocol/gossip-v1/README.md)
 
 Related migration references:
 
-- Architecture companion: `docs/migration/protocol_architecture.md`
+- Architecture companion: `docs/archive/migration/protocol_architecture.md`
 - Gossip v1 upgrade docs: `docs/protocol/*`
 - Gossip v1 interoperability fixtures: `Fixtures/Protocol/gossip-v1/*`
 
@@ -43,11 +43,11 @@ Status vocabulary for this section: `Specified` / `In progress` / `Not started` 
 
 | Track ID | Track | Status | Notes | Primary references |
 | --- | --- | --- | --- | --- |
-| P45-GOSSIP-CONTRACT | Gossip v1 upgrade contract | Specified | Canonical Gossip v1 upgrade contract is defined in `docs/protocol/*`; Phase 4/5 implementation rollout is active. | [Docs](../protocol/gossip.md), [Fixtures](../../Fixtures/Protocol/gossip-v1/README.md), [Phase 4 plan](./protocol_update.md#10-phase-4--gossip-v1-implementation) |
-| P45-GOSSIPV1-RUNTIME | Transport-neutral Gossip V1 runtime implementation | In progress | Gossip V1 session integration work has started; fixture-backed convergence validation is still in progress across implementations. | [Phase 4 Step 4.3](./protocol_update.md#step-43--implement-transport-neutral-aethos-gossip-protocol-gossip-v1-runtime), [Gossip docs](../protocol/gossip.md) |
+| P45-GOSSIP-CONTRACT | Gossip v1 upgrade contract | Specified | Canonical Gossip v1 upgrade contract is defined in `docs/protocol/*`; Phase 4/5 implementation rollout is active. | [Docs](../../protocol/gossip.md), [Fixtures](../../../Fixtures/Protocol/gossip-v1/README.md), [Phase 4 plan](./protocol_update.md#10-phase-4--gossip-v1-implementation) |
+| P45-GOSSIPV1-RUNTIME | Transport-neutral Gossip V1 runtime implementation | In progress | Gossip V1 session integration work has started; fixture-backed convergence validation is still in progress across implementations. | [Phase 4 Step 4.3](./protocol_update.md#step-43--implement-transport-neutral-aethos-gossip-protocol-gossip-v1-runtime), [Gossip docs](../../protocol/gossip.md) |
 | P45-LOCAL-DISCOVERY | Local peer discovery | In progress | Local discovery rollout has started; iOS reports Bonjour/mDNS discovery implementation in progress. | [Phase 5 plan](./protocol_update.md#11-phase-5--lan-discovery-and-local-peer-delivery), [Phase 5 Step 5.2](./protocol_update.md#step-52--implement-ios-local-discovery) |
 | P45-PEER-TABLE | Peer-table tracking | In progress | Peer-table tracking is underway for discovered identities/endpoints/last-seen and diagnostics visibility. | [Phase 5 Step 5.4](./protocol_update.md#step-54--build-peer-table-abstraction), [Phase 5 Step 5.6](./protocol_update.md#step-56--add-diagnostics-ui-and-logs) |
-| P45-DISCOVERY-SYNC-INTEGRATION | Discovery-driven sync integration | In progress | Discovery-triggered connection + gossip wiring has started; full end-to-end evidence remains tracked as rollout work. | [Phase 5 Step 5.5](./protocol_update.md#step-55--trigger-sync-on-discovery-driven-connection), [Gossip docs](../protocol/gossip.md) |
+| P45-DISCOVERY-SYNC-INTEGRATION | Discovery-driven sync integration | In progress | Discovery-triggered connection + gossip wiring has started; full end-to-end evidence remains tracked as rollout work. | [Phase 5 Step 5.5](./protocol_update.md#step-55--trigger-sync-on-discovery-driven-connection), [Gossip docs](../../protocol/gossip.md) |
 
 ## Schema
 
@@ -187,4 +187,4 @@ Note: iOS does not implement federation in MVP0. Federation rows use `NOT_IMPLEM
 - Canonical client-relay spec: `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - Canonical federation spec: `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - Canonical receipt spec: `docs/spec/RECEIPTS.md`
-- Migration plan: `docs/migration/protocol_update.md`
+- Migration plan: `docs/archive/migration/protocol_update.md`

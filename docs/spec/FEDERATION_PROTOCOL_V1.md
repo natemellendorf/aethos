@@ -27,13 +27,14 @@ Federation forwarding uses this envelope object:
 - `payload`: bytes canonical envelope bytes consistent with `docs/protocol/frames.md` (§5.4.1) (JSON form: base64url string, no padding)
 - `created_at`: `UInt64` Unix ms
 - `expires_at`: `UInt64` Unix ms
-- `hop_count`: `UInt32`
+- `hop_count`: `UInt16`
 - `seen_relays`: array of relay identifiers (strings)
 
 Derivation rules:
 
 1. `payload` MUST be exactly canonical encoded envelope bytes.
 2. `envelope_id` MUST be the SHA-256 digest of those exact `payload` bytes (`envelope_id = SHA-256(payload)`).
+   This is the same derivation as Gossip V1 `item_id` (SHA-256 of canonical gossip envelope bytes).
 3. `payload` bytes MUST decode to the canonical envelope map; `to_wayfarer_id` MUST be exactly 32 raw bytes.
 4. Let `destination_bytes` be the logical destination value and `to_wayfarer_id_bytes` be decoded from envelope payload; `destination_bytes` MUST equal `to_wayfarer_id_bytes`.
 
@@ -113,7 +114,7 @@ Optional fields:
 6. `expires_at` is immutable after creation; TTL MUST NOT be extended at any relay hop.
 7. Expired envelopes (`now_ms >= expires_at`) MUST NOT be forwarded.
 8. If `envelope_id != SHA-256(payload)`, relay MUST reject, MUST NOT forward, and MUST send `relay_ack(status=rejected, code=ENVELOPE_ID_MISMATCH)`.
-9. If logical `destination_bytes != toWayfarerId_bytes` decoded from `payload`, relay MUST reject, MUST NOT forward, and MUST send `relay_ack(status=rejected, code=DESTINATION_MISMATCH)`.
+9. If logical `destination_bytes != to_wayfarer_id_bytes` decoded from `payload`, relay MUST reject, MUST NOT forward, and MUST send `relay_ack(status=rejected, code=DESTINATION_MISMATCH)`.
 
 ## 5. Minimal Forwarding Sequence
 
@@ -138,4 +139,4 @@ Relay MUST return `relay_ack(status=rejected, code=...)` when any of the followi
 - `INVALID_DESTINATION`: malformed `destination`
 - `INVALID_PAYLOAD`: malformed/undecodable payload bytes
 - `ENVELOPE_ID_MISMATCH`: `envelope_id` does not equal `SHA-256(payload)`
-- `DESTINATION_MISMATCH`: logical `destination_bytes` does not match `toWayfarerId_bytes` decoded from `payload`
+- `DESTINATION_MISMATCH`: logical `destination_bytes` does not match `to_wayfarer_id_bytes` decoded from `payload`
