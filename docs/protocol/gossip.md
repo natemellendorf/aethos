@@ -83,6 +83,8 @@ For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates req
 
 For `SUMMARY`, receivers MUST require `bloom_filter` and `item_count`, MAY accept optional `preview_item_ids` and `preview_cursor`, and MUST reject any additional unknown payload keys.
 
+`SUMMARY.preview_item_ids` wire order MUST remain bytewise lexicographic by decoded `item_id` bytes per `docs/protocol/frames.md`; deterministic prioritization affects membership selection only and is defined in `docs/protocol/encounter.md` §6.2.
+
 When violations are frame-local and recoverable, receiver MAY continue session; repeated protocol violations SHOULD end session.
 
 ## 7. Hop-count monotonicity and regression rules
@@ -136,11 +138,11 @@ The Bloom design parameters and deterministic mapping are defined in encounter a
 
 ## 12. Transfer ordering policy (non-normative for wire correctness)
 
-Implementations MAY apply local transfer prioritization during constrained encounters, such as:
+Implementations MAY apply local transfer prioritization during constrained encounters. The numbered examples below are illustrative local policy (non-normative), not a mandated ordering:
 
 1. objects not yet relay-ingested first,
-2. lower `hop_count` first,
-3. earlier `expiry_unix_ms` first,
+2. earlier `expiry_unix_ms` first,
+3. lower `hop_count` first,
 4. relay-reachable or higher-utility paths first when locally known,
 5. stable tie-break by `item_id`.
 

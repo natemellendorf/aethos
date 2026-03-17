@@ -68,6 +68,52 @@ Deterministic mapping rules:
 
 Initial Bloom buffer MUST be all zero bytes.
 
+## 6.2 Deterministic SUMMARY preview membership selection (normative)
+
+If a sender includes `SUMMARY.preview_item_ids`, it MUST select membership deterministically before applying on-wire ordering constraints from `docs/protocol/frames.md`.
+
+Definitions:
+
+- `W`: sender-chosen preview window size where `0 <= W <= MAX_SUMMARY_PREVIEW_ITEMS`.
+- `eligibleItemIDs`: sender-local eligible item IDs at SUMMARY emission time. This exact set MUST be the set used for both `SUMMARY.item_count` and `SUMMARY.bloom_filter` construction.
+- `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time; this set MUST be derived from the same eligibility snapshot as `eligibleItemIDs`.
+- `decodedDigestBytes(item_id)`: hex-decode the 64-character lowercase-hex `item_id` into 32 bytes.
+- `bytewise lexicographic order`: compare byte arrays left-to-right using each byte as an unsigned value in `[0, 255]`.
+
+Rules:
+
+1. Rank `previewCandidates` by this ascending tuple:
+   1. earliest `expiry_unix_ms` first (equivalently, lowest remaining TTL at emission time),
+   2. then lowest `hop_count`,
+   3. then bytewise lexicographic order of `decodedDigestBytes(item_id)`.
+2. Select up to `W` IDs as `selectedPreviewIDs` using a deterministic membership policy that preserves urgent-first behavior under the ranking from Step 1:
+   1. choose the first `U` IDs from the head of the ranked list (`0 <= U <= W`),
+   2. if capacity remains, fill `W - U` slots from the remaining ranked candidates using a deterministic local policy.
+3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of `decodedDigestBytes(item_id)` (ascending).
+4. `SUMMARY.preview_cursor` derivation happens after Step 3 (post-selection wire ordering): if `SUMMARY.preview_item_ids` is non-empty, `SUMMARY.preview_cursor = last(SUMMARY.preview_item_ids)`; if empty, `SUMMARY.preview_cursor` MUST be absent.
+5. Therefore, prioritization is represented by membership selection only, not by on-wire array order.
+
+Determinism requirements:
+
+1. For a given emission-time snapshot, selection MUST be a pure function of that snapshot (plus persisted local state, if such state is part of the deterministic policy) and MUST be stable across runs and restarts.
+2. Tie-break comparison MUST use canonical bytewise comparison of `decodedDigestBytes(item_id)` (not hex-string ordering).
+3. Implementations MUST NOT use randomness, hash-map iteration order, or other non-deterministic iteration as ranking input.
+
+Fairness note (non-normative local policy):
+
+- Implementations MAY apply deterministic rotation/mixing to reduce starvation of long-lived items.
+- One deterministic strategy is: always include `U = min(W, urgent_budget)` urgent IDs from the ranked head, then fill `W-U` from remaining eligible IDs in canonical `item_id` byte order using a persisted local-only rotation offset/seed.
+- Any such policy should preserve urgent-first behavior from the ranking in Step 1 and should be independent of on-wire `SUMMARY.preview_cursor`.
+
+Example (1000 backlog / 32 preview):
+
+Implementation note: this example uses `W = 32` by sender choice, which is below the protocol maximum (`MAX_SUMMARY_PREVIEW_ITEMS = 64`).
+
+1. If `|previewCandidates| = 1000` and `W = 32`, rank all 1000 by `(expiry_unix_ms, hop_count, item_id_bytes)` and take the first 32 IDs.
+2. Re-sort those 32 selected IDs lexicographically by `decodedDigestBytes(item_id)` for `SUMMARY.preview_item_ids` encoding.
+3. Derive `SUMMARY.preview_cursor` from the on-wire sorted array: `preview_cursor = last(preview_item_ids)`.
+4. Urgency drives which IDs are included; the transmitted order remains canonical lexicographic wire order.
+
 ## 7. Expiry semantics and clock skew
 
 1. `expiry_unix_ms` MUST be UTC Unix epoch milliseconds (`uint64`).
@@ -128,7 +174,7 @@ Note: A Bloom filter cannot enumerate or prove the presence of unknown IDs; it c
 
 ## 8.2 Constrained-encounter transfer scheduling (local policy only)
 
-During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` tie-break).
+During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, earlier `expiry_unix_ms`, lower `hop_count`, then stable `item_id` tie-break).
 
 This scheduling guidance MUST NOT alter protocol validity, interoperability, or acceptance semantics.
 
