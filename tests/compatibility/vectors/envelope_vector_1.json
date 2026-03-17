@@ -1,8 +1,10 @@
 {
-  "name": "minimal-envelope",
+  "name": "minimal-envelope-signed-v1",
   "envelope": {
     "to_wayfarer_id": "1111111111111111111111111111111111111111111111111111111111111111",
     "manifest_id": "2222222222222222222222222222222222222222222222222222222222222222",
-    "body_utf8": "hello"
+    "body_utf8": "hello",
+    "author_pubkey": "d13d656dcccdabdceaf22c0fc1f828661344d31ea41afdbe688483aaa0896546",
+    "author_sig": "b327b1e6cb599be0015dc4103b1405a9e48512ecb807c3a5745b7ed6a518a7939aaaad7d1b40cd08034af438c0bb5b90b4473ddd7c060fd1f8fbc254cba53703"
   }
 }

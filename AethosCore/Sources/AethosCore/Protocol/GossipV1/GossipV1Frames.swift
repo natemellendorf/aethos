@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 
 // MARK: - Frame types
 
@@ -42,6 +47,8 @@ public enum GossipV1FrameError: Swift.Error, Equatable, Sendable {
     case transferEnvelopeNotCanonical
     case transferEnvelopeNotMap
     case transferEnvelopeSchemaMismatch(expected: [String], actual: [String])
+    case transferEnvelopeInvalidFieldLength(field: String, expected: Int, actual: Int)
+    case transferEnvelopeSignatureInvalid
     case transferItemIDMismatch
 
     case duplicateItemID
@@ -718,7 +725,8 @@ private extension GossipV1RequestFrame {
 
 private extension GossipV1TransferFrame {
     static let requiredKeys = ["objects"]
-    static let requiredEnvelopeKeys = ["to_wayfarer_id", "manifest_id", "body"]
+    static let requiredEnvelopeKeys = ["to_wayfarer_id", "manifest_id", "body", "author_pubkey", "author_sig"]
+    static let envelopeSignatureDomainSeparator = Data("AETHOS_ENVELOPE_V1".utf8)
 
     func payloadCBOR() -> CanonicalCBORValue {
         .map([
@@ -779,9 +787,71 @@ private extension GossipV1TransferFrame {
             )
         }
 
-        _ = try GossipV1CBOR.requireBytes(dict["to_wayfarer_id"]!, field: "to_wayfarer_id")
-        _ = try GossipV1CBOR.requireBytes(dict["manifest_id"]!, field: "manifest_id")
-        _ = try GossipV1CBOR.requireBytes(dict["body"]!, field: "body")
+        let toWayfarerID = try GossipV1CBOR.requireBytes(dict["to_wayfarer_id"]!, field: "to_wayfarer_id")
+        guard toWayfarerID.count == 32 else {
+            throw GossipV1FrameError.transferEnvelopeInvalidFieldLength(
+                field: "to_wayfarer_id",
+                expected: 32,
+                actual: toWayfarerID.count
+            )
+        }
+
+        let manifestID = try GossipV1CBOR.requireBytes(dict["manifest_id"]!, field: "manifest_id")
+        guard manifestID.count == 32 else {
+            throw GossipV1FrameError.transferEnvelopeInvalidFieldLength(
+                field: "manifest_id",
+                expected: 32,
+                actual: manifestID.count
+            )
+        }
+
+        let body = try GossipV1CBOR.requireBytes(dict["body"]!, field: "body")
+
+        let authorPublicKey = try GossipV1CBOR.requireBytes(dict["author_pubkey"]!, field: "author_pubkey")
+        guard authorPublicKey.count == 32 else {
+            throw GossipV1FrameError.transferEnvelopeInvalidFieldLength(
+                field: "author_pubkey",
+                expected: 32,
+                actual: authorPublicKey.count
+            )
+        }
+
+        let authorSignature = try GossipV1CBOR.requireBytes(dict["author_sig"]!, field: "author_sig")
+        guard authorSignature.count == 64 else {
+            throw GossipV1FrameError.transferEnvelopeInvalidFieldLength(
+                field: "author_sig",
+                expected: 64,
+                actual: authorSignature.count
+            )
+        }
+
+        let signingPayload = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("to_wayfarer_id"), value: .bytes(toWayfarerID)),
+                .init(key: .text("manifest_id"), value: .bytes(manifestID)),
+                .init(key: .text("body"), value: .bytes(body)),
+            ])
+        )
+        let domainSeparatedPayload = envelopeSignatureDomainSeparator + signingPayload
+        let signingDigest = AethosIDs.sha256(domainSeparatedPayload)
+        guard verifyAuthorSignature(authorSignature, digest: signingDigest, publicKey: authorPublicKey) else {
+            throw GossipV1FrameError.transferEnvelopeSignatureInvalid
+        }
+
+        _ = AethosIDs.sha256(authorPublicKey)
+    }
+
+    static func verifyAuthorSignature(_ signature: Data, digest: Data, publicKey: Data) -> Bool {
+        if #available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *) {
+            do {
+                let key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
+                return key.isValidSignature(signature, for: digest)
+            } catch {
+                return false
+            }
+        }
+
+        fatalError("GossipV1 envelope signature verification requires CryptoKit (macOS 10.15+/iOS 13+)")
     }
 
     // Expiry semantics are validated at the engine boundary with an injected clock.

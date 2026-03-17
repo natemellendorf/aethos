@@ -1,12 +1,35 @@
 {
-  "transfer_object_1": {
-    "envelope_b64": "oWF4AQ",
-    "envelope_cbor_hex": "a1617801",
-    "item_id": "2956b2cee8e54663cef11aac45368e3a869c862ed7a6fd2dba3a408017ce3e0e"
+  "valid_signature": {
+    "envelope_b64": "pWRib2R5QgECamF1dGhvcl9zaWdYQPSCvhVt4PJy-wX7_i83ooqgdsm4eBIo7gX788PbiTHZfrvWlMDzsaItwsh2ggvrLJGhaAzCcpwVn-3QwdA_KQprbWFuaWZlc3RfaWRYIP7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-bWF1dGhvcl9wdWJrZXlYINE9ZW3Mzavc6vIsD8H4KGYTRNMepBr9vmiEg6qgiWVGbnRvX3dheWZhcmVyX2lkWCABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+    "envelope_cbor_hex": "a564626f64794201026a617574686f725f7369675840f482be156de0f272fb05fbfe2f37a28aa076c9b8781228ee05fbf3c3db8931d97ebbd694c0f3b1a22dc2c876820beb2c91a1680cc2729c159fedd0c1d03f290a6b6d616e69666573745f69645820fefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe6d617574686f725f7075626b65795820d13d656dcccdabdceaf22c0fc1f828661344d31ea41afdbe688483aaa08965466e746f5f77617966617265725f696458200101010101010101010101010101010101010101010101010101010101010101",
+    "item_id": "46c88cc68dbbcc85c2e7eb05141d02eeb73926c334824873d3a93bb252272cd5",
+    "author_pubkey_hex": "d13d656dcccdabdceaf22c0fc1f828661344d31ea41afdbe688483aaa0896546",
+    "author_sig_hex": "f482be156de0f272fb05fbfe2f37a28aa076c9b8781228ee05fbf3c3db8931d97ebbd694c0f3b1a22dc2c876820beb2c91a1680cc2729c159fedd0c1d03f290a",
+    "derived_wayfarer_id": "8f2f50c5298e07ec2636eefb3e7b8aec8442462d79150d7b0fd45b45aaa9f9b4"
+  },
+  "invalid_signature_rejection": {
+    "author_pubkey_hex": "d13d656dcccdabdceaf22c0fc1f828661344d31ea41afdbe688483aaa0896546",
+    "author_sig_hex": "f582be156de0f272fb05fbfe2f37a28aa076c9b8781228ee05fbf3c3db8931d97ebbd694c0f3b1a22dc2c876820beb2c91a1680cc2729c159fedd0c1d03f290a"
+  },
+  "mismatched_pubkey_signature_rejection": {
+    "author_pubkey_hex": "11cfbc1b0b04a95a3bc401f8e4cc661467f562af6b6631393b32285d8c316f7b",
+    "author_sig_hex": "f482be156de0f272fb05fbfe2f37a28aa076c9b8781228ee05fbf3c3db8931d97ebbd694c0f3b1a22dc2c876820beb2c91a1680cc2729c159fedd0c1d03f290a"
+  },
+  "deterministic_wayfarer_derivation": {
+    "author_pubkey_hex": "d13d656dcccdabdceaf22c0fc1f828661344d31ea41afdbe688483aaa0896546",
+    "wayfarer_id": "8f2f50c5298e07ec2636eefb3e7b8aec8442462d79150d7b0fd45b45aaa9f9b4"
+  },
+  "relay_forwarded_object_verification": {
+    "item_id": "46c88cc68dbbcc85c2e7eb05141d02eeb73926c334824873d3a93bb252272cd5",
+    "envelope_b64": "pWRib2R5QgECamF1dGhvcl9zaWdYQPSCvhVt4PJy-wX7_i83ooqgdsm4eBIo7gX788PbiTHZfrvWlMDzsaItwsh2ggvrLJGhaAzCcpwVn-3QwdA_KQprbWFuaWZlc3RfaWRYIP7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-bWF1dGhvcl9wdWJrZXlYINE9ZW3Mzavc6vIsD8H4KGYTRNMepBr9vmiEg6qgiWVGbnRvX3dheWZhcmVyX2lkWCABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+    "relay_must_preserve_bytes": true
   },
   "transfer_object_2": {
-    "envelope_b64": "oWF4Ag",
-    "envelope_cbor_hex": "a1617802",
-    "item_id": "9cb48014d8de9f85816453e08fbf3c494c01399bc4250f937f59bd671defbd90"
+    "envelope_b64": "pWRib2R5QgIDamF1dGhvcl9zaWdYQLJXGjPo1osNSRKWDHtip5zqFCcLtVP4uOm7skkJGLgqVFRFiYyiXZlWMIjlVYyssXjjtOGQ1uNw81QiSizxhQVrbWFuaWZlc3RfaWRYIP39_f39_f39_f39_f39_f39_f39_f39_f39_f39_f39bWF1dGhvcl9wdWJrZXlYIBHPvBsLBKlaO8QB-OTMZhRn9WKva2YxOTsyKF2MMW97bnRvX3dheWZhcmVyX2lkWCACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+    "envelope_cbor_hex": "a564626f64794202036a617574686f725f7369675840b2571a33e8d68b0d4912960c7b62a79cea14270bb553f8b8e9bbb2490918b82a545445898ca25d99563088e5558cacb178e3b4e190d6e370f354224a2cf185056b6d616e69666573745f69645820fdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfd6d617574686f725f7075626b6579582011cfbc1b0b04a95a3bc401f8e4cc661467f562af6b6631393b32285d8c316f7b6e746f5f77617966617265725f696458200202020202020202020202020202020202020202020202020202020202020202",
+    "item_id": "bb06c000d67b2bdff2c2c28b6d7c350011e2f57d85f8b5df98c7daf842c1abbb",
+    "author_pubkey_hex": "11cfbc1b0b04a95a3bc401f8e4cc661467f562af6b6631393b32285d8c316f7b",
+    "author_sig_hex": "b2571a33e8d68b0d4912960c7b62a79cea14270bb553f8b8e9bbb2490918b82a545445898ca25d99563088e5558cacb178e3b4e190d6e370f354224a2cf18505",
+    "derived_wayfarer_id": "ca02f1c4fc3c0d23dbf8ed7c52192bbe95cd87d8678d356326f0647633f855eb"
   }
 }

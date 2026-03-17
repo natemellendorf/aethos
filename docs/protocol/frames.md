@@ -185,7 +185,9 @@ Canonical Envelope schema (required keys):
 {
   to_wayfarer_id: bstr(32),
   manifest_id: bstr(32),
-  body: bstr
+  body: bstr,
+  author_pubkey: bstr(32),
+  author_sig: bstr(64)
 }
 ```
 
@@ -196,6 +198,23 @@ Field definitions:
 | `to_wayfarer_id` | `bstr(32)` | Yes | 32-byte destination Wayfarer identifier. |
 | `manifest_id` | `bstr(32)` | Yes | 32-byte manifest identifier for the payload. |
 | `body` | `bstr` | Yes | Opaque payload bytes carried by the envelope. |
+| `author_pubkey` | `bstr(32)` | Yes | Ed25519 author public key bytes. |
+| `author_sig` | `bstr(64)` | Yes | Ed25519 signature over the canonical envelope signing payload. |
+
+Deterministic sender derivation (normative):
+
+1. The sender identity for a Gossip V1 envelope **MUST** be derived only from `author_pubkey`.
+2. `wayfarer_id = SHA-256(author_pubkey)` is the only permitted derivation.
+3. Alternative sender identifiers in envelope/body metadata **MUST NOT** be trusted.
+
+Canonical signing payload and signature (normative):
+
+1. Signing payload **MUST** be reconstructed exactly as `CanonicalCBOR({to_wayfarer_id, manifest_id, body})`.
+2. Field set for signing payload **MUST** be exactly `to_wayfarer_id`, `manifest_id`, `body` (no extras).
+3. CBOR map encoding for signing payload **MUST** use RFC 8949 deterministic ordering.
+4. Domain separator **MUST** be the exact UTF-8 byte string `"AETHOS_ENVELOPE_V1"`.
+5. Signature digest **MUST** be `SHA-256("AETHOS_ENVELOPE_V1" || signing_payload)`.
+6. Signature value **MUST** be `author_sig = Sign(author_privkey, signature_digest)` using Ed25519.
 
 Canonical serialization requirements:
 
@@ -211,7 +230,8 @@ Item ID derivation:
 1. `item_id` **MUST** be derived as `SHA256(envelope_bytes)`.
 2. The hash **MUST** be computed over the exact serialized envelope bytes.
 3. Any serialization change changes `item_id`.
-4. Relays **MUST NOT** modify envelope bytes.
+4. Because `author_pubkey` and `author_sig` are required envelope fields, different authors (or signatures) for the same `{to_wayfarer_id, manifest_id, body}` produce different `item_id` values.
+5. Relays **MUST NOT** modify envelope bytes.
 
 TRANSFER frame encoding requirements:
 
@@ -241,22 +261,26 @@ Decoder validation rules:
 
 1. Decoder **MUST** base64url-decode `envelope_b64`.
 2. Decoder **MUST** verify `sha256(decoded_envelope_bytes)` equals the declared `item_id`.
-3. Decoder **MUST** decode `decoded_envelope_bytes` as CBOR.
-4. Decoder **MUST** validate the Envelope schema (`to_wayfarer_id`, `manifest_id`, `body` with required types).
-5. Invalid objects **MUST** be rejected.
-6. Rejection of one object **MUST NOT** terminate processing of other objects in the same `TRANSFER` frame.
+3. Decoder **MUST** decode `decoded_envelope_bytes` as canonical CBOR.
+4. Decoder **MUST** extract required fields `to_wayfarer_id`, `manifest_id`, `body`, `author_pubkey`, `author_sig`.
+5. Decoder **MUST** reconstruct `signing_payload = CanonicalCBOR({to_wayfarer_id, manifest_id, body})` exactly.
+6. Decoder **MUST** verify `author_sig` against `SHA-256("AETHOS_ENVELOPE_V1" || signing_payload)` using `author_pubkey`.
+7. Decoder **MUST** derive sender `wayfarer_id = SHA-256(author_pubkey)` and use only this derived identity for author attribution.
+8. Any missing required field, signature failure, malformed field length, or payload reconstruction mismatch **MUST** be rejected fail-closed.
+9. Invalid objects **MUST** be rejected.
+10. Rejection of one object **MUST NOT** terminate processing of other objects in the same `TRANSFER` frame.
 
 Forward compatibility:
 
-1. Future envelope versions **MAY** add keys.
-2. Receivers **MUST** ignore unknown envelope keys.
-3. Existing keys **MUST NOT** change meaning.
+1. For Gossip V1 envelopes, receiver validation **MUST** require the exact field set and reject unknown envelope keys.
+2. Future envelope versions **MAY** define expanded schemas under explicit version negotiation.
 
 Security properties:
 
 1. Canonical serialization provides integrity-stable hashing.
 2. Deterministic encoding provides deterministic deduplication by `item_id`.
 3. Relay neutrality requires relays to treat envelope bytes as immutable.
+4. Relays **MUST NOT** modify `author_pubkey`, modify `author_sig`, re-sign envelopes, or wrap envelopes with alternate author metadata.
 
 Implementation guidance:
 
@@ -307,66 +331,21 @@ Validation and trust:
 2. RELAY_INGEST **MUST** be trusted only when received on authenticated relay transport.
 3. Unauthenticated RELAY_INGEST **MUST NOT** influence pruning or replication de-escalation.
 
-## Canonical Envelope Test Vector
+## Canonical Envelope Conformance Vectors
 
-This section defines a concrete canonical Envelope test vector for cross-implementation conformance.
-Implementations **MUST** reproduce these exact bytes and derived values.
+Canonical signed-envelope vectors are maintained in:
 
-### Test Vector 1 — Minimal Envelope
+- `Fixtures/Protocol/gossip-v1/item_id_derivation.json`
+- `tests/compatibility/vectors/envelope_vector_1.json`
+- `tests/compatibility/vectors/envelope_vector_1.expected.json`
 
-Conceptual Envelope object:
+Implementations **MUST** pass vectors that cover at least:
 
-```cbor
-{
-  to_wayfarer_id: h'1111111111111111111111111111111111111111111111111111111111111111',
-  manifest_id: h'2222222222222222222222222222222222222222222222222222222222222222',
-  body: h'68656c6c6f' ; "hello"
-}
-```
-
-Canonical key order is `body`, `manifest_id`, `to_wayfarer_id`.
-
-Reference values:
-
-1. Canonical CBOR hex (`envelope_bytes`):
-
-```text
-a364626f64794568656c6c6f6b6d616e69666573745f6964582022222222222222222222222222222222222222222222222222222222222222226e746f5f77617966617265725f696458201111111111111111111111111111111111111111111111111111111111111111
-```
-
-2. SHA-256 digest (`item_id`):
-
-```text
-cead451f4f6da41d34d4afabf0429103335d1bf356dd29a1c51b60430d8d46cc
-```
-
-3. Base64url (no padding) of `envelope_bytes` (`envelope_b64`):
-
-```text
-o2Rib2R5RWhlbGxva21hbmlmZXN0X2lkWCAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIm50b193YXlmYXJlcl9pZFggERERERERERERERERERERERERERERERERERERERERERE
-```
-
-Verification pipeline:
-
-1. Construct the conceptual Envelope object exactly as shown.
-2. Canonically CBOR-encode to `envelope_bytes`.
-3. Compute `item_id = SHA256(envelope_bytes)`.
-4. Compute `envelope_b64 = base64url(envelope_bytes)` with no padding.
-5. Assert exact byte-for-byte match with the three reference values above.
-
-Decoder validation test:
-
-1. Decoder **MUST** base64url-decode `envelope_b64` and recover the exact canonical bytes above.
-2. Decoder **MUST** verify `sha256(decoded_envelope_bytes) == item_id`.
-3. Decoder **MUST** decode CBOR and validate required Envelope keys and types.
-4. Any mismatch **MUST** be rejected as invalid object data.
-
-Additional Recommended Vectors:
-
-1. Same logical Envelope with intentionally non-canonical key insertion order (encoder must still emit canonical bytes).
-2. Same fields with `body = h''` (empty payload) to verify canonical length handling.
-3. Negative vector where one byte of `envelope_b64` is altered (hash check must fail).
-4. Negative vector where canonical bytes are valid CBOR but key type is not `tstr` (schema check must fail).
+1. valid signature acceptance,
+2. invalid signature rejection,
+3. mismatched `author_pubkey`/`author_sig` rejection,
+4. deterministic `wayfarer_id = SHA-256(author_pubkey)` derivation,
+5. relay-forwarded object verification with immutable envelope bytes.
 
 ## 6. Deterministic rejection/acceptance rules
 

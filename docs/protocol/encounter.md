@@ -29,6 +29,13 @@ Identity rules:
 2. Node identity SHOULD persist across restarts while key material is unchanged.
 3. If identity rotates (new key), peer MUST treat rotated identity as a new node.
 4. HELLO metadata MUST NOT be used as sole trust decision input.
+5. HELLO identity is session/peer identity only and MUST NOT override canonical envelope author attribution.
+
+Envelope author attribution boundary (normative):
+
+1. Gossip envelope author identity **MUST** be derived only from `author_pubkey` as `wayfarer_id = SHA-256(author_pubkey)`.
+2. Transport/session metadata and HELLO identity are peer/session context only.
+3. Peer/session identifiers **MUST NOT** be displayed or persisted as envelope author identity.
 
 ## 4. Version mismatch behavior (fail-closed)
 
@@ -182,10 +189,12 @@ This scheduling guidance MUST NOT alter protocol validity, interoperability, or 
 
 1. Bearers MAY differ in discovery and channel setup.
 2. Bearers MUST NOT alter acceptance, rejection, hashing, identity, `expiry_unix_ms`, or hop-count semantics.
-3. Linux and iOS implementations MUST share identical RFC 8949 deterministic CBOR and Bloom algorithms.
+3. Bearers MUST NOT inject sender IDs that override envelope-derived author attribution.
+4. Linux and iOS implementations MUST share identical RFC 8949 deterministic CBOR and Bloom algorithms.
 
 ## 10. Security considerations
 
 - Session admission policy is local, but protocol correctness is global.
 - Rate-limiting and abuse controls SHOULD be local policy layers.
 - Scoring data MUST remain local-only and MUST NOT be transmitted.
+- Clients MUST NOT display unverifiable objects (missing envelope auth fields, invalid signatures, or signing payload mismatch).
