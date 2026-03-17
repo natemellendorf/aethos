@@ -71,11 +71,11 @@ Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.work
 ### Branch Safety Rules
 
 1. **All beads must branch from latest main**
-   - Run `git fetch origin && git checkout main && git pull --ff-only` before creating branch
-   - Never work directly on main branch
+   - In the primary worktree at repo root, it is OK to temporarily `git switch`/`git checkout main` only to fast-forward (`git pull --ff-only`) before creating a bead worktree branch
+   - Bead implementation work must never be done on `main`; implement only in `bead/<bead-id>` worktrees
 
 2. **bead-sync exemption requires ALLOW_MAIN_CHECKOUT=1**
-   - Only use for: syncing bead state files, running `bd sync` commands, reading from main branch
+   - Only use for: syncing bead state files, running `bd sync` commands, reading from `main` outside canonical preflight
    - Always verify you're in the correct context before proceeding
 
 3. **Agents must stop immediately if validation fails**
