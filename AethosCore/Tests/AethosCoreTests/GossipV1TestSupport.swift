@@ -1,5 +1,10 @@
 import Foundation
 @testable import AethosCore
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Shared deterministic helpers for Gossip v1 tests.
 ///
@@ -81,13 +86,47 @@ enum GossipV1TestSupport {
     static func makeTransferEnvelopeBytes(
         toWayfarerId: Data,
         manifestId: Data,
-        body: Data
+        body: Data,
+        authorSeed: UInt64 = 0
     ) throws -> Data {
+        let signingPayload = try CanonicalCBOREncoder().encode(
+            .map([
+                .init(key: .text("to_wayfarer_id"), value: .bytes(toWayfarerId)),
+                .init(key: .text("manifest_id"), value: .bytes(manifestId)),
+                .init(key: .text("body"), value: .bytes(body)),
+            ])
+        )
+        let signingDigest = AethosIDs.sha256(Data("AETHOS_ENVELOPE_V1".utf8) + signingPayload)
+        let authorPrivateKeyRaw: Data
+        switch authorSeed {
+        case 1:
+            authorPrivateKeyRaw = Data([
+                0x04, 0xB9, 0xA6, 0x48, 0xEA, 0x24, 0xFC, 0x25,
+                0xF3, 0x75, 0xDB, 0x40, 0xFD, 0x9D, 0xE7, 0x2D,
+                0x1B, 0x64, 0x92, 0x1D, 0xFF, 0x08, 0x02, 0x7F,
+                0x65, 0x95, 0xEA, 0xB4, 0xE7, 0x34, 0x55, 0xFD,
+            ])
+        case 2:
+            authorPrivateKeyRaw = Data([
+                0xB2, 0xE7, 0x6B, 0xC1, 0xA0, 0xA3, 0xDE, 0x2F,
+                0x0C, 0x46, 0x8A, 0x25, 0xA3, 0x6C, 0xE1, 0xE6,
+                0x77, 0x72, 0x10, 0x9C, 0x45, 0x69, 0x10, 0xB0,
+                0x71, 0xA2, 0xB2, 0x24, 0x0C, 0x0B, 0xBA, 0x0A,
+            ])
+        default:
+            authorPrivateKeyRaw = AethosIDs.sha256(Data("AETHOS_GOSSIP_V1_AUTHOR_\(authorSeed)".utf8))
+        }
+        let authorPrivateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: authorPrivateKeyRaw)
+        let authorPublicKey = authorPrivateKey.publicKey.rawRepresentation
+        let authorSignature = try authorPrivateKey.signature(for: signingDigest)
+
         try CanonicalCBOREncoder().encode(
             .map([
                 .init(key: .text("to_wayfarer_id"), value: .bytes(toWayfarerId)),
                 .init(key: .text("manifest_id"), value: .bytes(manifestId)),
                 .init(key: .text("body"), value: .bytes(body)),
+                .init(key: .text("author_pubkey"), value: .bytes(authorPublicKey)),
+                .init(key: .text("author_sig"), value: .bytes(authorSignature)),
             ])
         )
     }
@@ -100,7 +139,8 @@ enum GossipV1TestSupport {
         return try makeTransferEnvelopeBytes(
             toWayfarerId: toWayfarerId,
             manifestId: manifestId,
-            body: body
+            body: body,
+            authorSeed: seed
         )
     }
 
