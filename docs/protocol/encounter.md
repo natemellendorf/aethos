@@ -74,7 +74,7 @@ If a sender includes `SUMMARY.preview_item_ids`, it MUST select membership deter
 
 Definitions:
 
-- `W`: preview cap (`MAX_SUMMARY_PREVIEW_ITEMS`).
+- `W`: sender-chosen preview window size where `W <= MAX_SUMMARY_PREVIEW_ITEMS`.
 - `eligibleItemIDs`: sender-local eligible item IDs at SUMMARY emission time. This exact set MUST be the set used for both `SUMMARY.item_count` and `SUMMARY.bloom_filter` construction.
 - `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time; this set MUST be derived from the same eligibility snapshot as `eligibleItemIDs`.
 - `decodedDigestBytes(item_id)`: hex-decode the 64-character lowercase-hex `item_id` into 32 bytes.
@@ -104,6 +104,8 @@ Fairness note (non-normative local policy):
 - Rotation inputs SHOULD use a persisted local-only seed/offset and MUST be independent of on-wire `SUMMARY.preview_cursor`.
 
 Example (1000 backlog / 32 preview):
+
+Implementation note: this example uses `W = 32` by sender choice, which is below the protocol maximum (`MAX_SUMMARY_PREVIEW_ITEMS = 64`).
 
 1. If `|previewCandidates| = 1000` and `W = 32`, rank all 1000 by `(expiry_unix_ms, hop_count, item_id_bytes)` and take the first 32 IDs.
 2. Re-sort those 32 selected IDs lexicographically by `decodedDigestBytes(item_id)` for `SUMMARY.preview_item_ids` encoding.
