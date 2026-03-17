@@ -19,11 +19,12 @@ All bead work must follow these lifecycle rules:
 
 ### Worktree Discipline (Required for All Beads)
 All bead work MUST run in dedicated git worktrees to ensure clean separation and prevent accidental main branch mutations.
-Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.worktrees/` exists). Do not create worktrees outside the repo (for example `../wt-*`).
+Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.worktrees/` exists; it is gitignored). Do not create worktrees outside the repo (for example `../wt-*`).
 
 **Preflight (common failure checks):**
 - First diagnostic: `git worktree list`
-- If `.worktrees/<bead-id>` already exists or is non-empty, remove/fix the stale directory before creating a new worktree at that path.
+- If `.worktrees/<bead-id>` exists and appears in `git worktree list`, remove it from a different worktree with `git worktree remove .worktrees/<bead-id>`.
+- If `.worktrees/<bead-id>` exists but does **not** appear in `git worktree list`, run `git worktree prune` and then remove the directory.
 - If `bead/<bead-id>` already exists or is attached to another worktree, reuse that worktree or detach/remove it before creating a new one.
 
 **Canonical Workflow:**
@@ -38,16 +39,24 @@ Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.work
    cd .worktrees/<bead-id>
    ```
 
+   If `bead/<bead-id>` already exists and should be reused:
+   ```bash
+   git worktree add .worktrees/<bead-id> bead/<bead-id>
+   cd .worktrees/<bead-id>
+   ```
+
 2. **Run bead work** in the worktree directory.
 
 3. **Cleanup** when done (run from the primary worktree at repo root, not inside `.worktrees/<bead-id>`):
    ```bash
-   cd /path/to/aethos
+   cd <repo-root>  # primary worktree
    git worktree remove .worktrees/<bead-id>
    git branch -d bead/<bead-id>
    ```
 
    If `git worktree remove` refuses due to uncommitted changes in that worktree, go to the target worktree and commit or stash first, then retry. Avoid `--force` unless you explicitly accept losing local changes.
+
+   `git branch -d bead/<bead-id>` fails if the branch is not merged. In that case, skip branch deletion until after merge. Use `git branch -D bead/<bead-id>` only if you intentionally want to discard unmerged branch history.
 
 ### Branch Safety Rules
 
