@@ -19,6 +19,7 @@ All bead work must follow these lifecycle rules:
 
 ### Worktree Discipline (Required for All Beads)
 All bead work MUST run in dedicated git worktrees to ensure clean separation and prevent accidental main branch mutations.
+Create worktrees inside this repository at `.worktrees/<worktree-name>` (ensure `.worktrees/` exists). Do not create worktrees outside the repo (for example `../wt-*`).
 
 **Canonical Workflow:**
 
@@ -28,8 +29,9 @@ All bead work MUST run in dedicated git worktrees to ensure clean separation and
    git checkout main
    git pull --ff-only
    git checkout -b bead/<bead-id>
-   git worktree add ../wt-aethos-<bead-id> bead/<bead-id>
-   cd ../wt-aethos-<bead-id>
+   mkdir -p .worktrees
+   git worktree add .worktrees/<worktree-name> bead/<bead-id>
+   cd .worktrees/<worktree-name>
    ```
 
 2. **Run bead work** in the worktree directory.
@@ -37,7 +39,7 @@ All bead work MUST run in dedicated git worktrees to ensure clean separation and
 3. **Cleanup** when done:
    ```bash
    cd /path/to/aethos
-   git worktree remove ../wt-aethos-<bead-id>
+   git worktree remove .worktrees/<worktree-name>
    git branch -d bead/<bead-id>
    ```
 
