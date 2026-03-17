@@ -71,6 +71,7 @@ Values in reserved ranges that are not explicitly assigned **MUST** be rejected.
 - `GOSSIP_VERSION = 1`
 - `MAX_FRAME_BYTES = 1048576` (1 MiB)
 - `MAX_WANT_ITEMS = 256`
+- `MAX_SUMMARY_PREVIEW_ITEMS = 64`
 - `MAX_TRANSFER_ITEMS = 32`
 - `MAX_TRANSFER_BYTES = 524288`
 - `BLOOM_FILTER_BYTES = 2048`
@@ -122,7 +123,8 @@ Validation:
 2. `item_count` **MUST** equal local eligible object count at emission time.
 3. `preview_item_ids` length **MUST** be `<= MAX_SUMMARY_PREVIEW_ITEMS`.
 4. `preview_item_ids` entries **MUST** be unique.
-5. `preview_item_ids` entries **MUST** be sorted by bytewise lexicographic order of decoded digest bytes (ascending).
+5. `preview_item_ids` entries **MUST** be sorted by bytewise lexicographic order of decoded digest bytes (ascending), comparing each byte as an unsigned value in `[0, 255]`.
+   - Ordering **MUST NOT** be based on hex string ordering.
    - This wire-ordering requirement is normative and independent of sender-side prioritization policy.
    - Any prioritization (for example urgent-first by expiry/hop) can only affect which IDs are selected for membership, not the transmitted array order.
 6. If `preview_item_ids` is empty, `preview_cursor` **MUST** be absent.
@@ -141,7 +143,7 @@ Validation:
 
 1. `want` length **MUST** be `<= min(peer.max_want, MAX_WANT_ITEMS)`.
 2. `want` entries **MUST** be unique by `item_id` (duplicates are forbidden).
-3. `want` entries **MUST** be sorted by bytewise lexicographic order of the decoded `item_id` digest bytes (ascending). Ordering **MUST NOT** be based on hex string ordering.
+3. `want` entries **MUST** be sorted by bytewise lexicographic order of the decoded `item_id` digest bytes (ascending), comparing each byte as an unsigned value in `[0, 255]`. Ordering **MUST NOT** be based on hex string ordering.
 4. Receivers **MUST** reject frames with unsorted `want`.
 5. Unknown/malformed `item_id` entries **MUST** be rejected.
 6. `want` MAY be empty. An empty `want` is a valid no-op request.

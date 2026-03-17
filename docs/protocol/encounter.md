@@ -170,7 +170,7 @@ Note: A Bloom filter cannot enumerate or prove the presence of unknown IDs; it c
 
 ## 8.2 Constrained-encounter transfer scheduling (local policy only)
 
-During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, lower `hop_count`, earlier `expiry_unix_ms`, then stable `item_id` tie-break).
+During constrained encounters, nodes MAY prioritize transfer scheduling by local policy (for example: not relay-ingested first, earlier `expiry_unix_ms`, lower `hop_count`, then stable `item_id` tie-break).
 
 This scheduling guidance MUST NOT alter protocol validity, interoperability, or acceptance semantics.
 
