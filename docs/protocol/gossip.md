@@ -83,6 +83,8 @@ For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates req
 
 For `SUMMARY`, receivers MUST require `bloom_filter` and `item_count`, MAY accept optional `preview_item_ids` and `preview_cursor`, and MUST reject any additional unknown payload keys.
 
+`SUMMARY.preview_item_ids` wire order MUST remain bytewise lexicographic by decoded `item_id` bytes per `docs/protocol/frames.md`; deterministic prioritization affects membership selection only and is defined in `docs/protocol/encounter.md` §6.2.
+
 When violations are frame-local and recoverable, receiver MAY continue session; repeated protocol violations SHOULD end session.
 
 ## 7. Hop-count monotonicity and regression rules

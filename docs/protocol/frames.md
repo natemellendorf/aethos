@@ -123,9 +123,13 @@ Validation:
 3. `preview_item_ids` length **MUST** be `<= MAX_SUMMARY_PREVIEW_ITEMS`.
 4. `preview_item_ids` entries **MUST** be unique.
 5. `preview_item_ids` entries **MUST** be sorted by bytewise lexicographic order of decoded digest bytes (ascending).
+   - This wire-ordering requirement is normative and independent of sender-side prioritization policy.
+   - Any prioritization (for example urgent-first by expiry/hop) can only affect which IDs are selected for membership, not the transmitted array order.
 6. If `preview_item_ids` is empty, `preview_cursor` **MUST** be absent.
 7. If `preview_cursor` is present, it **MUST** equal the last element of `preview_item_ids`.
 8. Payload keys **MUST** be limited to `bloom_filter`, `item_count`, `preview_item_ids`, `preview_cursor`; unknown keys **MUST** be rejected.
+
+Selection guidance for deterministic preview membership is defined in `docs/protocol/encounter.md` §6.2.
 
 ### 5.3 REQUEST (`type="REQUEST"`)
 

@@ -68,6 +68,41 @@ Deterministic mapping rules:
 
 Initial Bloom buffer MUST be all zero bytes.
 
+## 6.2 Deterministic SUMMARY preview membership selection (normative)
+
+If a sender includes `SUMMARY.preview_item_ids`, it MUST select membership deterministically before applying on-wire ordering constraints from `docs/protocol/frames.md`.
+
+Definitions:
+
+- `W`: preview cap (`MAX_SUMMARY_PREVIEW_ITEMS`).
+- `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time.
+
+Rules:
+
+1. Rank `previewCandidates` by this ascending tuple:
+   1. earliest `expiry_unix_ms` first (equivalently, lowest remaining TTL at emission time),
+   2. then lowest `hop_count`,
+   3. then bytewise lexicographic order of decoded `item_id` digest bytes.
+2. Select up to `W` IDs from the ranked list (`selectedPreviewIDs`).
+3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of decoded `item_id` digest bytes (ascending).
+4. Therefore, prioritization is represented by membership selection only, not by on-wire array order.
+
+Determinism requirements:
+
+1. For identical local state and identical emission-time inputs, selection MUST be stable across runs and restarts.
+2. Tie-break comparison MUST use canonical bytewise comparison of decoded digest bytes (not hex-string ordering).
+3. Implementations MUST NOT use randomness, hash-map iteration order, or other non-deterministic iteration as ranking input.
+
+Fairness note:
+
+- Implementations MAY apply deterministic rotation/mixing (for example, a persisted cursor) to avoid starving long-lived items, but SHOULD preserve urgent-first behavior from the ranking above.
+
+Example (1000 backlog / 32 preview):
+
+1. If `|previewCandidates| = 1000` and `W = 32`, rank all 1000 by `(expiry_unix_ms, hop_count, item_id_bytes)` and take the first 32 IDs.
+2. Re-sort those 32 selected IDs lexicographically by decoded bytes for `SUMMARY.preview_item_ids` encoding.
+3. Urgency drives which IDs are included; the transmitted order remains canonical lexicographic wire order.
+
 ## 7. Expiry semantics and clock skew
 
 1. `expiry_unix_ms` MUST be UTC Unix epoch milliseconds (`uint64`).
