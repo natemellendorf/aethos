@@ -19,7 +19,12 @@ All bead work must follow these lifecycle rules:
 
 ### Worktree Discipline (Required for All Beads)
 All bead work MUST run in dedicated git worktrees to ensure clean separation and prevent accidental main branch mutations.
-Create worktrees inside this repository at `.worktrees/<worktree-name>` (ensure `.worktrees/` exists). Do not create worktrees outside the repo (for example `../wt-*`).
+Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.worktrees/` exists). Do not create worktrees outside the repo (for example `../wt-*`).
+
+**Preflight (common failure checks):**
+- First diagnostic: `git worktree list`
+- If `.worktrees/<bead-id>` already exists or is non-empty, remove/fix the stale directory before creating a new worktree at that path.
+- If `bead/<bead-id>` already exists or is attached to another worktree, reuse that worktree or detach/remove it before creating a new one.
 
 **Canonical Workflow:**
 
@@ -28,20 +33,21 @@ Create worktrees inside this repository at `.worktrees/<worktree-name>` (ensure 
    git fetch origin
    git checkout main
    git pull --ff-only
-   git checkout -b bead/<bead-id>
    mkdir -p .worktrees
-   git worktree add .worktrees/<worktree-name> bead/<bead-id>
-   cd .worktrees/<worktree-name>
+   git worktree add -b bead/<bead-id> .worktrees/<bead-id> origin/main
+   cd .worktrees/<bead-id>
    ```
 
 2. **Run bead work** in the worktree directory.
 
-3. **Cleanup** when done:
+3. **Cleanup** when done (run from the primary worktree at repo root, not inside `.worktrees/<bead-id>`):
    ```bash
    cd /path/to/aethos
-   git worktree remove .worktrees/<worktree-name>
+   git worktree remove .worktrees/<bead-id>
    git branch -d bead/<bead-id>
    ```
+
+   If `git worktree remove` refuses due to uncommitted changes in that worktree, go to the target worktree and commit or stash first, then retry. Avoid `--force` unless you explicitly accept losing local changes.
 
 ### Branch Safety Rules
 
