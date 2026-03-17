@@ -138,7 +138,7 @@ The Bloom design parameters and deterministic mapping are defined in encounter a
 
 ## 12. Transfer ordering policy (non-normative for wire correctness)
 
-Implementations MAY apply local transfer prioritization during constrained encounters, such as:
+Implementations MAY apply local transfer prioritization during constrained encounters. The numbered examples below are illustrative local policy (non-normative), not a mandated ordering:
 
 1. objects not yet relay-ingested first,
 2. earlier `expiry_unix_ms` first,

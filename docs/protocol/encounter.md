@@ -74,7 +74,7 @@ If a sender includes `SUMMARY.preview_item_ids`, it MUST select membership deter
 
 Definitions:
 
-- `W`: sender-chosen preview window size where `W <= MAX_SUMMARY_PREVIEW_ITEMS`.
+- `W`: sender-chosen preview window size where `0 <= W <= MAX_SUMMARY_PREVIEW_ITEMS`.
 - `eligibleItemIDs`: sender-local eligible item IDs at SUMMARY emission time. This exact set MUST be the set used for both `SUMMARY.item_count` and `SUMMARY.bloom_filter` construction.
 - `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time; this set MUST be derived from the same eligibility snapshot as `eligibleItemIDs`.
 - `decodedDigestBytes(item_id)`: hex-decode the 64-character lowercase-hex `item_id` into 32 bytes.
@@ -87,7 +87,7 @@ Rules:
    2. then lowest `hop_count`,
    3. then bytewise lexicographic order of `decodedDigestBytes(item_id)`.
 2. Select up to `W` IDs as `selectedPreviewIDs` using a deterministic membership policy that preserves urgent-first behavior under the ranking from Step 1:
-   1. choose `U` urgent IDs from the head of the ranked list (`0 <= U <= W`),
+   1. choose the first `U` IDs from the head of the ranked list (`0 <= U <= W`),
    2. if capacity remains, fill `W - U` slots from the remaining ranked candidates using a deterministic local policy.
 3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of `decodedDigestBytes(item_id)` (ascending).
 4. `SUMMARY.preview_cursor` derivation happens after Step 3 (post-selection wire ordering): if `SUMMARY.preview_item_ids` is non-empty, `SUMMARY.preview_cursor = last(SUMMARY.preview_item_ids)`; if empty, `SUMMARY.preview_cursor` MUST be absent.
@@ -103,7 +103,7 @@ Fairness note (non-normative local policy):
 
 - Implementations MAY apply deterministic rotation/mixing to reduce starvation of long-lived items.
 - One deterministic strategy is: always include `U = min(W, urgent_budget)` urgent IDs from the ranked head, then fill `W-U` from remaining eligible IDs in canonical `item_id` byte order using a persisted local-only rotation offset/seed.
-- Any such policy SHOULD preserve urgent-first behavior from the ranking in Step 1 and SHOULD be independent of on-wire `SUMMARY.preview_cursor`.
+- Any such policy should preserve urgent-first behavior from the ranking in Step 1 and should be independent of on-wire `SUMMARY.preview_cursor`.
 
 Example (1000 backlog / 32 preview):
 
