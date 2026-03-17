@@ -86,22 +86,24 @@ Rules:
    1. earliest `expiry_unix_ms` first (equivalently, lowest remaining TTL at emission time),
    2. then lowest `hop_count`,
    3. then bytewise lexicographic order of `decodedDigestBytes(item_id)`.
-2. Select up to `W` IDs from the ranked list (`selectedPreviewIDs`).
+2. Select up to `W` IDs as `selectedPreviewIDs` using a deterministic membership policy that preserves urgent-first behavior under the ranking from Step 1:
+   1. choose `U` urgent IDs from the head of the ranked list (`0 <= U <= W`),
+   2. if capacity remains, fill `W - U` slots from the remaining ranked candidates using a deterministic local policy.
 3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of `decodedDigestBytes(item_id)` (ascending).
 4. `SUMMARY.preview_cursor` derivation happens after Step 3 (post-selection wire ordering): if `SUMMARY.preview_item_ids` is non-empty, `SUMMARY.preview_cursor = last(SUMMARY.preview_item_ids)`; if empty, `SUMMARY.preview_cursor` MUST be absent.
 5. Therefore, prioritization is represented by membership selection only, not by on-wire array order.
 
 Determinism requirements:
 
-1. For a given emission-time snapshot, selection MUST be a pure function of that snapshot and MUST be stable across runs and restarts.
+1. For a given emission-time snapshot, selection MUST be a pure function of that snapshot (plus persisted local state, if such state is part of the deterministic policy) and MUST be stable across runs and restarts.
 2. Tie-break comparison MUST use canonical bytewise comparison of `decodedDigestBytes(item_id)` (not hex-string ordering).
 3. Implementations MUST NOT use randomness, hash-map iteration order, or other non-deterministic iteration as ranking input.
 
 Fairness note (non-normative local policy):
 
 - Implementations MAY apply deterministic rotation/mixing to reduce starvation of long-lived items.
-- Such rotation SHOULD be applied only within equivalence classes of identical `(expiry_unix_ms, hop_count)`, so the urgent-first class ordering above is preserved.
-- Rotation inputs SHOULD use a persisted local-only seed/offset and MUST be independent of on-wire `SUMMARY.preview_cursor`.
+- One deterministic strategy is: always include `U = min(W, urgent_budget)` urgent IDs from the ranked head, then fill `W-U` from remaining eligible IDs in canonical `item_id` byte order using a persisted local-only rotation offset/seed.
+- Any such policy SHOULD preserve urgent-first behavior from the ranking in Step 1 and SHOULD be independent of on-wire `SUMMARY.preview_cursor`.
 
 Example (1000 backlog / 32 preview):
 

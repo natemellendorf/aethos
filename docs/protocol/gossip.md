@@ -141,8 +141,8 @@ The Bloom design parameters and deterministic mapping are defined in encounter a
 Implementations MAY apply local transfer prioritization during constrained encounters, such as:
 
 1. objects not yet relay-ingested first,
-2. lower `hop_count` first,
-3. earlier `expiry_unix_ms` first,
+2. earlier `expiry_unix_ms` first,
+3. lower `hop_count` first,
 4. relay-reachable or higher-utility paths first when locally known,
 5. stable tie-break by `item_id`.
 
