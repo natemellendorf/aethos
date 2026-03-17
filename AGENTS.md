@@ -23,19 +23,19 @@ Create worktrees inside this repository at `.worktrees/<bead-id>` (ensure `.work
 
 **Preflight (common failure checks):**
 - First diagnostic: `git worktree list`
-- Run preflight/setup from `cd <repo-root>  # primary worktree (not inside .worktrees/*)`; if unsure, use `git worktree list` and `cd` to the path where `main` is checked out.
+- Run preflight and setup commands from the primary worktree at repo root (not inside `.worktrees/*`).
 - If `.worktrees/<bead-id>` exists and appears in `git worktree list`, remove it from a different worktree with `git worktree remove .worktrees/<bead-id>`.
 - If `.worktrees/<bead-id>` exists but does **not** appear in `git worktree list`, run `git worktree prune`, then re-run `git worktree list` to confirm it is still absent. If confirmed, carefully double-check the path and remove only that directory: `rm -rf .worktrees/<bead-id>`.
 - If `bead/<bead-id>` already exists or is attached to another worktree, reuse that worktree or detach/remove it before creating a new one.
 
 **Canonical Workflow:**
 
-1. **Start from the primary repo-root worktree** (not inside `.worktrees/*`):
+1. **Start from the primary worktree at repo root** (not inside `.worktrees/*`):
    ```bash
-   cd <repo-root>  # primary worktree (not inside .worktrees/*)
+   cd <repo-root>  # primary worktree at repo root (not inside .worktrees/*)
    ```
 
-   If unsure where that is, run `git worktree list`, find the path where `main` is checked out, then `cd` there.
+   If unsure where that is, run `git worktree list`, find the path where `main` is checked out that is not under `.worktrees/`, then `cd` there.
 
 2. **Create worktree** before starting any bead work:
    ```bash
