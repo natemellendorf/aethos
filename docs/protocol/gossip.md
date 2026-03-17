@@ -32,7 +32,7 @@ Implementation alignment note (current repository):
 
 1. `item_id` MUST be derived from raw canonical serialized envelope bytes and encoded as lowercase hex.
 2. Envelope bytes MUST be immutable after creation.
-3. Sender identity MUST come from canonical/authenticated object data, never transport metadata.
+3. Sender identity MUST be derived only from `author_pubkey` in the envelope as `wayfarer_id = SHA-256(author_pubkey)`.
 4. All gossip frames MUST use one shared canonical wire encoding and framing model.
 5. `hop_count` MUST increment by exactly 1 on forward and MUST NOT regress.
 6. Expired objects (`expiry_unix_ms`) MUST NOT be forwarded.
@@ -67,6 +67,9 @@ Identity derivation:
 3. `item_id = SHA-256(envelope_bytes)`.
 4. `item_id` representation MUST be lowercase hexadecimal.
 5. `item_id` mismatch MUST cause object rejection.
+6. Envelope schema MUST include required `author_pubkey` and `author_sig`.
+7. Signature verification MUST use `author_sig = Sign(author_privkey, SHA-256("AETHOS_ENVELOPE_V1" || CanonicalCBOR({to_wayfarer_id, manifest_id, body})))`.
+8. Sender attribution MUST use only `wayfarer_id = SHA-256(author_pubkey)`.
 
 ## 6. Deterministic acceptance/rejection
 
@@ -77,6 +80,8 @@ For `GOSSIP_VERSION=1`, receivers MUST reject any object/frame that violates req
 - malformed encoding,
 - malformed base64url envelope encoding,
 - invalid hash derivation,
+- invalid/missing `author_pubkey` or `author_sig`,
+- invalid envelope signature verification,
 - oversize frame/object budgets,
 - expired objects,
 - invalid/overflow `hop_count`.
@@ -128,7 +133,8 @@ Relay participants in gossip MUST:
 1. preserve envelope immutability,
 2. deduplicate by `item_id`,
 3. emit `RELAY_INGEST` only after durable write,
-4. avoid mutating protocol semantics relative to non-relay peers.
+4. avoid mutating protocol semantics relative to non-relay peers,
+5. MUST NOT modify `author_pubkey`, MUST NOT modify `author_sig`, MUST NOT re-sign, and MUST NOT wrap envelopes in alternate author containers.
 
 Relay gossip behavior MUST remain idempotent by `item_id`.
 
@@ -153,6 +159,8 @@ This ordering is local policy only. It MUST NOT change wire validity, interopera
 - Enforce authenticated envelope validation prior to trust/use.
 - Reject malformed/oversize frames early.
 - Never infer sender identity from bearer metadata alone.
+- Clients MUST derive displayed sender identity from `author_pubkey` and MUST NOT display transport/session IDs as object authors.
+- Unverifiable objects (missing fields, signature failure, payload mismatch) MUST NOT be displayed.
 - Keep deterministic correctness independent of scoring policy.
 
 ## 14. Extension namespace discipline
