@@ -14,11 +14,14 @@ enum GossipV1TestSupport {
 
     enum FixtureError: Swift.Error, CustomStringConvertible, Equatable {
         case missingResource(relativePath: String)
+        case invalidFixture(detail: String)
 
         var description: String {
             switch self {
             case .missingResource(let relativePath):
                 return "Missing Gossip v1 fixture resource: \(relativePath)"
+            case .invalidFixture(let detail):
+                return "Invalid Gossip v1 fixture: \(detail)"
             }
         }
     }
@@ -120,7 +123,7 @@ enum GossipV1TestSupport {
         let authorPublicKey = authorPrivateKey.publicKey.rawRepresentation
         let authorSignature = try authorPrivateKey.signature(for: signingDigest)
 
-        try CanonicalCBOREncoder().encode(
+        return try CanonicalCBOREncoder().encode(
             .map([
                 .init(key: .text("to_wayfarer_id"), value: .bytes(toWayfarerId)),
                 .init(key: .text("manifest_id"), value: .bytes(manifestId)),
@@ -129,6 +132,41 @@ enum GossipV1TestSupport {
                 .init(key: .text("author_sig"), value: .bytes(authorSignature)),
             ])
         )
+    }
+
+    static func makeTransferFixtureFrame() throws -> GossipV1TransferFrame {
+        let objects = try transferFixtureObjects()
+        return try GossipV1TransferFrame(objects: objects)
+    }
+
+    static func makeOversizeTransferFrameBytes() throws -> Data {
+        let bodySize = GossipV1.MAX_TRANSFER_BYTES + 1024
+        let body = Data(repeating: 0xAB, count: bodySize)
+        let envelopeBytes = try makeTransferEnvelopeBytes(
+            toWayfarerId: Data(repeating: 0xCD, count: 32),
+            manifestId: Data(repeating: 0xEF, count: 32),
+            body: body,
+            authorSeed: 42
+        )
+        guard envelopeBytes.count > GossipV1.MAX_TRANSFER_BYTES else {
+            throw FixtureError.invalidFixture(detail: "Oversize transfer envelope length was \(envelopeBytes.count)")
+        }
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+        let objectValue: CanonicalCBORValue = .map([
+            .init(key: .text("item_id"), value: .text(itemID.hex)),
+            .init(key: .text("envelope_b64"), value: .text(GossipV1Base64URL.encode(envelopeBytes))),
+            .init(key: .text("expiry_unix_ms"), value: .unsigned(4_102_444_800_000)),
+            .init(key: .text("hop_count"), value: .unsigned(0)),
+        ])
+        let payload: CanonicalCBORValue = .map([
+            .init(key: .text("objects"), value: .array([objectValue])),
+        ])
+        let frame: CanonicalCBORValue = .map([
+            .init(key: .text("type"), value: .text(GossipV1FrameType.TRANSFER.rawValue)),
+            .init(key: .text("payload"), value: payload),
+        ])
+        return try CanonicalCBOREncoder().encode(frame)
     }
 
     static func makeTransferEnvelopeBytes(seed: UInt64) throws -> Data {
@@ -142,6 +180,55 @@ enum GossipV1TestSupport {
             body: body,
             authorSeed: seed
         )
+    }
+
+    private static func transferFixtureObjects() throws -> [GossipV1TransferFrame.Object] {
+        let data = try fixtureData("transfer.json")
+        let decoded = try JSONSerialization.jsonObject(with: data)
+        guard let dict = decoded as? [String: Any] else {
+            throw FixtureError.invalidFixture(detail: "transfer.json is not a top-level object")
+        }
+        guard let rawObjects = dict["objects"] as? [[String: Any]] else {
+            throw FixtureError.invalidFixture(detail: "transfer.json missing objects")
+        }
+
+        var out: [GossipV1TransferFrame.Object] = []
+        out.reserveCapacity(rawObjects.count)
+        for (index, object) in rawObjects.enumerated() {
+            guard let itemIDHex = object["item_id"] as? String else {
+                throw FixtureError.invalidFixture(detail: "transfer.json objects[\(index)].item_id")
+            }
+            guard let envelopeB64 = object["envelope_b64"] as? String else {
+                throw FixtureError.invalidFixture(detail: "transfer.json objects[\(index)].envelope_b64")
+            }
+            let expiry = try requireUInt64(object["expiry_unix_ms"], field: "transfer.json objects[\(index)].expiry_unix_ms")
+            let hopRaw = try requireUInt64(object["hop_count"], field: "transfer.json objects[\(index)].hop_count")
+            guard hopRaw <= UInt64(UInt16.max) else {
+                throw FixtureError.invalidFixture(detail: "transfer.json objects[\(index)].hop_count out of range")
+            }
+
+            let itemID = try GossipV1ItemID(hex: itemIDHex)
+            let envelopeBytes = try GossipV1Base64URL.decode(envelopeB64)
+            let obj = try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: envelopeBytes,
+                expiryUnixMs: expiry,
+                hopCount: UInt16(hopRaw)
+            )
+            out.append(obj)
+        }
+        return out
+    }
+
+    private static func requireUInt64(_ value: Any?, field: String) throws -> UInt64 {
+        guard let number = value as? NSNumber else {
+            throw FixtureError.invalidFixture(detail: "\(field) not a number")
+        }
+        let int64 = number.int64Value
+        guard int64 >= 0 else {
+            throw FixtureError.invalidFixture(detail: "\(field) negative")
+        }
+        return UInt64(int64)
     }
 
     struct FixedClock: GossipV1EncounterEngine.Clock {
