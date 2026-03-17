@@ -68,6 +68,39 @@ Deterministic mapping rules:
 
 Initial Bloom buffer MUST be all zero bytes.
 
+## 6.2 Deterministic SUMMARY preview prioritization (normative)
+
+`SUMMARY.preview_item_ids` is a deterministic acceleration hint for large backlogs. Emitters MUST construct it deterministically and SHOULD rotate it fairly across repeated encounters with the same peer.
+
+Definitions:
+
+- `eligiblePreviewItemIDs`: sender-side candidate IDs eligible for preview to a peer; duplicates MUST be ignored.
+- `previewWindow`: sender-side preview size target, where `1 <= previewWindow <= MAX_SUMMARY_PREVIEW_ITEMS`.
+- `peerPreviewCursorState`: sender-local per-peer state storing the last emitted preview cursor (optional).
+
+Rules:
+
+1. Build `eligiblePreviewItemIDs` as unique IDs sorted by bytewise lexicographic order of decoded digest bytes (ascending).
+2. If `eligiblePreviewItemIDs` is empty, `preview_item_ids` MUST be empty/absent and `preview_cursor` MUST be absent.
+3. If `peerPreviewCursorState` is absent, emit up to `previewWindow` IDs from the head of `eligiblePreviewItemIDs`.
+4. If `peerPreviewCursorState` is present, emit up to `previewWindow` IDs strictly greater than that cursor.
+5. If step 4 yields no IDs (cursor at/after tail), restart at the head and emit up to `previewWindow` IDs.
+6. If emitted preview is non-empty, `preview_cursor` MUST equal the last emitted `preview_item_id`.
+7. After sending a non-empty preview, sender SHOULD persist `preview_cursor` as the next `peerPreviewCursorState` for that peer.
+
+Fairness notes:
+
+- Implementations SHOULD maintain independent cursor state per peer to avoid repeatedly previewing only lexicographically-small IDs.
+- For stable backlog size `B` and window `W`, each eligible ID is surfaced within at most `ceil(B / W)` SUMMARY emissions for that peer.
+
+Worked example (1000 backlog / 32 preview):
+
+- Let `B = 1000` eligible IDs and `W = 32`.
+- SUMMARY pages 1..31 each carry 32 IDs (first 992 IDs total).
+- SUMMARY page 32 carries the remaining 8 IDs.
+- The next SUMMARY wraps to the head and restarts the cycle.
+- Result: every one of the 1000 IDs appears at least once every 32 SUMMARY emissions.
+
 ## 7. Expiry semantics and clock skew
 
 1. `expiry_unix_ms` MUST be UTC Unix epoch milliseconds (`uint64`).
@@ -96,7 +129,7 @@ Definitions:
 
 - `candidateItemIDs`: receiver-side candidate item IDs that the receiver believes it might be missing and believes the peer might have.
   Implementations MUST treat `candidateItemIDs` as a set of item IDs; duplicates MUST be ignored.
-- `peerPreviewItemIDs`: optional IDs from peer `SUMMARY.preview_item_ids`; these MAY include IDs not in `candidateItemIDs`.
+- `peerPreviewItemIDs`: optional IDs from peer `SUMMARY.preview_item_ids` (emitter generation strategy: §6.2); these MAY include IDs not in `candidateItemIDs`.
 - `localHaveItemIDs`: the receiver's locally-stored item IDs (the set the receiver “has”).
 
 Rules:
