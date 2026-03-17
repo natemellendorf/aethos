@@ -75,33 +75,40 @@ If a sender includes `SUMMARY.preview_item_ids`, it MUST select membership deter
 Definitions:
 
 - `W`: preview cap (`MAX_SUMMARY_PREVIEW_ITEMS`).
-- `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time.
+- `eligibleItemIDs`: sender-local eligible item IDs at SUMMARY emission time. This exact set MUST be the set used for both `SUMMARY.item_count` and `SUMMARY.bloom_filter` construction.
+- `previewCandidates`: sender-local eligible objects for preview at SUMMARY emission time; this set MUST be derived from the same eligibility snapshot as `eligibleItemIDs`.
+- `decodedDigestBytes(item_id)`: hex-decode the 64-character lowercase-hex `item_id` into 32 bytes.
+- `bytewise lexicographic order`: compare byte arrays left-to-right using each byte as an unsigned value in `[0, 255]`.
 
 Rules:
 
 1. Rank `previewCandidates` by this ascending tuple:
    1. earliest `expiry_unix_ms` first (equivalently, lowest remaining TTL at emission time),
    2. then lowest `hop_count`,
-   3. then bytewise lexicographic order of decoded `item_id` digest bytes.
+   3. then bytewise lexicographic order of `decodedDigestBytes(item_id)`.
 2. Select up to `W` IDs from the ranked list (`selectedPreviewIDs`).
-3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of decoded `item_id` digest bytes (ascending).
-4. Therefore, prioritization is represented by membership selection only, not by on-wire array order.
+3. To satisfy `frames.md` wire requirements, `SUMMARY.preview_item_ids` MUST be the IDs from `selectedPreviewIDs` re-sorted by bytewise lexicographic order of `decodedDigestBytes(item_id)` (ascending).
+4. `SUMMARY.preview_cursor` derivation happens after Step 3 (post-selection wire ordering): if `SUMMARY.preview_item_ids` is non-empty, `SUMMARY.preview_cursor = last(SUMMARY.preview_item_ids)`; if empty, `SUMMARY.preview_cursor` MUST be absent.
+5. Therefore, prioritization is represented by membership selection only, not by on-wire array order.
 
 Determinism requirements:
 
-1. For identical local state and identical emission-time inputs, selection MUST be stable across runs and restarts.
-2. Tie-break comparison MUST use canonical bytewise comparison of decoded digest bytes (not hex-string ordering).
+1. For a given emission-time snapshot, selection MUST be a pure function of that snapshot and MUST be stable across runs and restarts.
+2. Tie-break comparison MUST use canonical bytewise comparison of `decodedDigestBytes(item_id)` (not hex-string ordering).
 3. Implementations MUST NOT use randomness, hash-map iteration order, or other non-deterministic iteration as ranking input.
 
-Fairness note:
+Fairness note (non-normative local policy):
 
-- Implementations MAY apply deterministic rotation/mixing (for example, a persisted cursor) to avoid starving long-lived items, but SHOULD preserve urgent-first behavior from the ranking above.
+- Implementations MAY apply deterministic rotation/mixing to reduce starvation of long-lived items.
+- Such rotation SHOULD be applied only within equivalence classes of identical `(expiry_unix_ms, hop_count)`, so the urgent-first class ordering above is preserved.
+- Rotation inputs SHOULD use a persisted local-only seed/offset and MUST be independent of on-wire `SUMMARY.preview_cursor`.
 
 Example (1000 backlog / 32 preview):
 
 1. If `|previewCandidates| = 1000` and `W = 32`, rank all 1000 by `(expiry_unix_ms, hop_count, item_id_bytes)` and take the first 32 IDs.
-2. Re-sort those 32 selected IDs lexicographically by decoded bytes for `SUMMARY.preview_item_ids` encoding.
-3. Urgency drives which IDs are included; the transmitted order remains canonical lexicographic wire order.
+2. Re-sort those 32 selected IDs lexicographically by `decodedDigestBytes(item_id)` for `SUMMARY.preview_item_ids` encoding.
+3. Derive `SUMMARY.preview_cursor` from the on-wire sorted array: `preview_cursor = last(preview_item_ids)`.
+4. Urgency drives which IDs are included; the transmitted order remains canonical lexicographic wire order.
 
 ## 7. Expiry semantics and clock skew
 

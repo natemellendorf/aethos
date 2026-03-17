@@ -129,7 +129,7 @@ Validation:
 7. If `preview_cursor` is present, it **MUST** equal the last element of `preview_item_ids`.
 8. Payload keys **MUST** be limited to `bloom_filter`, `item_count`, `preview_item_ids`, `preview_cursor`; unknown keys **MUST** be rejected.
 
-Selection guidance for deterministic preview membership is defined in `docs/protocol/encounter.md` §6.2.
+Selection guidance for deterministic preview membership is defined in `docs/protocol/encounter.md` §6.2; prioritization affects membership only, while on-wire ordering MUST remain canonical and receiver validation MUST enforce sorted `preview_item_ids` plus the `preview_cursor` invariant above.
 
 ### 5.3 REQUEST (`type="REQUEST"`)
 
