@@ -20,6 +20,8 @@ type envelope struct {
 	ToWayfarerID string `json:"to_wayfarer_id"`
 	ManifestID   string `json:"manifest_id"`
 	BodyUTF8     string `json:"body_utf8"`
+	AuthorPubkey string `json:"author_pubkey"`
+	AuthorSig    string `json:"author_sig"`
 }
 
 type output struct {
@@ -76,6 +78,12 @@ func validateEnvelope(env envelope) error {
 	if len(env.ManifestID) != 64 || !isHexLower(env.ManifestID) {
 		return errors.New("envelope.manifest_id must be 64 lowercase hex chars")
 	}
+	if len(env.AuthorPubkey) != 64 || !isHexLower(env.AuthorPubkey) {
+		return errors.New("envelope.author_pubkey must be 64 lowercase hex chars")
+	}
+	if len(env.AuthorSig) != 128 || !isHexLower(env.AuthorSig) {
+		return errors.New("envelope.author_sig must be 128 lowercase hex chars")
+	}
 	return nil
 }
 
@@ -92,12 +100,31 @@ func isHexLower(s string) bool {
 func encodeCanonicalEnvelope(env envelope) ([]byte, error) {
 	type pair struct {
 		k string
-		v string
+		v []byte
 	}
+	manifestID, err := hex.DecodeString(env.ManifestID)
+	if err != nil {
+		return nil, fmt.Errorf("manifest_id hex decode: %w", err)
+	}
+	toWayfarerID, err := hex.DecodeString(env.ToWayfarerID)
+	if err != nil {
+		return nil, fmt.Errorf("to_wayfarer_id hex decode: %w", err)
+	}
+	authorPubkey, err := hex.DecodeString(env.AuthorPubkey)
+	if err != nil {
+		return nil, fmt.Errorf("author_pubkey hex decode: %w", err)
+	}
+	authorSig, err := hex.DecodeString(env.AuthorSig)
+	if err != nil {
+		return nil, fmt.Errorf("author_sig hex decode: %w", err)
+	}
+
 	entries := []pair{
-		{k: "to_wayfarer_id", v: env.ToWayfarerID},
-		{k: "manifest_id", v: env.ManifestID},
-		{k: "body_utf8", v: env.BodyUTF8},
+		{k: "to_wayfarer_id", v: toWayfarerID},
+		{k: "manifest_id", v: manifestID},
+		{k: "author_pubkey", v: authorPubkey},
+		{k: "author_sig", v: authorSig},
+		{k: "body", v: []byte(env.BodyUTF8)},
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
@@ -113,7 +140,7 @@ func encodeCanonicalEnvelope(env envelope) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, err := encodeText(e.v)
+		val, err := encodeBytes(e.v)
 		if err != nil {
 			return nil, err
 		}
@@ -135,6 +162,20 @@ func encodeText(s string) ([]byte, error) {
 		return append([]byte{0x79, byte(n >> 8), byte(n)}, b...), nil
 	default:
 		return nil, errors.New("string too long for compatibility runner")
+	}
+}
+
+func encodeBytes(b []byte) ([]byte, error) {
+	n := len(b)
+	switch {
+	case n < 24:
+		return append([]byte{0x40 | byte(n)}, b...), nil
+	case n < 256:
+		return append([]byte{0x58, byte(n)}, b...), nil
+	case n < 65536:
+		return append([]byte{0x59, byte(n >> 8), byte(n)}, b...), nil
+	default:
+		return nil, errors.New("byte string too long for compatibility runner")
 	}
 }
 
