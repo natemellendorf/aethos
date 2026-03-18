@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "swift_runner is not implemented yet" >&2
-exit 2
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+exec swift "$SCRIPT_DIR/swift_impl/main.swift" "$@"
