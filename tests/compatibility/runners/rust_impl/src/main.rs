@@ -17,6 +17,8 @@ struct Envelope {
     to_wayfarer_id: String,
     manifest_id: String,
     body_utf8: String,
+    author_pubkey: String,
+    author_sig: String,
 }
 
 #[derive(Serialize)]
@@ -69,6 +71,12 @@ fn validate_envelope(env: &Envelope) -> Result<(), Box<dyn Error>> {
     if env.manifest_id.len() != 64 || !is_lower_hex(&env.manifest_id) {
         return Err("envelope.manifest_id must be 64 lowercase hex chars".into());
     }
+    if env.author_pubkey.len() != 64 || !is_lower_hex(&env.author_pubkey) {
+        return Err("envelope.author_pubkey must be 64 lowercase hex chars".into());
+    }
+    if env.author_sig.len() != 128 || !is_lower_hex(&env.author_sig) {
+        return Err("envelope.author_sig must be 128 lowercase hex chars".into());
+    }
     Ok(())
 }
 
@@ -78,17 +86,25 @@ fn is_lower_hex(s: &str) -> bool {
 }
 
 fn encode_canonical_envelope(env: &Envelope) -> Result<Vec<u8>, Box<dyn Error>> {
+    let body = env.body_utf8.as_bytes();
+    let manifest_id = decode_hex(&env.manifest_id)?;
+    let to_wayfarer_id = decode_hex(&env.to_wayfarer_id)?;
+    let author_pubkey = decode_hex(&env.author_pubkey)?;
+    let author_sig = decode_hex(&env.author_sig)?;
+
     let mut out = Vec::new();
-    out.push(0xa3);
-    append_text_pair(&mut out, "body_utf8", &env.body_utf8)?;
-    append_text_pair(&mut out, "manifest_id", &env.manifest_id)?;
-    append_text_pair(&mut out, "to_wayfarer_id", &env.to_wayfarer_id)?;
+    out.push(0xa5);
+    append_bytes_pair(&mut out, "body", body)?;
+    append_bytes_pair(&mut out, "author_sig", &author_sig)?;
+    append_bytes_pair(&mut out, "manifest_id", &manifest_id)?;
+    append_bytes_pair(&mut out, "author_pubkey", &author_pubkey)?;
+    append_bytes_pair(&mut out, "to_wayfarer_id", &to_wayfarer_id)?;
     Ok(out)
 }
 
-fn append_text_pair(out: &mut Vec<u8>, key: &str, value: &str) -> Result<(), Box<dyn Error>> {
+fn append_bytes_pair(out: &mut Vec<u8>, key: &str, value: &[u8]) -> Result<(), Box<dyn Error>> {
     out.extend(encode_text(key)?);
-    out.extend(encode_text(value)?);
+    out.extend(encode_bytes(value)?);
     Ok(())
 }
 
@@ -112,6 +128,51 @@ fn encode_text(s: &str) -> Result<Vec<u8>, Box<dyn Error>> {
 
     out.extend(b);
     Ok(out)
+}
+
+fn encode_bytes(b: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    let n = b.len();
+    let mut out = Vec::new();
+
+    if n < 24 {
+        out.push(0x40 | (n as u8));
+    } else if n < 256 {
+        out.push(0x58);
+        out.push(n as u8);
+    } else if n < 65536 {
+        out.push(0x59);
+        out.push(((n >> 8) & 0xff) as u8);
+        out.push((n & 0xff) as u8);
+    } else {
+        return Err("byte string too long for compatibility runner".into());
+    }
+
+    out.extend(b);
+    Ok(out)
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    if value.len() % 2 != 0 {
+        return Err("hex value must have even length".into());
+    }
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    let mut idx = 0;
+    while idx < bytes.len() {
+        let high = hex_value(bytes[idx])?;
+        let low = hex_value(bytes[idx + 1])?;
+        out.push((high << 4) | low);
+        idx += 2;
+    }
+    Ok(out)
+}
+
+fn hex_value(b: u8) -> Result<u8, Box<dyn Error>> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        _ => Err("hex value must use lowercase digits".into()),
+    }
 }
 
 fn to_hex(bytes: &[u8]) -> String {

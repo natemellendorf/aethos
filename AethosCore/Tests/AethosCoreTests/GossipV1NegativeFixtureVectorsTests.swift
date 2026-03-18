@@ -69,11 +69,24 @@ private extension GossipV1NegativeFixtureVectorsTests {
     struct Vector {
         let fixture: String
         let driftGuard: DriftGuard
+        let bytesProvider: (() throws -> Data)?
         let assertError: (Data) throws -> Void
+
+        init(
+            fixture: String,
+            driftGuard: DriftGuard,
+            bytesProvider: (() throws -> Data)? = nil,
+            assertError: @escaping (Data) throws -> Void
+        ) {
+            self.fixture = fixture
+            self.driftGuard = driftGuard
+            self.bytesProvider = bytesProvider
+            self.assertError = assertError
+        }
     }
 
     func assertVector(_ vector: Vector) throws {
-        let bytes = try loadFixtureBytes(vector.fixture)
+        let bytes = try vector.bytesProvider?() ?? loadFixtureBytes(vector.fixture)
 
         switch vector.driftGuard {
         case .frame:
@@ -216,6 +229,7 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
         .init(
             fixture: "transfer_oversize_bytes.cbor",
             driftGuard: .canonicalCBOR,
+            bytesProvider: { try GossipV1TestSupport.makeOversizeTransferFrameBytes() },
             assertError: { bytes in
                 let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
                 var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
@@ -227,12 +241,14 @@ private extension GossipV1NegativeFixtureVectorsTests.Vector {
                 ) { err in
                     // This fixture intentionally exceeds MAX_TRANSFER_BYTES at the frame decoding boundary.
                     // Engine ingest should therefore fail inside framing, before engine-level validation.
-                    XCTAssertEqual(
-                        err as? GossipV1FramingError,
-                        .invalidDatagramFrame(
-                            underlying: .transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_395)
-                        )
-                    )
+                    guard case .invalidDatagramFrame(let underlying) = err as? GossipV1FramingError else {
+                        return XCTFail("Unexpected error: \(err)")
+                    }
+                    guard case .transferTotalEnvelopeBytesTooLarge(let max, let actual) = underlying else {
+                        return XCTFail("Unexpected underlying error: \(underlying)")
+                    }
+                    XCTAssertEqual(max, GossipV1.MAX_TRANSFER_BYTES)
+                    XCTAssertGreaterThan(actual, max)
                 }
             }
         )

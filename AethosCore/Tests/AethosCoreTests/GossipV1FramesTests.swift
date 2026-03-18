@@ -172,6 +172,231 @@ final class GossipV1FramesTests: XCTestCase {
         try assertRoundTripAndFixture(frame: frame, fixtureFileName: "transfer.cbor")
     }
 
+    func testTransferObjectRejectsInvalidAuthorSignature() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 77)
+        var tampered = envelopeBytes
+        tampered[tampered.count - 1] ^= 0x01
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: tampered)
+
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: tampered,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .transferEnvelopeSignatureInvalid)
+        }
+    }
+
+    func testTransferObjectRejectsMismatchedAuthorPublicKeyAndSignature() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 78)
+        let decoded = try CanonicalCBORDecoder().decode(envelopeBytes)
+        guard case .map(let entries) = decoded else {
+            return XCTFail("Expected envelope map")
+        }
+
+        let mutatedEntries = entries.map { entry -> CanonicalCBORValue.MapEntry in
+            guard case .text(let key) = entry.key, key == "author_pubkey" else {
+                return entry
+            }
+            return .init(key: .text("author_pubkey"), value: .bytes(Data(repeating: 0xFF, count: 32)))
+        }
+        let mutatedEnvelope = try CanonicalCBOREncoder().encode(.map(mutatedEntries))
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .transferEnvelopeSignatureInvalid)
+        }
+    }
+
+    func testTransferEnvelopeSignatureBindsToToWayfarerID() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 81)
+        let mutatedToWayfarerID = Data(repeating: 0xEE, count: 32)
+        var replaced = false
+        let mutatedEnvelope = try mutateEnvelope(envelopeBytes) { entries in
+            for idx in entries.indices {
+                guard case .text(let key) = entries[idx].key, key == "to_wayfarer_id" else { continue }
+                entries[idx] = .init(key: .text(key), value: .bytes(mutatedToWayfarerID))
+                replaced = true
+            }
+        }
+        XCTAssertTrue(replaced)
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .transferEnvelopeSignatureInvalid)
+        }
+    }
+
+    func testTransferEnvelopeSignatureBindsToManifestID() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 82)
+        let mutatedManifestID = Data(repeating: 0xDD, count: 32)
+        var replaced = false
+        let mutatedEnvelope = try mutateEnvelope(envelopeBytes) { entries in
+            for idx in entries.indices {
+                guard case .text(let key) = entries[idx].key, key == "manifest_id" else { continue }
+                entries[idx] = .init(key: .text(key), value: .bytes(mutatedManifestID))
+                replaced = true
+            }
+        }
+        XCTAssertTrue(replaced)
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .transferEnvelopeSignatureInvalid)
+        }
+    }
+
+    func testTransferEnvelopeSignatureBindsToBody() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 83)
+        let mutatedBody = Data("mutated-body".utf8)
+        var replaced = false
+        let mutatedEnvelope = try mutateEnvelope(envelopeBytes) { entries in
+            for idx in entries.indices {
+                guard case .text(let key) = entries[idx].key, key == "body" else { continue }
+                entries[idx] = .init(key: .text(key), value: .bytes(mutatedBody))
+                replaced = true
+            }
+        }
+        XCTAssertTrue(replaced)
+
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? GossipV1FrameError, .transferEnvelopeSignatureInvalid)
+        }
+    }
+
+    func testTransferEnvelopeRejectsUnknownEnvelopeKey() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 84)
+        let mutatedEnvelope = try mutateEnvelope(envelopeBytes) { entries in
+            entries.append(.init(key: .text("extra"), value: .bytes(Data([0x00]))))
+        }
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            guard case .transferEnvelopeSchemaMismatch(let expected, let actual) = error as? GossipV1FrameError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(expected, ["author_pubkey", "author_sig", "body", "manifest_id", "to_wayfarer_id"])
+            XCTAssertEqual(actual, ["author_pubkey", "author_sig", "body", "extra", "manifest_id", "to_wayfarer_id"])
+        }
+    }
+
+    func testTransferEnvelopeRejectsMissingAuthorSignature() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 85)
+        let mutatedEnvelope = try mutateEnvelope(envelopeBytes) { entries in
+            entries.removeAll { entry in
+                guard case .text(let key) = entry.key else { return false }
+                return key == "author_sig"
+            }
+        }
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: mutatedEnvelope)
+
+        XCTAssertThrowsError(
+            try GossipV1TransferFrame.Object(
+                itemID: itemID,
+                envelopeBytes: mutatedEnvelope,
+                expiryUnixMs: 4_102_444_800_000,
+                hopCount: 0
+            )
+        ) { error in
+            guard case .transferEnvelopeSchemaMismatch(let expected, let actual) = error as? GossipV1FrameError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(expected, ["author_pubkey", "author_sig", "body", "manifest_id", "to_wayfarer_id"])
+            XCTAssertEqual(actual, ["author_pubkey", "body", "manifest_id", "to_wayfarer_id"])
+        }
+    }
+
+    func testTransferObjectItemIDChangesWhenAuthorChanges() throws {
+        let toWayfarerId = Data(repeating: 0xAA, count: 32)
+        let manifestId = Data(repeating: 0xBB, count: 32)
+        let body = Data("same-body".utf8)
+
+        let envelopeA = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+            toWayfarerId: toWayfarerId,
+            manifestId: manifestId,
+            body: body,
+            authorSeed: 1
+        )
+        let envelopeB = try GossipV1TestSupport.makeTransferEnvelopeBytes(
+            toWayfarerId: toWayfarerId,
+            manifestId: manifestId,
+            body: body,
+            authorSeed: 2
+        )
+
+        XCTAssertNotEqual(GossipV1ItemID.derive(fromEnvelopeBytes: envelopeA), GossipV1ItemID.derive(fromEnvelopeBytes: envelopeB))
+    }
+
+    func testTransferRelayForwardedObjectPreservesVerification() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 79)
+        let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+        let firstHop = try GossipV1TransferFrame.Object(itemID: itemID, envelopeBytes: envelopeBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 0)
+        let forwardedHop = try GossipV1TransferFrame.Object(itemID: itemID, envelopeBytes: envelopeBytes, expiryUnixMs: 4_102_444_800_000, hopCount: 1)
+
+        XCTAssertEqual(firstHop.itemID, forwardedHop.itemID)
+        XCTAssertEqual(firstHop.envelopeBytes, forwardedHop.envelopeBytes)
+    }
+
+    func testTransferSenderDerivationIsDeterministicFromAuthorPublicKey() throws {
+        let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 80)
+        let decoded = try CanonicalCBORDecoder().decode(envelopeBytes)
+        guard case .map(let entries) = decoded else {
+            return XCTFail("Expected envelope map")
+        }
+
+        let authorPubKey = try XCTUnwrap(entries.first(where: {
+            guard case .text(let key) = $0.key else { return false }
+            return key == "author_pubkey"
+        }))
+        guard case .bytes(let pubKeyBytes) = authorPubKey.value else {
+            return XCTFail("Expected author_pubkey bytes")
+        }
+
+        let senderA = AethosIDs.sha256(pubKeyBytes)
+        let senderB = AethosIDs.sha256(pubKeyBytes)
+        XCTAssertEqual(senderA, senderB)
+        XCTAssertEqual(senderA.count, 32)
+    }
+
     func testReceiptRoundTripAndMatchesFixtureBytes() throws {
         let frame = try receiptFixtureFrame()
         try assertRoundTripAndFixture(frame: frame, fixtureFileName: "receipt.cbor")
@@ -308,6 +533,16 @@ final class GossipV1FramesTests: XCTestCase {
 // MARK: - Fixtures
 
 private extension GossipV1FramesTests {
+    func mutateEnvelope(_ envelopeBytes: Data, _ mutate: (inout [CanonicalCBORValue.MapEntry]) -> Void) throws -> Data {
+        let decoded = try CanonicalCBORDecoder().decode(envelopeBytes)
+        guard case .map(let entries) = decoded else {
+            throw GossipV1FrameError.transferEnvelopeNotMap
+        }
+        var mutated = entries
+        mutate(&mutated)
+        return try CanonicalCBOREncoder().encode(.map(mutated))
+    }
+
     func loadFixtureBytes(_ name: String) throws -> Data {
         try GossipV1TestSupport.fixtureData(name)
     }
@@ -362,18 +597,7 @@ private extension GossipV1FramesTests {
     }
 
     func transferFixtureFrame() throws -> GossipV1Frame {
-        let envBytes1 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 1)
-        let envBytes2 = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 2)
-
-        let id1 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes1)
-        let id2 = GossipV1ItemID.derive(fromEnvelopeBytes: envBytes2)
-
-        // Far future expiry to avoid time-dependent test flakiness.
-        let expiry: UInt64 = 4_102_444_800_000 // 2100-01-01T00:00:00.000Z
-        let obj1 = try GossipV1TransferFrame.Object(itemID: id1, envelopeBytes: envBytes1, expiryUnixMs: expiry, hopCount: 0)
-        let obj2 = try GossipV1TransferFrame.Object(itemID: id2, envelopeBytes: envBytes2, expiryUnixMs: expiry, hopCount: 1)
-
-        let transfer = try GossipV1TransferFrame(objects: [obj1, obj2])
+        let transfer = try GossipV1TestSupport.makeTransferFixtureFrame()
         return .transfer(transfer)
     }
 

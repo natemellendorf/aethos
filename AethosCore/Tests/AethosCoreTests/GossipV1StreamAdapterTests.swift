@@ -137,7 +137,7 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         // This fixture exceeds MAX_TRANSFER_BYTES at the TRANSFER decode boundary and should fail
         // as a non-fatal invalid-frame (not a boundary error).
-        let invalidFirst = try GossipV1TestSupport.fixtureData("transfer_oversize_bytes.cbor")
+        let invalidFirst = try GossipV1TestSupport.makeOversizeTransferFrameBytes()
         let validSecond = try GossipV1TestSupport.fixtureData("hello.cbor")
         let streamBytes = try GossipV1Framing.encodeStreamFrame(invalidFirst) + GossipV1Framing.encodeStreamFrame(validSecond)
 
@@ -152,7 +152,14 @@ final class GossipV1StreamAdapterTests: XCTestCase {
 
         let errors = errorEvents.withLock { $0 }
         XCTAssertEqual(errors.count, 1)
-        XCTAssertEqual(errors.first, .invalidFrame(.transferTotalEnvelopeBytesTooLarge(max: GossipV1.MAX_TRANSFER_BYTES, actual: 524_395)))
+        guard case .invalidFrame(let underlying)? = errors.first else {
+            return XCTFail("Expected invalid frame error")
+        }
+        guard case .transferTotalEnvelopeBytesTooLarge(let max, let actual) = underlying else {
+            return XCTFail("Unexpected underlying error: \(underlying)")
+        }
+        XCTAssertEqual(max, GossipV1.MAX_TRANSFER_BYTES)
+        XCTAssertGreaterThan(actual, max)
     }
 
     func testReceiveBytes_stopImmediatelyAfterTermination_remainingFramesInSameBufferNotProcessed() throws {
