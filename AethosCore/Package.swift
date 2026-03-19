@@ -1,9 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-var aethosDeps: [Target.Dependency] = [
-    .product(name: "Crypto", package: "swift-crypto"),
-]
+var aethosDeps: [Target.Dependency] = []
 
 var extraTargets: [Target] = []
 
@@ -22,9 +20,7 @@ let package = Package(
     products: [
         .library(name: "AethosCore", targets: ["AethosCore"]),
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
-    ],
+    dependencies: [],
     targets: extraTargets + [
         .target(
             name: "AethosCore",
@@ -34,8 +30,7 @@ let package = Package(
         .testTarget(
             name: "AethosCoreTests",
             dependencies: [
-                "AethosCore",
-                .product(name: "Crypto", package: "swift-crypto"),
+                "AethosCore"
             ],
             path: "Tests/AethosCoreTests"
         ),

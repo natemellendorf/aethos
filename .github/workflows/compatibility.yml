@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  protocol-compatibility:
+  protocol-compatibility-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,7 +26,24 @@ jobs:
           python-version: "3.12"
 
       - name: Prepare runner scripts
-        run: chmod +x tests/compatibility/runners/go_runner tests/compatibility/runners/rust_runner tests/compatibility/runners/swift_runner
+        run: chmod +x tests/compatibility/runners/go_runner tests/compatibility/runners/rust_runner
 
       - name: Run compatibility harness
-        run: python3 tests/compatibility/harness.py --verbose
+        run: python3 tests/compatibility/harness.py --verbose --runner go --runner rust
+
+  protocol-compatibility-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare runner script
+        run: chmod +x tests/compatibility/runners/swift_runner
+
+      - name: Run compatibility harness
+        run: python3 tests/compatibility/harness.py --verbose --runner swift

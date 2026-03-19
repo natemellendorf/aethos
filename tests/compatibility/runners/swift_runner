@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "swift_runner is not implemented yet" >&2
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PRIMARY_MAIN="$SCRIPT_DIR/swift_impl/main.swift"
+
+if [[ -f "$PRIMARY_MAIN" ]]; then
+  exec swift "$PRIMARY_MAIN" "$@"
+fi
+
+FALLBACK_MAIN="$PWD/runners/swift_impl/main.swift"
+if [[ -f "$FALLBACK_MAIN" ]]; then
+  exec swift "$FALLBACK_MAIN" "$@"
+fi
+
+echo "swift_runner could not locate main.swift" >&2
 exit 2

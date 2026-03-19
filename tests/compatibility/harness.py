@@ -11,9 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VECTORS_DIR = ROOT / "vectors"
 RUNNERS = {
-    "Go relay": ROOT / "runners" / "go_runner",
-    "Rust client": ROOT / "runners" / "rust_runner",
-    "Swift client": ROOT / "runners" / "swift_runner",
+    "go": {"label": "Go relay", "path": ROOT / "runners" / "go_runner"},
+    "rust": {"label": "Rust client", "path": ROOT / "runners" / "rust_runner"},
+    "swift": {"label": "Swift client", "path": ROOT / "runners" / "swift_runner"},
 }
 
 
@@ -153,7 +153,18 @@ def b64_padding(value: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Aethos compatibility harness")
     parser.add_argument("--verbose", action="store_true", help="Print per-vector checks")
+    parser.add_argument(
+        "--runner",
+        action="append",
+        choices=sorted(RUNNERS.keys()),
+        help="Limit to specific runner(s) (repeatable)",
+    )
     args = parser.parse_args()
+
+    selected_keys = args.runner or list(RUNNERS.keys())
+    selected_runners = [
+        (RUNNERS[key]["label"], RUNNERS[key]["path"]) for key in selected_keys
+    ]
 
     vector_files = sorted(
         p for p in VECTORS_DIR.glob("*.json") if not p.name.endswith(".expected.json")
@@ -167,7 +178,7 @@ def main() -> int:
     failures = []
     skips = []
 
-    for label, runner in RUNNERS.items():
+    for label, runner in selected_runners:
         if not runner.exists():
             skips.append(f"[SKIP] {label} (runner not found)")
             continue
