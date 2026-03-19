@@ -1,9 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-var aethosCoreDeps: [Target.Dependency] = [
-    .product(name: "Crypto", package: "swift-crypto"),
-]
+var aethosCoreDeps: [Target.Dependency] = []
 
 var extraTargets: [Target] = []
 
@@ -22,12 +20,9 @@ let package = Package(
     ],
     products: [
         .library(name: "AethosCore", targets: ["AethosCore"]),
-        .executable(name: "aethos", targets: ["AethosCLI"]),
-        .executable(name: "aethos-swift-runner", targets: ["AethosSwiftRunner"])
+        .executable(name: "aethos", targets: ["AethosCLI"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
-    ],
+    dependencies: [],
     targets: extraTargets + [
         .target(
             name: "AethosCore",
@@ -48,13 +43,6 @@ let package = Package(
             ],
             path: "Sources/AethosCLI"
         ),
-        .executableTarget(
-            name: "AethosSwiftRunner",
-            dependencies: [
-                .product(name: "Crypto", package: "swift-crypto")
-            ],
-            path: "Tests/compatibility/runners/swift_impl"
-        ),
         .testTarget(
             name: "AethosCLITests",
             dependencies: [
@@ -68,8 +56,7 @@ let package = Package(
         .testTarget(
             name: "AethosCoreTests",
             dependencies: [
-                "AethosCore",
-                .product(name: "Crypto", package: "swift-crypto"),
+                "AethosCore"
             ],
             path: "AethosCore/Tests/AethosCoreTests",
             resources: [

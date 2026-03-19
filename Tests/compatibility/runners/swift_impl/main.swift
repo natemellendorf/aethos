@@ -1,4 +1,6 @@
-import Crypto
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 import Foundation
 
 struct VectorFile: Decodable {
@@ -223,8 +225,12 @@ func nibble(_ value: UInt8) -> Character {
 }
 
 func sha256Hex(_ data: Data) -> String {
+    #if canImport(CryptoKit)
     let digest = SHA256.hash(data: data)
     return digest.map { String(format: "%02x", $0) }.joined()
+    #else
+    fatalError("swift_runner requires CryptoKit")
+    #endif
 }
 
 func base64URLNoPadding(_ data: Data) -> String {
