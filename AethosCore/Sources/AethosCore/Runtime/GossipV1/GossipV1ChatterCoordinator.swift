@@ -37,45 +37,56 @@ public enum GossipV1LanDiscoveryAction: Equatable, Sendable {
 }
 
 public struct GossipV1ChatterMetrics: Equatable, Sendable {
-    public private(set) var advertisementFullSent: Int = 0
-    public private(set) var advertisementDeltaSent: Int = 0
+    public private(set) var advertisementFullPlanned: Int = 0
+    public private(set) var advertisementDeltaPlanned: Int = 0
     public private(set) var advertisementNoOpSuppressed: Int = 0
 
-    public private(set) var requestSent: Int = 0
+    public private(set) var requestPlanned: Int = 0
     public private(set) var requestEmptySuppressed: Int = 0
     public private(set) var requestNoOpSuppressed: Int = 0
 
-    public private(set) var lanMulticastSent: Int = 0
+    public private(set) var lanMulticastPlanned: Int = 0
     public private(set) var lanMulticastSuppressedByInterface: Int = 0
-    public private(set) var lanUnicastFollowUpSent: Int = 0
+    public private(set) var lanUnicastFollowUpEnqueued: Int = 0
 
     public private(set) var crossBearerDedupeSuppressed: Int = 0
 
     public init() {}
 
-    mutating func noteAdvertisementFullSent() { advertisementFullSent += 1 }
-    mutating func noteAdvertisementDeltaSent() { advertisementDeltaSent += 1 }
+    mutating func noteAdvertisementFullPlanned() { advertisementFullPlanned += 1 }
+    mutating func noteAdvertisementDeltaPlanned() { advertisementDeltaPlanned += 1 }
     mutating func noteAdvertisementNoOpSuppressed() { advertisementNoOpSuppressed += 1 }
 
-    mutating func noteRequestSent() { requestSent += 1 }
+    mutating func noteRequestPlanned() { requestPlanned += 1 }
     mutating func noteRequestEmptySuppressed() { requestEmptySuppressed += 1 }
     mutating func noteRequestNoOpSuppressed() { requestNoOpSuppressed += 1 }
 
-    mutating func noteLanMulticastSent(count: Int) { lanMulticastSent += count }
+    mutating func noteLanMulticastPlanned(count: Int) { lanMulticastPlanned += count }
     mutating func noteLanMulticastSuppressed(count: Int) { lanMulticastSuppressedByInterface += count }
-    mutating func noteLanUnicastFollowUpSent(count: Int) { lanUnicastFollowUpSent += count }
+    mutating func noteLanUnicastFollowUpEnqueued(count: Int) { lanUnicastFollowUpEnqueued += count }
 
     mutating func noteCrossBearerDedupeSuppressed() { crossBearerDedupeSuppressed += 1 }
 }
 
 public struct GossipV1AdaptivePacer: Equatable, Sendable {
     public enum Outcome: Equatable, Sendable {
-        case deltaSent
+        case deltaPlanned
         case noOpSuppressed
         case transientFailure
     }
 
     public struct Config: Equatable, Sendable {
+        public enum ValidationError: Error, Equatable, Sendable {
+            case minIntervalNegative(actual: Int)
+            case maxIntervalLessThanMin(min: Int, max: Int)
+            case initialIntervalOutOfRange(min: Int, max: Int, actual: Int)
+            case noOpBackoffMultiplierLessThanOne(actual: Double)
+            case failureBackoffMultiplierLessThanOne(actual: Double)
+            case noOpBackoffMultiplierNonFinite(actual: Double)
+            case failureBackoffMultiplierNonFinite(actual: Double)
+            case jitterNegative(actual: Int)
+        }
+
         public let minIntervalMs: Int
         public let maxIntervalMs: Int
         public let initialIntervalMs: Int
@@ -100,6 +111,76 @@ public struct GossipV1AdaptivePacer: Equatable, Sendable {
             failureBackoffMultiplier: Double,
             jitterMs: Int
         ) {
+            precondition(minIntervalMs >= 0, "GossipV1AdaptivePacer.Config minIntervalMs must be >= 0")
+            precondition(maxIntervalMs >= minIntervalMs, "GossipV1AdaptivePacer.Config maxIntervalMs must be >= minIntervalMs")
+            precondition(
+                (minIntervalMs ... maxIntervalMs).contains(initialIntervalMs),
+                "GossipV1AdaptivePacer.Config initialIntervalMs must be in minIntervalMs...maxIntervalMs"
+            )
+            precondition(noOpBackoffMultiplier.isFinite, "GossipV1AdaptivePacer.Config noOpBackoffMultiplier must be finite")
+            precondition(failureBackoffMultiplier.isFinite, "GossipV1AdaptivePacer.Config failureBackoffMultiplier must be finite")
+            precondition(
+                noOpBackoffMultiplier >= 1.0,
+                "GossipV1AdaptivePacer.Config noOpBackoffMultiplier must be >= 1.0"
+            )
+            precondition(
+                failureBackoffMultiplier >= 1.0,
+                "GossipV1AdaptivePacer.Config failureBackoffMultiplier must be >= 1.0"
+            )
+            precondition(jitterMs >= 0, "GossipV1AdaptivePacer.Config jitterMs must be >= 0")
+
+            self.minIntervalMs = minIntervalMs
+            self.maxIntervalMs = maxIntervalMs
+            self.initialIntervalMs = initialIntervalMs
+            self.noOpBackoffMultiplier = noOpBackoffMultiplier
+            self.failureBackoffMultiplier = failureBackoffMultiplier
+            self.jitterMs = jitterMs
+        }
+
+        public init(
+            validating minIntervalMs: Int,
+            maxIntervalMs: Int,
+            initialIntervalMs: Int,
+            noOpBackoffMultiplier: Double,
+            failureBackoffMultiplier: Double,
+            jitterMs: Int
+        ) throws {
+            if minIntervalMs < 0 {
+                throw ValidationError.minIntervalNegative(actual: minIntervalMs)
+            }
+
+            if maxIntervalMs < minIntervalMs {
+                throw ValidationError.maxIntervalLessThanMin(min: minIntervalMs, max: maxIntervalMs)
+            }
+
+            if !(minIntervalMs ... maxIntervalMs).contains(initialIntervalMs) {
+                throw ValidationError.initialIntervalOutOfRange(
+                    min: minIntervalMs,
+                    max: maxIntervalMs,
+                    actual: initialIntervalMs
+                )
+            }
+
+            if !noOpBackoffMultiplier.isFinite {
+                throw ValidationError.noOpBackoffMultiplierNonFinite(actual: noOpBackoffMultiplier)
+            }
+
+            if !failureBackoffMultiplier.isFinite {
+                throw ValidationError.failureBackoffMultiplierNonFinite(actual: failureBackoffMultiplier)
+            }
+
+            if noOpBackoffMultiplier < 1.0 {
+                throw ValidationError.noOpBackoffMultiplierLessThanOne(actual: noOpBackoffMultiplier)
+            }
+
+            if failureBackoffMultiplier < 1.0 {
+                throw ValidationError.failureBackoffMultiplierLessThanOne(actual: failureBackoffMultiplier)
+            }
+
+            if jitterMs < 0 {
+                throw ValidationError.jitterNegative(actual: jitterMs)
+            }
+
             self.minIntervalMs = minIntervalMs
             self.maxIntervalMs = maxIntervalMs
             self.initialIntervalMs = initialIntervalMs
@@ -123,7 +204,7 @@ public struct GossipV1AdaptivePacer: Equatable, Sendable {
 
     public mutating func register(outcome: Outcome) {
         switch outcome {
-        case .deltaSent:
+        case .deltaPlanned:
             currentIntervalMs = Self.clamp(
                 max(config.minIntervalMs, currentIntervalMs / 2),
                 min: config.minIntervalMs,
@@ -168,7 +249,7 @@ public struct GossipV1CrossBearerDeduplicator: Sendable {
     }
 
     private struct SeenRecord: Sendable {
-        var lastSeenAtMs: UInt64
+        var lastTransmittedAtMs: UInt64
         var bearers: Set<GossipV1Bearer>
     }
 
@@ -183,21 +264,32 @@ public struct GossipV1CrossBearerDeduplicator: Sendable {
     public mutating func shouldTransmit(fingerprint: Data, via bearer: GossipV1Bearer, nowMs: UInt64) -> Bool {
         evictExpired(nowMs: nowMs)
 
-        guard var existing = seenByFingerprint[fingerprint] else {
-            seenByFingerprint[fingerprint] = SeenRecord(lastSeenAtMs: nowMs, bearers: [bearer])
+        guard let existing = seenByFingerprint[fingerprint] else {
             return true
         }
 
-        let elapsed = nowMs >= existing.lastSeenAtMs ? nowMs - existing.lastSeenAtMs : 0
-        guard elapsed > config.suppressionWindowMs else {
-            existing.lastSeenAtMs = nowMs
-            existing.bearers.insert(bearer)
-            seenByFingerprint[fingerprint] = existing
-            return false
+        guard nowMs >= existing.lastTransmittedAtMs else {
+            return existing.bearers.contains(bearer)
         }
 
-        seenByFingerprint[fingerprint] = SeenRecord(lastSeenAtMs: nowMs, bearers: [bearer])
-        return true
+        let elapsed = nowMs - existing.lastTransmittedAtMs
+        guard elapsed < config.suppressionWindowMs else { return true }
+        return existing.bearers.contains(bearer)
+    }
+
+    public mutating func noteDidTransmit(fingerprint: Data, via bearer: GossipV1Bearer, nowMs: UInt64) {
+        evictExpired(nowMs: nowMs)
+
+        guard var existing = seenByFingerprint[fingerprint] else {
+            seenByFingerprint[fingerprint] = SeenRecord(lastTransmittedAtMs: nowMs, bearers: [bearer])
+            return
+        }
+
+        if nowMs >= existing.lastTransmittedAtMs {
+            existing.lastTransmittedAtMs = nowMs
+        }
+        existing.bearers.insert(bearer)
+        seenByFingerprint[fingerprint] = existing
     }
 
     private mutating func evictExpired(nowMs: UInt64) {
@@ -206,9 +298,17 @@ public struct GossipV1CrossBearerDeduplicator: Sendable {
             return
         }
 
-        seenByFingerprint = seenByFingerprint.filter { _, record in
-            guard nowMs >= record.lastSeenAtMs else { return true }
-            return nowMs - record.lastSeenAtMs <= config.suppressionWindowMs
+        var expired: [Data] = []
+        expired.reserveCapacity(seenByFingerprint.count)
+        for (fingerprint, record) in seenByFingerprint {
+            guard nowMs >= record.lastTransmittedAtMs else { continue }
+            if nowMs - record.lastTransmittedAtMs > config.suppressionWindowMs {
+                expired.append(fingerprint)
+            }
+        }
+
+        for fingerprint in expired {
+            seenByFingerprint.removeValue(forKey: fingerprint)
         }
     }
 }
@@ -217,17 +317,25 @@ public struct GossipV1LanDiscoveryPlanner: Sendable {
     public struct Config: Equatable, Sendable {
         public let followUpDelayMs: UInt64
         public let interfaceSuppressionWindowMs: UInt64
+        public let maxResponseAgeMs: UInt64
         public let maxUnicastFollowUpsPerTick: Int
 
         public static let `default` = Config(
             followUpDelayMs: 250,
             interfaceSuppressionWindowMs: 1_000,
+            maxResponseAgeMs: 2_000,
             maxUnicastFollowUpsPerTick: 8
         )
 
-        public init(followUpDelayMs: UInt64, interfaceSuppressionWindowMs: UInt64, maxUnicastFollowUpsPerTick: Int) {
+        public init(
+            followUpDelayMs: UInt64,
+            interfaceSuppressionWindowMs: UInt64,
+            maxResponseAgeMs: UInt64,
+            maxUnicastFollowUpsPerTick: Int
+        ) {
             self.followUpDelayMs = followUpDelayMs
             self.interfaceSuppressionWindowMs = interfaceSuppressionWindowMs
+            self.maxResponseAgeMs = maxResponseAgeMs
             self.maxUnicastFollowUpsPerTick = maxUnicastFollowUpsPerTick
         }
     }
@@ -293,6 +401,9 @@ public struct GossipV1LanDiscoveryPlanner: Sendable {
     ) {
         guard !interface.isEmpty, !peerID.isEmpty, !endpoint.isEmpty else { return }
         guard let lastMulticastAt = lastMulticastAtByInterface[interface], nowMs >= lastMulticastAt else { return }
+
+        let responseAgeMs = nowMs - lastMulticastAt
+        guard responseAgeMs <= config.maxResponseAgeMs else { return }
 
         let key = FollowUpKey(interface: interface, peerID: peerID)
         pendingByKey[key] = PendingFollowUp(
@@ -384,8 +495,8 @@ public struct GossipV1ChatterCoordinator: Sendable {
 
         guard let previous = lastAdvertisedManifestSetByBearer[bearer] else {
             lastAdvertisedManifestSetByBearer[bearer] = normalizedSet
-            metrics.noteAdvertisementFullSent()
-            pacer.register(outcome: .deltaSent)
+            metrics.noteAdvertisementFullPlanned()
+            pacer.register(outcome: .deltaPlanned)
             return .full(normalizedSorted)
         }
 
@@ -397,8 +508,8 @@ public struct GossipV1ChatterCoordinator: Sendable {
         }
 
         lastAdvertisedManifestSetByBearer[bearer] = normalizedSet
-        metrics.noteAdvertisementDeltaSent()
-        pacer.register(outcome: .deltaSent)
+        metrics.noteAdvertisementDeltaPlanned()
+        pacer.register(outcome: .deltaPlanned)
         return .delta(delta)
     }
 
@@ -406,7 +517,7 @@ public struct GossipV1ChatterCoordinator: Sendable {
         for bearer: GossipV1Bearer,
         want: [GossipV1ItemID]
     ) -> GossipV1RequestPlan {
-        let normalizedWant = normalizeWant(want)
+        let normalizedWant = Self.normalizeWant(want)
 
         guard !normalizedWant.isEmpty else {
             metrics.noteRequestEmptySuppressed()
@@ -421,8 +532,8 @@ public struct GossipV1ChatterCoordinator: Sendable {
         }
 
         lastRequestByBearer[bearer] = normalizedWant
-        metrics.noteRequestSent()
-        pacer.register(outcome: .deltaSent)
+        metrics.noteRequestPlanned()
+        pacer.register(outcome: .deltaPlanned)
         return .send(normalizedWant)
     }
 
@@ -438,9 +549,17 @@ public struct GossipV1ChatterCoordinator: Sendable {
         return shouldTransmit
     }
 
+    public mutating func noteDidTransmit(
+        fingerprint: Data,
+        via bearer: GossipV1Bearer,
+        nowMs: UInt64
+    ) {
+        deduplicator.noteDidTransmit(fingerprint: fingerprint, via: bearer, nowMs: nowMs)
+    }
+
     public mutating func beginLanDiscovery(nowMs: UInt64, interfaces: [String]) -> [GossipV1LanDiscoveryAction] {
         let batch = discoveryPlanner.beginRound(nowMs: nowMs, interfaces: interfaces)
-        metrics.noteLanMulticastSent(count: batch.actions.count)
+        metrics.noteLanMulticastPlanned(count: batch.actions.count)
         metrics.noteLanMulticastSuppressed(count: batch.suppressedInterfaces.count)
         return batch.actions
     }
@@ -461,7 +580,7 @@ public struct GossipV1ChatterCoordinator: Sendable {
 
     public mutating func dueLanFollowUps(nowMs: UInt64) -> [GossipV1LanDiscoveryAction] {
         let actions = discoveryPlanner.dueFollowUps(nowMs: nowMs)
-        metrics.noteLanUnicastFollowUpSent(count: actions.count)
+        metrics.noteLanUnicastFollowUpEnqueued(count: actions.count)
         return actions
     }
 
@@ -479,7 +598,7 @@ public struct GossipV1ChatterCoordinator: Sendable {
         return GossipV1InventoryDelta(added: added, removed: removed)
     }
 
-    private func normalizeWant(_ want: [GossipV1ItemID]) -> [GossipV1ItemID] {
+    private static func normalizeWant(_ want: [GossipV1ItemID]) -> [GossipV1ItemID] {
         Array(Set(want)).sorted {
             DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
         }
