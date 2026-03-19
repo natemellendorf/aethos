@@ -2,5 +2,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PRIMARY_MAIN="$SCRIPT_DIR/swift_impl/main.swift"
 
-exec swift "$SCRIPT_DIR/swift_impl/main.swift" "$@"
+if [[ -f "$PRIMARY_MAIN" ]]; then
+  exec swift "$PRIMARY_MAIN" "$@"
+fi
+
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$REPO_ROOT" ]]; then
+  MAIN_PATH="$REPO_ROOT/Tests/compatibility/runners/swift_impl/main.swift"
+  if [[ -f "$MAIN_PATH" ]]; then
+    exec swift "$MAIN_PATH" "$@"
+  fi
+fi
+
+FALLBACK_MAIN="$PWD/runners/swift_impl/main.swift"
+if [[ -f "$FALLBACK_MAIN" ]]; then
+  exec swift "$FALLBACK_MAIN" "$@"
+fi
+
+echo "swift_runner could not locate main.swift" >&2
+exit 2
