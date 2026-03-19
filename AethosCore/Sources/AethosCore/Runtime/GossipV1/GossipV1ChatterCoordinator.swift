@@ -250,7 +250,7 @@ public struct GossipV1CrossBearerDeduplicator: Sendable {
 
     private struct SeenRecord: Sendable {
         var lastTransmittedAtMs: UInt64
-        var bearers: Set<GossipV1Bearer>
+        var lastBearer: GossipV1Bearer
     }
 
     public let config: Config
@@ -269,26 +269,26 @@ public struct GossipV1CrossBearerDeduplicator: Sendable {
         }
 
         guard nowMs >= existing.lastTransmittedAtMs else {
-            return existing.bearers.contains(bearer)
+            return existing.lastBearer == bearer
         }
 
         let elapsed = nowMs - existing.lastTransmittedAtMs
         guard elapsed < config.suppressionWindowMs else { return true }
-        return existing.bearers.contains(bearer)
+        return existing.lastBearer == bearer
     }
 
     public mutating func noteDidTransmit(fingerprint: Data, via bearer: GossipV1Bearer, nowMs: UInt64) {
         evictExpired(nowMs: nowMs)
 
         guard var existing = seenByFingerprint[fingerprint] else {
-            seenByFingerprint[fingerprint] = SeenRecord(lastTransmittedAtMs: nowMs, bearers: [bearer])
+            seenByFingerprint[fingerprint] = SeenRecord(lastTransmittedAtMs: nowMs, lastBearer: bearer)
             return
         }
 
         if nowMs >= existing.lastTransmittedAtMs {
             existing.lastTransmittedAtMs = nowMs
+            existing.lastBearer = bearer
         }
-        existing.bearers.insert(bearer)
         seenByFingerprint[fingerprint] = existing
     }
 

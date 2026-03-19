@@ -154,11 +154,38 @@ func chatterCoordinator_crossBearerDedupeSuppressesOnlyAfterSuccessfulTransmitAn
     let boundaryAllowed = coordinator.shouldTransmit(
         fingerprint: fingerprint,
         via: .relay("relay-a"),
-        nowMs: 15_200
+        nowMs: 15_100
     )
     #expect(boundaryAllowed)
 
     #expect(coordinator.metrics.crossBearerDedupeSuppressed == 2)
+}
+
+@Test
+func chatterCoordinator_crossBearerDedupeSuppressesPreviousBearerAfterLatestSuccessfulTransmit() {
+    var coordinator = GossipV1ChatterCoordinator()
+    let fingerprint = Data([0x10, 0x20])
+    let relayBearer = GossipV1Bearer.relay("relay-a")
+    let lanBearer = GossipV1Bearer.lan(interface: "en0")
+
+    let initialRelayAttempt = coordinator.shouldTransmit(fingerprint: fingerprint, via: relayBearer, nowMs: 1_000)
+    #expect(initialRelayAttempt)
+    coordinator.noteDidTransmit(fingerprint: fingerprint, via: relayBearer, nowMs: 1_000)
+
+    // Past relay suppression window, LAN may transmit and becomes latest-success anchor.
+    let lanAfterWindowAttempt = coordinator.shouldTransmit(fingerprint: fingerprint, via: lanBearer, nowMs: 6_001)
+    #expect(lanAfterWindowAttempt)
+    coordinator.noteDidTransmit(fingerprint: fingerprint, via: lanBearer, nowMs: 6_001)
+
+    // Regression: previous bearer must be suppressed within LAN-anchored window.
+    let relayWithinLanWindowAttempt = coordinator.shouldTransmit(fingerprint: fingerprint, via: relayBearer, nowMs: 6_002)
+    #expect(!relayWithinLanWindowAttempt)
+
+    // Exact boundary is allowed (elapsed == window).
+    let relayAtBoundaryAttempt = coordinator.shouldTransmit(fingerprint: fingerprint, via: relayBearer, nowMs: 11_001)
+    #expect(relayAtBoundaryAttempt)
+
+    #expect(coordinator.metrics.crossBearerDedupeSuppressed == 1)
 }
 
 @Test
