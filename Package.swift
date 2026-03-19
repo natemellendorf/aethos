@@ -22,7 +22,8 @@ let package = Package(
     ],
     products: [
         .library(name: "AethosCore", targets: ["AethosCore"]),
-        .executable(name: "aethos", targets: ["AethosCLI"])
+        .executable(name: "aethos", targets: ["AethosCLI"]),
+        .executable(name: "aethos-swift-runner", targets: ["AethosSwiftRunner"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
@@ -46,6 +47,13 @@ let package = Package(
                 "AethosCLILib"
             ],
             path: "Sources/AethosCLI"
+        ),
+        .executableTarget(
+            name: "AethosSwiftRunner",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto")
+            ],
+            path: "Tests/compatibility/runners/swift_impl"
         ),
         .testTarget(
             name: "AethosCLITests",
