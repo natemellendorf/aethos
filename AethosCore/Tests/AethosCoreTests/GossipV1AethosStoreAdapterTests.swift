@@ -43,7 +43,7 @@ func gossipV1_storeAdapter_dedupesByItemID_andRemainsIdempotent() throws {
     try adapter.ingest(itemID, envelopeBytes: envelopeBytes, expiryUnixMs: 100_000, hopCount: 1)
     try adapter.ingest(itemID, envelopeBytes: envelopeBytes, expiryUnixMs: 100_000, hopCount: 1)
 
-    #expect(try store.__debugRowCount(table: "gossip_objects") == 1)
+    #expect(try store.__debugRowCount(table: "gossip_items") == 1)
     #expect(try adapter.eligibleItemIDs(nowMs: 0) == [itemID])
 }
 

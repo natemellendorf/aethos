@@ -261,7 +261,7 @@ func enqueueRejectsMalformedMessageBeforeAnyDurableWrite() throws {
 }
 
 @Test
-func migrationV7ToV8PreservesExistingMessageRows() throws {
+func migrationV7ToV9PreservesExistingMessageRows() throws {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -331,12 +331,115 @@ func migrationV7ToV8PreservesExistingMessageRows() throws {
     try sqliteExec(db, sql: "PRAGMA user_version = 7;")
 
     let store = try AethosStore(path: dbURL)
-    #expect(try store.__debugUserVersion() == 8)
+    #expect(try store.__debugUserVersion() == 9)
     #expect(try store.__debugRowCount(table: "messages") == 1)
 
     let row = try store.getMessage(id: messageID)
     #expect(row?.authorWayfarerId == nil)
     #expect(row?.receivedFromPeerId == author)
+}
+
+@Test
+func migrationV8ToV9ConvertsLegacyGossipObjectsToGossipItems() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let dbURL = dir.appendingPathComponent("store.sqlite")
+    let itemID = Data((0..<32).map(UInt8.init))
+    let envelopeBytes = Data([0xFA, 0xFB, 0xFC, 0xFD])
+    let expiryUnixMs: Int64 = 4_102_444_800_000
+    let hopCount: Int64 = 7
+
+    var db: OpaquePointer?
+    #expect(sqlite3_open(dbURL.path, &db) == SQLITE_OK)
+    defer {
+        if let db { sqlite3_close(db) }
+    }
+    guard let db else {
+        Issue.record("failed to open sqlite handle")
+        return
+    }
+
+    try sqliteExec(db, sql: """
+    CREATE TABLE gossip_objects (
+        item_id BLOB PRIMARY KEY NOT NULL,
+        envelope_bytes BLOB NOT NULL,
+        expiry_unix_ms INTEGER NOT NULL,
+        hop_count INTEGER NOT NULL
+    );
+    """)
+
+    var insert: OpaquePointer?
+    #expect(sqlite3_prepare_v2(db, "INSERT INTO gossip_objects (item_id, envelope_bytes, expiry_unix_ms, hop_count) VALUES (?, ?, ?, ?);", -1, &insert, nil) == SQLITE_OK)
+    guard let insert else {
+        Issue.record("failed to prepare legacy gossip insert")
+        return
+    }
+    defer { sqlite3_finalize(insert) }
+
+    itemID.withUnsafeBytes { raw in
+        _ = sqlite3_bind_blob(insert, 1, raw.baseAddress, Int32(raw.count), sqliteTransient)
+    }
+    envelopeBytes.withUnsafeBytes { raw in
+        _ = sqlite3_bind_blob(insert, 2, raw.baseAddress, Int32(raw.count), sqliteTransient)
+    }
+    _ = sqlite3_bind_int64(insert, 3, expiryUnixMs)
+    _ = sqlite3_bind_int64(insert, 4, hopCount)
+    #expect(sqlite3_step(insert) == SQLITE_DONE)
+
+    try sqliteExec(db, sql: "PRAGMA user_version = 8;")
+
+    let migratedBefore = AethosStore.epochMilliseconds(Date())
+    let store = try AethosStore(path: dbURL)
+    let migratedAfter = AethosStore.epochMilliseconds(Date())
+
+    #expect(try store.__debugUserVersion() == 9)
+    #expect(try store.__debugRowCount(table: "gossip_items") == 1)
+    #expect(try store.__debugRowCount(table: "gossip_objects") == 1)
+
+    let migrated = try store.getGossipItem(itemID: itemID)
+    #expect(migrated?.itemID == itemID)
+    #expect(migrated?.envelopeBytes == envelopeBytes)
+    #expect(migrated?.expiryUnixMs == expiryUnixMs)
+    #expect(migrated?.hopCount == hopCount)
+    if let recordedAtUnixMs = migrated?.recordedAtUnixMs {
+        #expect(recordedAtUnixMs >= migratedBefore)
+        #expect(recordedAtUnixMs <= migratedAfter)
+    } else {
+        Issue.record("missing migrated recorded_at_unix_ms")
+    }
+
+    var verifyDB: OpaquePointer?
+    #expect(sqlite3_open(dbURL.path, &verifyDB) == SQLITE_OK)
+    defer {
+        if let verifyDB { sqlite3_close(verifyDB) }
+    }
+    guard let verifyDB else {
+        Issue.record("failed to open sqlite verification handle")
+        return
+    }
+
+    let expectedItemIDHex = Hex.encode(itemID)
+    let expectedEnvelopeB64 = GossipV1Base64URL.encode(envelopeBytes)
+    let textRow = try sqliteQuerySingleTextPair(
+        verifyDB,
+        sql: "SELECT item_id, envelope_b64 FROM gossip_items WHERE item_id = ? LIMIT 1;",
+        bindText: expectedItemIDHex
+    )
+    #expect(textRow?.0 == expectedItemIDHex)
+    #expect(textRow?.1 == expectedEnvelopeB64)
+
+    let marker = try sqliteQuerySingleInt64(
+        verifyDB,
+        sql: "SELECT meta_value FROM gossip_meta WHERE meta_key = ? LIMIT 1;",
+        bindText: "legacy_gossip_objects_to_items_migrated_v1"
+    )
+    #expect(marker == 1)
+
+    _ = try AethosStore(path: dbURL)
+    #expect(try store.__debugRowCount(table: "gossip_items") == 1)
 }
 
 private func sqliteExec(_ db: OpaquePointer, sql: String) throws {
@@ -349,6 +452,66 @@ private func sqliteExec(_ db: OpaquePointer, sql: String) throws {
         Issue.record("sqlite exec failed: \(message)")
         throw SQLiteExecError()
     }
+}
+
+private func sqliteQuerySingleTextPair(_ db: OpaquePointer, sql: String, bindText: String) throws -> (String, String)? {
+    var stmt: OpaquePointer?
+    let prepareRC = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+    guard prepareRC == SQLITE_OK, let stmt else {
+        struct SQLiteQueryError: Swift.Error {}
+        Issue.record("sqlite query prepare failed: \(String(cString: sqlite3_errmsg(db)))")
+        throw SQLiteQueryError()
+    }
+    defer { sqlite3_finalize(stmt) }
+
+    bindText.withCString { value in
+        _ = sqlite3_bind_text(stmt, 1, value, -1, sqliteTransient)
+    }
+
+    let rc = sqlite3_step(stmt)
+    if rc == SQLITE_DONE {
+        return nil
+    }
+    guard rc == SQLITE_ROW else {
+        struct SQLiteQueryError: Swift.Error {}
+        Issue.record("sqlite query step failed: \(String(cString: sqlite3_errmsg(db)))")
+        throw SQLiteQueryError()
+    }
+
+    let first = sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+    let second = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+    guard let first, let second else {
+        struct SQLiteQueryError: Swift.Error {}
+        Issue.record("sqlite query returned NULL text column")
+        throw SQLiteQueryError()
+    }
+    return (first, second)
+}
+
+private func sqliteQuerySingleInt64(_ db: OpaquePointer, sql: String, bindText: String) throws -> Int64? {
+    var stmt: OpaquePointer?
+    let prepareRC = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+    guard prepareRC == SQLITE_OK, let stmt else {
+        struct SQLiteQueryError: Swift.Error {}
+        Issue.record("sqlite query prepare failed: \(String(cString: sqlite3_errmsg(db)))")
+        throw SQLiteQueryError()
+    }
+    defer { sqlite3_finalize(stmt) }
+
+    bindText.withCString { value in
+        _ = sqlite3_bind_text(stmt, 1, value, -1, sqliteTransient)
+    }
+
+    let rc = sqlite3_step(stmt)
+    if rc == SQLITE_DONE {
+        return nil
+    }
+    guard rc == SQLITE_ROW else {
+        struct SQLiteQueryError: Swift.Error {}
+        Issue.record("sqlite query step failed: \(String(cString: sqlite3_errmsg(db)))")
+        throw SQLiteQueryError()
+    }
+    return sqlite3_column_int64(stmt, 0)
 }
 
 private extension Data {

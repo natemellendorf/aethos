@@ -36,7 +36,7 @@ extension AethosStore {
 
         public func eligibleItemIDs(nowMs: UInt64) throws -> [GossipV1ItemID] {
             let cutoff = nowMsPlusSkewClamped(nowMs)
-            var ids = try storeBox.store.listGossipObjectItemIDs(eligibleAfterUnixMs: cutoff)
+            var ids = try storeBox.store.listGossipItemIDs(eligibleAfterUnixMs: cutoff)
 
             if policy == .gossipObjectsAndQueuedOutboxEnvelopes {
                 ids.append(contentsOf: try storeBox.store.listQueuedOutboxEnvelopeItemIDs(eligibleAfterUnixMs: cutoff))
@@ -46,7 +46,7 @@ extension AethosStore {
         }
 
         public func fetch(_ itemID: GossipV1ItemID) throws -> (envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16)? {
-            if let object = try storeBox.store.getGossipObject(itemID: itemID.rawBytes()) {
+            if let object = try storeBox.store.getGossipItem(itemID: itemID.rawBytes()) {
                 return (
                     envelopeBytes: object.envelopeBytes,
                     expiryUnixMs: UInt64(max(object.expiryUnixMs, 0)),
@@ -65,7 +65,7 @@ extension AethosStore {
         }
 
         public func existingHopCount(_ itemID: GossipV1ItemID) throws -> UInt16? {
-            guard let object = try storeBox.store.getGossipObject(itemID: itemID.rawBytes()) else {
+            guard let object = try storeBox.store.getGossipItem(itemID: itemID.rawBytes()) else {
                 return nil
             }
             return UInt16(clamping: object.hopCount)
@@ -83,7 +83,7 @@ extension AethosStore {
 
             let expiry = Int64(clamping: expiryUnixMs)
             let hop = Int64(hopCount)
-            try storeBox.store.upsertGossipObject(itemID: itemID.rawBytes(), envelopeBytes: envelopeBytes, expiryUnixMs: expiry, hopCount: hop)
+            try storeBox.store.upsertGossipItem(itemID: itemID.rawBytes(), envelopeBytes: envelopeBytes, expiryUnixMs: expiry, hopCount: hop)
         }
 
         private func deduplicatedSorted(_ ids: [GossipV1ItemID]) -> [GossipV1ItemID] {

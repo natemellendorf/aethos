@@ -173,18 +173,20 @@ public final class AethosStore {
         let expiryUnixMs: UInt64
     }
 
-    struct GossipObjectRow: Equatable, Sendable {
+    struct GossipItemRow: Equatable, Sendable {
         let itemID: Data
         let envelopeBytes: Data
         let expiryUnixMs: Int64
         let hopCount: Int64
+        let recordedAtUnixMs: Int64
     }
 
     private let db: OpaquePointer
 
     // MARK: Schema version
 
-    private static let currentSchemaVersion: Int = 8
+    private static let currentSchemaVersion: Int = 9
+    private static let legacyGossipObjectsMigrationMarker = "legacy_gossip_objects_to_items_migrated_v1"
 
     public init(path: URL) throws {
         try FileManager.default.createDirectory(
@@ -202,6 +204,7 @@ public final class AethosStore {
         // Pragmas
         _ = try? exec("PRAGMA foreign_keys = ON;")
         _ = try? exec("PRAGMA journal_mode = WAL;")
+        _ = try? exec("PRAGMA synchronous = FULL;")
         sqlite3_busy_timeout(db, 5_000)
 
         try migrateIfNeeded()
@@ -1138,73 +1141,106 @@ public final class AethosStore {
         return hashes
     }
 
-    func upsertGossipObject(itemID: Data, envelopeBytes: Data, expiryUnixMs: Int64, hopCount: Int64) throws {
+    func upsertGossipItem(itemID: Data, envelopeBytes: Data, expiryUnixMs: Int64, hopCount: Int64, recordedAtUnixMs: Int64? = nil) throws {
+        let effectiveRecordedAtUnixMs = recordedAtUnixMs ?? Self.epochMilliseconds(Date())
+
         guard itemID.count == 32 else {
-            throw StoreError.sqliteError("gossip_objects.item_id must be 32 bytes")
+            throw StoreError.sqliteError("gossip_items.item_id must be 32 bytes")
         }
         guard expiryUnixMs >= 0 else {
-            throw StoreError.sqliteError("gossip_objects.expiry_unix_ms must be >= 0")
+            throw StoreError.sqliteError("gossip_items.expiry_unix_ms must be >= 0")
         }
         guard (0...Int64(UInt16.max)).contains(hopCount) else {
-            throw StoreError.sqliteError("gossip_objects.hop_count must be in 0...65535")
+            throw StoreError.sqliteError("gossip_items.hop_count must be in 0...65535")
+        }
+        guard effectiveRecordedAtUnixMs >= 0 else {
+            throw StoreError.sqliteError("gossip_items.recorded_at_unix_ms must be >= 0")
         }
 
+        let itemIDHex = Hex.encode(itemID)
+        let envelopeB64 = GossipV1Base64URL.encode(envelopeBytes)
+
         let sql = """
-        INSERT INTO gossip_objects (item_id, envelope_bytes, expiry_unix_ms, hop_count)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO gossip_items (item_id, envelope_b64, expiry_unix_ms, hop_count, recorded_at_unix_ms)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
-            envelope_bytes = excluded.envelope_bytes,
+            envelope_b64 = excluded.envelope_b64,
             expiry_unix_ms = excluded.expiry_unix_ms,
-            hop_count = excluded.hop_count;
+            hop_count = excluded.hop_count,
+            recorded_at_unix_ms = excluded.recorded_at_unix_ms;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
 
-        try bindData(stmt, index: 1, data: itemID)
-        try bindData(stmt, index: 2, data: envelopeBytes)
+        try bindText(stmt, index: 1, text: itemIDHex)
+        try bindText(stmt, index: 2, text: envelopeB64)
         try bindInt64(stmt, index: 3, value: expiryUnixMs)
         try bindInt64(stmt, index: 4, value: hopCount)
+        try bindInt64(stmt, index: 5, value: effectiveRecordedAtUnixMs)
         try stepDone(stmt)
     }
 
-    func getGossipObject(itemID: Data) throws -> GossipObjectRow? {
+    func getGossipItem(itemID: Data) throws -> GossipItemRow? {
+        guard itemID.count == 32 else {
+            throw StoreError.sqliteError("gossip_items.item_id must be 32 bytes")
+        }
+
         let sql = """
-        SELECT item_id, envelope_bytes, expiry_unix_ms, hop_count
-        FROM gossip_objects
+        SELECT item_id, envelope_b64, expiry_unix_ms, hop_count, recorded_at_unix_ms
+        FROM gossip_items
         WHERE item_id = ?
         LIMIT 1;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        try bindData(stmt, index: 1, data: itemID)
+        try bindText(stmt, index: 1, text: Hex.encode(itemID))
 
         let rc = sqlite3_step(stmt)
         switch rc {
         case SQLITE_ROW:
-            guard let rowItemID = columnData(stmt, index: 0),
-                  let envelopeBytes = columnData(stmt, index: 1)
+            guard let rowItemIDHex = columnText(stmt, index: 0),
+                  let envelopeB64 = columnText(stmt, index: 1)
             else {
-                throw StoreError.sqliteError("Unexpected NULL column in gossip_objects")
+                throw StoreError.sqliteError("Unexpected NULL column in gossip_items")
+            }
+
+            let rowItemID: Data
+            do {
+                rowItemID = try GossipV1ItemID(hex: rowItemIDHex).rawBytes()
+            } catch {
+                throw StoreError.sqliteError("Invalid gossip_items item_id encoding")
+            }
+
+            let envelopeBytes: Data
+            do {
+                envelopeBytes = try GossipV1Base64URL.decode(envelopeB64)
+            } catch {
+                throw StoreError.sqliteError("Invalid gossip_items envelope_b64 encoding")
             }
 
             let expiryUnixMs = columnInt64(stmt, index: 2)
             let hopCount = columnInt64(stmt, index: 3)
+            let recordedAtUnixMs = columnInt64(stmt, index: 4)
 
             guard rowItemID.count == 32 else {
-                throw StoreError.sqliteError("Invalid gossip_objects item_id length")
+                throw StoreError.sqliteError("Invalid gossip_items item_id length")
             }
             guard expiryUnixMs >= 0 else {
-                throw StoreError.sqliteError("Invalid negative gossip_objects expiry_unix_ms")
+                throw StoreError.sqliteError("Invalid negative gossip_items expiry_unix_ms")
             }
             guard (0...Int64(UInt16.max)).contains(hopCount) else {
-                throw StoreError.sqliteError("Invalid gossip_objects hop_count")
+                throw StoreError.sqliteError("Invalid gossip_items hop_count")
+            }
+            guard recordedAtUnixMs >= 0 else {
+                throw StoreError.sqliteError("Invalid negative gossip_items recorded_at_unix_ms")
             }
 
-            return GossipObjectRow(
+            return GossipItemRow(
                 itemID: rowItemID,
                 envelopeBytes: envelopeBytes,
                 expiryUnixMs: expiryUnixMs,
-                hopCount: hopCount
+                hopCount: hopCount,
+                recordedAtUnixMs: recordedAtUnixMs
             )
         case SQLITE_DONE:
             return nil
@@ -1213,12 +1249,12 @@ public final class AethosStore {
         }
     }
 
-    func listGossipObjectItemIDs(eligibleAfterUnixMs cutoffUnixMs: Int64) throws -> [GossipV1ItemID] {
+    func listGossipItemIDs(eligibleAfterUnixMs cutoffUnixMs: Int64) throws -> [GossipV1ItemID] {
         let sql = """
         SELECT item_id
-        FROM gossip_objects
+        FROM gossip_items
         WHERE expiry_unix_ms > ?
-        ORDER BY item_id ASC;
+        ORDER BY hop_count ASC, recorded_at_unix_ms DESC, item_id ASC;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -1229,12 +1265,17 @@ public final class AethosStore {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { break }
             if rc != SQLITE_ROW { throw sqliteError() }
-            guard let itemBytes = columnData(stmt, index: 0) else {
-                throw StoreError.sqliteError("Unexpected NULL item_id in gossip_objects")
+            guard let itemHex = columnText(stmt, index: 0) else {
+                throw StoreError.sqliteError("Unexpected NULL item_id in gossip_items")
             }
-            guard let itemID = try? GossipV1ItemID(bytes: itemBytes) else {
-                throw StoreError.sqliteError("Invalid gossip_objects item_id length")
+
+            let itemID: GossipV1ItemID
+            do {
+                itemID = try GossipV1ItemID(hex: itemHex)
+            } catch {
+                throw StoreError.sqliteError("Invalid gossip_items item_id encoding")
             }
+
             ids.append(itemID)
         }
         return ids
@@ -1296,6 +1337,7 @@ public final class AethosStore {
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 1:
             try migrateV1toV2()
@@ -1305,6 +1347,7 @@ public final class AethosStore {
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 2:
             try migrateV2toV3()
@@ -1313,6 +1356,7 @@ public final class AethosStore {
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 3:
             try migrateV3toV4()
@@ -1320,24 +1364,32 @@ public final class AethosStore {
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 4:
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 5:
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 6:
             try migrateV6toV7()
             try migrateV7toV8()
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 7:
             try migrateV7toV8()
+            try migrateV8toV9()
+            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
+        case 8:
+            try migrateV8toV9()
             try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case Self.currentSchemaVersion:
             return
@@ -1494,6 +1546,61 @@ public final class AethosStore {
         CREATE INDEX IF NOT EXISTS idx_messages_kind_created_at ON messages(kind, created_at);
         CREATE INDEX IF NOT EXISTS idx_messages_author_created_at ON messages(author_wayfarer_id, created_at);
         """)
+    }
+
+    private func migrateV8toV9() throws {
+        try exec("""
+        CREATE TABLE IF NOT EXISTS gossip_items (
+            item_id TEXT PRIMARY KEY NOT NULL,
+            envelope_b64 TEXT NOT NULL,
+            expiry_unix_ms INTEGER NOT NULL,
+            hop_count INTEGER NOT NULL,
+            recorded_at_unix_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gossip_items_expiry ON gossip_items(expiry_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_gossip_items_rank
+        ON gossip_items(hop_count, recorded_at_unix_ms DESC, item_id);
+
+        CREATE TABLE IF NOT EXISTS gossip_meta (
+            meta_key TEXT PRIMARY KEY NOT NULL,
+            meta_value INTEGER NOT NULL
+        );
+        """)
+
+        let alreadyMigrated = try gossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker) != nil
+        guard !alreadyMigrated else { return }
+
+        let hasLegacyGossipObjects = try tableExists(name: "gossip_objects")
+        if hasLegacyGossipObjects {
+            let nowUnixMs = Self.epochMilliseconds(Date())
+            let stmt = try prepare("SELECT item_id, envelope_bytes, expiry_unix_ms, hop_count FROM gossip_objects;")
+            defer { sqlite3_finalize(stmt) }
+
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE { break }
+                if rc != SQLITE_ROW { throw sqliteError() }
+
+                guard let legacyItemID = columnData(stmt, index: 0),
+                      let legacyEnvelopeBytes = columnData(stmt, index: 1)
+                else {
+                    throw StoreError.sqliteError("Unexpected NULL column in gossip_objects migration")
+                }
+
+                let legacyExpiryUnixMs = columnInt64(stmt, index: 2)
+                let legacyHopCount = columnInt64(stmt, index: 3)
+
+                try upsertGossipItem(
+                    itemID: legacyItemID,
+                    envelopeBytes: legacyEnvelopeBytes,
+                    expiryUnixMs: legacyExpiryUnixMs,
+                    hopCount: legacyHopCount,
+                    recordedAtUnixMs: nowUnixMs
+                )
+            }
+        }
+
+        try upsertGossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker, value: 1)
     }
 
     // MARK: Delivery Receipts
@@ -1854,6 +1961,45 @@ public final class AethosStore {
         try exec("ALTER TABLE \(table) ADD COLUMN \(column) \(definition);")
     }
 
+    private func tableExists(name: String) throws -> Bool {
+        let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: name)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private func gossipMetaIntValue(forKey key: String) throws -> Int64? {
+        let sql = "SELECT meta_value FROM gossip_meta WHERE meta_key = ? LIMIT 1;"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: key)
+
+        let rc = sqlite3_step(stmt)
+        switch rc {
+        case SQLITE_ROW:
+            return columnInt64(stmt, index: 0)
+        case SQLITE_DONE:
+            return nil
+        default:
+            throw sqliteError()
+        }
+    }
+
+    private func upsertGossipMetaIntValue(forKey key: String, value: Int64) throws {
+        let sql = """
+        INSERT INTO gossip_meta (meta_key, meta_value)
+        VALUES (?, ?)
+        ON CONFLICT(meta_key) DO UPDATE SET
+            meta_value = excluded.meta_value;
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        try bindText(stmt, index: 1, text: key)
+        try bindInt64(stmt, index: 2, value: value)
+        try stepDone(stmt)
+    }
+
     private func tableHasColumn(table: String, column: String) throws -> Bool {
         let stmt = try prepare("PRAGMA table_info(\(table));")
         defer { sqlite3_finalize(stmt) }
@@ -1893,6 +2039,17 @@ public final class AethosStore {
 
     public static func epochSeconds(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970.rounded(.down))
+    }
+
+    public static func epochMilliseconds(_ date: Date) -> Int64 {
+        let ms = (date.timeIntervalSince1970 * 1000.0).rounded(.down)
+        if ms <= 0 {
+            return 0
+        }
+        if ms >= Double(Int64.max) {
+            return Int64.max
+        }
+        return Int64(ms)
     }
 
     private func deleteExpired(table: String, nowSec: Int64) throws -> Int {
