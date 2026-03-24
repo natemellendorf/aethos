@@ -42,7 +42,7 @@ extension AethosStore {
                 ids.append(contentsOf: try storeBox.store.listQueuedOutboxEnvelopeItemIDs(eligibleAfterUnixMs: cutoff))
             }
 
-            return deduplicatedSorted(ids)
+            return deduplicatedPreservingOrder(ids)
         }
 
         public func fetch(_ itemID: GossipV1ItemID) throws -> (envelopeBytes: Data, expiryUnixMs: UInt64, hopCount: UInt16)? {
@@ -86,11 +86,16 @@ extension AethosStore {
             try storeBox.store.upsertGossipItem(itemID: itemID.rawBytes(), envelopeBytes: envelopeBytes, expiryUnixMs: expiry, hopCount: hop)
         }
 
-        private func deduplicatedSorted(_ ids: [GossipV1ItemID]) -> [GossipV1ItemID] {
-            let unique = Set(ids)
-            return unique.sorted {
-                DataLexicographic.compare($0.rawBytes(), $1.rawBytes()) == .orderedAscending
+        private func deduplicatedPreservingOrder(_ ids: [GossipV1ItemID]) -> [GossipV1ItemID] {
+            var seen: Set<GossipV1ItemID> = []
+            var unique: [GossipV1ItemID] = []
+            unique.reserveCapacity(ids.count)
+
+            for id in ids where seen.insert(id).inserted {
+                unique.append(id)
             }
+
+            return unique
         }
 
         private func nowMsPlusSkewClamped(_ nowMs: UInt64) -> Int64 {

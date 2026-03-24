@@ -125,6 +125,32 @@ func gossipV1_storeAdapter_canIncludeQueuedOutboxEnvelopesPolicy() throws {
     #expect(fetched?.expiryUnixMs == 100_000)
 }
 
+@Test
+func gossipV1_storeAdapter_preservesStoreRankingOrder() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let adapter = AethosStore.GossipV1StoreAdapter(store: store)
+
+    let bytesA = Data(repeating: 0x10, count: 32)
+    let bytesB = Data(repeating: 0x20, count: 32)
+    let bytesC = Data(repeating: 0x30, count: 32)
+
+    try store.upsertGossipItem(itemID: bytesA, envelopeBytes: Data([0xA]), expiryUnixMs: 100_000, hopCount: 2, recordedAtUnixMs: 100)
+    try store.upsertGossipItem(itemID: bytesB, envelopeBytes: Data([0xB]), expiryUnixMs: 100_000, hopCount: 0, recordedAtUnixMs: 100)
+    try store.upsertGossipItem(itemID: bytesC, envelopeBytes: Data([0xC]), expiryUnixMs: 100_000, hopCount: 0, recordedAtUnixMs: 300)
+
+    let nowMs: UInt64 = 1_000
+    let cutoff = Int64(nowMs + GossipV1.CLOCK_SKEW_TOLERANCE_MS)
+    let expected = try store.listGossipItemIDs(eligibleAfterUnixMs: cutoff)
+    let actual = try adapter.eligibleItemIDs(nowMs: nowMs)
+
+    #expect(actual == expected)
+}
+
 private func envelopeBytes(seed: UInt64) throws -> Data {
     try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: seed)
 }

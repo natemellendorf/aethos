@@ -1166,8 +1166,7 @@ public final class AethosStore {
         ON CONFLICT(item_id) DO UPDATE SET
             envelope_b64 = excluded.envelope_b64,
             expiry_unix_ms = excluded.expiry_unix_ms,
-            hop_count = excluded.hop_count,
-            recorded_at_unix_ms = excluded.recorded_at_unix_ms;
+            hop_count = excluded.hop_count;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -1338,7 +1337,6 @@ public final class AethosStore {
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 1:
             try migrateV1toV2()
             try migrateV2toV3()
@@ -1348,7 +1346,6 @@ public final class AethosStore {
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 2:
             try migrateV2toV3()
             try migrateV3toV4()
@@ -1357,7 +1354,6 @@ public final class AethosStore {
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 3:
             try migrateV3toV4()
             try migrateV4toV5()
@@ -1365,32 +1361,26 @@ public final class AethosStore {
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 4:
             try migrateV4toV5()
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 5:
             try migrateV5toV6()
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 6:
             try migrateV6toV7()
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 7:
             try migrateV7toV8()
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case 8:
             try migrateV8toV9()
-            try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
         case Self.currentSchemaVersion:
             return
         default:
@@ -1549,6 +1539,14 @@ public final class AethosStore {
     }
 
     private func migrateV8toV9() throws {
+        try exec("BEGIN IMMEDIATE;")
+        var didCommit = false
+        defer {
+            if !didCommit {
+                _ = try? exec("ROLLBACK;")
+            }
+        }
+
         try exec("""
         CREATE TABLE IF NOT EXISTS gossip_items (
             item_id TEXT PRIMARY KEY NOT NULL,
@@ -1567,40 +1565,44 @@ public final class AethosStore {
         );
         """)
 
-        let alreadyMigrated = try gossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker) != nil
-        guard !alreadyMigrated else { return }
+        let alreadyMigrated = try gossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker) == 1
+        if !alreadyMigrated {
+            let hasLegacyGossipObjects = try tableExists(name: "gossip_objects")
+            if hasLegacyGossipObjects {
+                let nowUnixMs = Self.epochMilliseconds(Date())
+                let stmt = try prepare("SELECT item_id, envelope_bytes, expiry_unix_ms, hop_count FROM gossip_objects;")
+                defer { sqlite3_finalize(stmt) }
 
-        let hasLegacyGossipObjects = try tableExists(name: "gossip_objects")
-        if hasLegacyGossipObjects {
-            let nowUnixMs = Self.epochMilliseconds(Date())
-            let stmt = try prepare("SELECT item_id, envelope_bytes, expiry_unix_ms, hop_count FROM gossip_objects;")
-            defer { sqlite3_finalize(stmt) }
+                while true {
+                    let rc = sqlite3_step(stmt)
+                    if rc == SQLITE_DONE { break }
+                    if rc != SQLITE_ROW { throw sqliteError() }
 
-            while true {
-                let rc = sqlite3_step(stmt)
-                if rc == SQLITE_DONE { break }
-                if rc != SQLITE_ROW { throw sqliteError() }
+                    guard let legacyItemID = columnData(stmt, index: 0),
+                          let legacyEnvelopeBytes = columnData(stmt, index: 1)
+                    else {
+                        throw StoreError.sqliteError("Unexpected NULL column in gossip_objects migration")
+                    }
 
-                guard let legacyItemID = columnData(stmt, index: 0),
-                      let legacyEnvelopeBytes = columnData(stmt, index: 1)
-                else {
-                    throw StoreError.sqliteError("Unexpected NULL column in gossip_objects migration")
+                    let legacyExpiryUnixMs = columnInt64(stmt, index: 2)
+                    let legacyHopCount = columnInt64(stmt, index: 3)
+
+                    try upsertGossipItem(
+                        itemID: legacyItemID,
+                        envelopeBytes: legacyEnvelopeBytes,
+                        expiryUnixMs: legacyExpiryUnixMs,
+                        hopCount: legacyHopCount,
+                        recordedAtUnixMs: nowUnixMs
+                    )
                 }
-
-                let legacyExpiryUnixMs = columnInt64(stmt, index: 2)
-                let legacyHopCount = columnInt64(stmt, index: 3)
-
-                try upsertGossipItem(
-                    itemID: legacyItemID,
-                    envelopeBytes: legacyEnvelopeBytes,
-                    expiryUnixMs: legacyExpiryUnixMs,
-                    hopCount: legacyHopCount,
-                    recordedAtUnixMs: nowUnixMs
-                )
             }
+
+            try upsertGossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker, value: 1)
         }
 
-        try upsertGossipMetaIntValue(forKey: Self.legacyGossipObjectsMigrationMarker, value: 1)
+        try exec("PRAGMA user_version = \(Self.currentSchemaVersion);")
+        try exec("COMMIT;")
+        didCommit = true
     }
 
     // MARK: Delivery Receipts
