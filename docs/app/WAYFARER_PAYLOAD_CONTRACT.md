@@ -84,8 +84,8 @@ Canonical shape:
 Required fields:
 
 - `type`: MUST equal `wayfarer.chat.v1`.
-- `text`: UTF-8 string, MUST be non-empty.
-- `created_at_unix_ms`: integer milliseconds timestamp.
+- `text`: MUST be a non-empty UTF-8 string.
+- `created_at_unix_ms`: MUST be an integer milliseconds timestamp.
 
 Unknown keys:
 
@@ -130,18 +130,18 @@ Canonical shape:
 Required fields:
 
 - `type`: MUST equal `wayfarer.media_manifest.v1`.
-- `transfer_ref`: non-empty string.
-- `media_kind`: one of `image`, `video`, `audio`, `file`.
-- `assets`: non-empty array of maps.
-- `assets[].asset_ref`: non-empty string.
-- `assets[].mime_type`: non-empty string.
-- `assets[].byte_length`: integer, MUST be `>= 0`.
-- `created_at_unix_ms`: integer milliseconds timestamp.
+- `transfer_ref`: MUST be a non-empty string.
+- `media_kind`: MUST be one of `image`, `video`, `audio`, `file`.
+- `assets`: MUST be a non-empty array of maps.
+- `assets[].asset_ref`: MUST be a non-empty string.
+- `assets[].mime_type`: MUST be a non-empty string.
+- `assets[].byte_length`: MUST be an integer and MUST be `>= 0`.
+- `created_at_unix_ms`: MUST be an integer milliseconds timestamp.
 
 Optional fields:
 
-- `caption`: UTF-8 string.
-- `assets[].name`: UTF-8 string.
+- `caption`: MAY be present; if present, MUST be a UTF-8 string.
+- `assets[].name`: MAY be present; if present, MUST be a UTF-8 string.
 
 Unknown keys:
 
@@ -209,11 +209,15 @@ Implementations are conformant only if all requirements below hold:
 
 1. Classification follows Section 4 exactly.
 2. `manifest_id` and all non-body metadata are never used for type inference.
-3. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
-4. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
-5. Malformed supported payloads resolve to `reject`.
-6. Decode failures (including invalid CBOR/non-map/non-text-key map) resolve to `reject`.
-7. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
+3. Runners MUST begin from authoritative `body_cbor_hex` bytes.
+4. When `expected_decoded_map` is present, runners MUST decode `body_cbor_hex` bytes and compare decoded output to `expected_decoded_map`.
+5. Runners MUST NOT use `expected_decoded_map` as input.
+6. Decode-failure fixtures omit `expected_decoded_map`; decode failure MUST yield `reject` without invoking typed decoders.
+7. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
+8. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
+9. Malformed supported payloads resolve to `reject`.
+10. Decode failures (including invalid CBOR/non-map/non-text-key map) resolve to `reject`.
+11. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
 
 ## 12. Routing and relay guidance
 

@@ -11,7 +11,7 @@ Each fixture file is JSON with these top-level fields:
 
 - `id`: stable fixture identifier
 - `description`: human-readable scenario summary
-- `body_cbor_hex`: authoritative `Envelope.body` bytes (deterministic CBOR hex; authoritative fixture input)
+- `body_cbor_hex`: authoritative `Envelope.body` bytes (deterministic CBOR for decode-success fixtures; may be invalid bytes for decode-failure fixtures)
 - `expected_decoded_map`: expected decoded top-level map representation (present for decode-success fixtures only)
 - `envelope_context`: envelope metadata relevant to app-layer checks
 - `expected_outcome`: one of:
@@ -20,7 +20,7 @@ Each fixture file is JSON with these top-level fields:
   - `unsupported-safe-skip`
   - `reject`
 
-For decode-failure fixtures, `body_cbor_hex` is still authoritative input and `expected_decoded_map` is omitted.
+For decode-failure fixtures, `body_cbor_hex` remains authoritative input and `expected_decoded_map` is omitted.
 
 `manifest.json` indexes all fixtures and repeats expected outcomes for machine-readable harnesses.
 
