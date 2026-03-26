@@ -1,21 +1,17 @@
 {
   "id": "valid_wayfarer_chat_v1",
   "description": "Well-formed wayfarer.chat.v1 payload is accepted and renderable",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  "body_cbor_hex": "a464746578746e68656c6c6f20776179666172657264747970657077617966617265722e636861742e7631706675747572655f657874656e73696f6e7818756e6b6e6f776e206b657973206172652069676e6f72656472637265617465645f61745f756e69785f6d731b000001941f297c00",
+  "expected_decoded_map": {
+    "type": "wayfarer.chat.v1",
+    "text": "hello wayfarer",
+    "created_at_unix_ms": 1735689600000,
+    "future_extension": "unknown keys are ignored"
   },
   "envelope_context": {
     "transport_valid": true,
     "manifest_id": "1111111111111111111111111111111111111111111111111111111111111111",
     "canonical_author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
-  "decoded_body_map": {
-    "type": "wayfarer.chat.v1",
-    "text": "hello wayfarer",
-    "created_at_unix_ms": 1735689600000,
-    "author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "future_extension": "unknown keys are ignored"
   },
   "expected_outcome": "accept/display"
 }

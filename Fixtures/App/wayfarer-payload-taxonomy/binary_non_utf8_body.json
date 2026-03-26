@@ -1,14 +1,12 @@
 {
   "id": "binary_non_utf8_body",
   "description": "Envelope body bytes fail app decode requirements (invalid CBOR / decoded non-map / non-text keys) and must be rejected before typed decoders",
-  "body_source": {
-    "format": "raw_bytes_hex",
-    "body_bytes_hex": "ff80c30000010203"
-  },
+  "body_cbor_hex": "ff80c30000010203",
   "envelope_context": {
     "transport_valid": true,
     "manifest_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "canonical_author_wayfarer_id": "1212121212121212121212121212121212121212121212121212121212121212"
   },
+  "decode_error_expected": true,
   "expected_outcome": "reject"
 }

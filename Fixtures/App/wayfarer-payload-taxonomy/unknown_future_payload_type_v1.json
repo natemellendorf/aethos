@@ -1,16 +1,8 @@
 {
   "id": "unknown_future_payload_type_v1",
   "description": "Unknown future payload type must be safely skipped and never decoded as wayfarer.chat.v1",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
-  },
-  "envelope_context": {
-    "transport_valid": true,
-    "manifest_id": "4444444444444444444444444444444444444444444444444444444444444444",
-    "canonical_author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-  },
-  "decoded_body_map": {
+  "body_cbor_hex": "a56474657874782c74686973206669656c64206e616d6520696e74656e74696f6e616c6c7920726573656d626c6573206368617464747970656e6675747572652e706f6c6c2e7631676f7074696f6e738261616162687175657374696f6e6a63686f6f7365206f6e6572637265617465645f61745f756e69785f6d731b000001941f2987b8",
+  "expected_decoded_map": {
     "type": "future.poll.v1",
     "text": "this field name intentionally resembles chat",
     "question": "choose one",
@@ -18,8 +10,12 @@
       "a",
       "b"
     ],
-    "created_at_unix_ms": 1735689603000,
-    "author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    "created_at_unix_ms": 1735689603000
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "4444444444444444444444444444444444444444444444444444444444444444",
+    "canonical_author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   },
   "expected_outcome": "unsupported-safe-skip",
   "must_not_decode_as": "wayfarer.chat.v1"

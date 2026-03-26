@@ -1,20 +1,16 @@
 {
   "id": "malformed_wayfarer_chat_v1",
   "description": "Type is wayfarer.chat.v1 but required fields are malformed, so payload is rejected",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  "body_cbor_hex": "a364746578746064747970657077617966617265722e636861742e763172637265617465645f61745f756e69785f6d736d31373335363839363032303030",
+  "expected_decoded_map": {
+    "type": "wayfarer.chat.v1",
+    "text": "",
+    "created_at_unix_ms": "1735689602000"
   },
   "envelope_context": {
     "transport_valid": true,
     "manifest_id": "3333333333333333333333333333333333333333333333333333333333333333",
     "canonical_author_wayfarer_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-  },
-  "decoded_body_map": {
-    "type": "wayfarer.chat.v1",
-    "text": "",
-    "created_at_unix_ms": "1735689602000",
-    "author_wayfarer_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
   "expected_outcome": "reject"
 }

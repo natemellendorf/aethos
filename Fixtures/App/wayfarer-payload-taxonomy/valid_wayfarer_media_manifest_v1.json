@@ -1,16 +1,8 @@
 {
   "id": "valid_wayfarer_media_manifest_v1",
   "description": "Well-formed wayfarer.media_manifest.v1 payload is accepted and stored without default rendering",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
-  },
-  "envelope_context": {
-    "transport_valid": true,
-    "manifest_id": "2222222222222222222222222222222222222222222222222222222222222222",
-    "canonical_author_wayfarer_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  },
-  "decoded_body_map": {
+  "body_cbor_hex": "a76474797065781a77617966617265722e6d656469615f6d616e69666573742e76316661737365747382a4646e616d656970686f746f2e6a70676961737365745f7265666f61737365743a70686f746f2d303031696d696d655f747970656a696d6167652f6a7065676b627974655f6c656e677468191000a4646e616d65697468756d622e6a70676961737365745f7265666f61737365743a7468756d622d303031696d696d655f747970656a696d6167652f6a7065676b627974655f6c656e6774681902006763617074696f6e6570686f746f6a6d656469615f6b696e6465696d6167656c7472616e736665725f726566781b786665723a6f70617175653a61737365742d62756e646c652d3031706675747572655f657874656e73696f6ea16468696e747818756e6b6e6f776e206d6170206b6579732069676e6f72656472637265617465645f61745f756e69785f6d731b000001941f297fe8",
+  "expected_decoded_map": {
     "type": "wayfarer.media_manifest.v1",
     "transfer_ref": "xfer:opaque:asset-bundle-01",
     "media_kind": "image",
@@ -30,10 +22,14 @@
     ],
     "caption": "photo",
     "created_at_unix_ms": 1735689601000,
-    "author_wayfarer_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "future_extension": {
       "hint": "unknown map keys ignored"
     }
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "canonical_author_wayfarer_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "expected_outcome": "accept/store-no-display"
 }

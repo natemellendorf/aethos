@@ -6,6 +6,8 @@ This matrix defines required handling behavior for Wayfarer payload types across
 
 Contract reference: `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
 
+**Matrix is executable interpretation of contract.**
+
 ## 1. Outcome vocabulary
 
 - `accept/display`
@@ -27,7 +29,7 @@ Contract reference: `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
 | `wayfarer.status_event.v1` | Reserved | Not implemented | `accept/store-no-display` | Reserved non-renderable scope in MVP0. |
 | `wayfarer.notice.v1` | Reserved | Not implemented | `accept/store-no-display` | Reserved non-renderable scope in MVP0. |
 | Unsupported known version (for example `wayfarer.chat.v2`) | Future known | Unsupported | `unsupported-safe-skip` | Unsupported known type is not malformed chat. |
-| Unknown future type (for example `future.poll.v1`) | Future/extension | Unsupported | `unsupported-safe-skip` | MUST NOT fallback-decode as `wayfarer.chat.v1`. |
+| Unknown future type (for example `future.poll.v1`) | Future/extension | Unsupported | `unsupported-safe-skip` | MUST NOT fallback-decode as `wayfarer.chat.v1`, even if fields resemble chat. |
 
 ## 3. Decoder guard matrix
 
@@ -40,6 +42,12 @@ Contract reference: `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
 | `type` is reserved (`wayfarer.*.v1` reserved set) | Do not render; optional durable store | `accept/store-no-display` |
 | Body bytes fail app decode requirements (for example invalid CBOR, decoded non-map, or non-text keys) | Do not run type-specific decoders | `reject` |
 | Type mismatch (payload shape resembles chat but `type` differs) | Route by `type`; no heuristic fallback | `unsupported-safe-skip` |
+
+Malformed vs unsupported rule:
+
+- Malformed = schema-invalid after routing to a supported decoder (`wayfarer.chat.v1`, `wayfarer.media_manifest.v1`) => `reject`.
+- Unsupported = unsupported known or unknown future `type` after successful classification => `unsupported-safe-skip`.
+- Decode-failure at classification boundary (invalid CBOR / non-map / non-text-key map / missing or non-text `type`) => `reject`.
 
 ## 4. Fixture coverage mapping
 
@@ -61,3 +69,10 @@ Fixture source of truth: `Fixtures/App/wayfarer-payload-taxonomy/manifest.json`.
 ## 5. Conformance gates
 
 An implementation is MVP0-compatible when all fixture expected outcomes are matched exactly and no unsupported payload is mis-decoded as chat.
+
+Additional hard gates:
+
+1. Classification MUST begin from fixture `body_cbor_hex` bytes.
+2. Decoded map MUST match fixture `expected_decoded_map` when present.
+3. Chat decoder MUST run only for `type=wayfarer.chat.v1`.
+4. Decode-failure fixtures with invalid bytes MUST reject without typed decoder execution.

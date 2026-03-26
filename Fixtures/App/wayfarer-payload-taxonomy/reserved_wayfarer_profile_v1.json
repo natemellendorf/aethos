@@ -1,20 +1,17 @@
 {
   "id": "reserved_wayfarer_profile_v1",
   "description": "Reserved wayfarer.profile.v1 payload placeholder",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  "body_cbor_hex": "a26464617461a1656576656e746b706c616365686f6c64657264747970657377617966617265722e70726f66696c652e7631",
+  "expected_decoded_map": {
+    "type": "wayfarer.profile.v1",
+    "data": {
+      "event": "placeholder"
+    }
   },
   "envelope_context": {
     "transport_valid": true,
     "manifest_id": "5555555555555555555555555555555555555555555555555555555555555555",
     "canonical_author_wayfarer_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-  },
-  "decoded_body_map": {
-    "type": "wayfarer.profile.v1",
-    "data": {
-      "event": "placeholder"
-    }
   },
   "expected_outcome": "accept/store-no-display"
 }

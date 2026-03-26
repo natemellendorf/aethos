@@ -2,45 +2,55 @@
 
 Status: Canonical app payload contract for Wayfarer app-layer payload semantics (MVP0)
 
-This document defines how Wayfarer apps interpret `Envelope.body` bytes after protocol-layer envelope acceptance.
+## 1. Normative language
 
-- Transport-neutral envelope contract: `docs/protocol/frames.md` (§5.4.1)
-- Gossip protocol invariants: `docs/protocol/gossip.md`
-- Wire/API transport contracts: `docs/spec/*`
+The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, and **MAY** are to be interpreted as described in RFC 2119.
 
-## 1. Scope and authority boundaries
+## 2. Scope and authority boundaries
 
 1. Frame parsing, envelope validation, hash/signature verification, and forwarding are protocol-layer responsibilities.
 2. `Envelope.body: bstr` remains opaque at protocol layer.
-3. This contract defines only app-layer semantics of those body bytes for Wayfarer clients.
-4. Payload handling outcomes are app-layer decisions and MUST NOT mutate protocol validity decisions.
+3. This contract defines app-layer interpretation of `Envelope.body` bytes for Wayfarer payload taxonomy.
+4. App-layer outcomes MUST NOT mutate protocol validity decisions.
 
 Boundary rule:
 
 - Protocol asks: "Is this envelope authentic and transport-valid?"
-- App taxonomy asks: "What payload `type` does this body represent, and how should clients handle it?"
+- App taxonomy asks: "What payload `type` does this body represent, and how must it be handled?"
 
 These decisions MUST remain separate.
 
-## 2. App-layer encoding semantics for `Envelope.body`
+## 3. Encoding contract for `Envelope.body` (strict fail-closed)
 
-After protocol-layer acceptance, Wayfarer clients MUST interpret `Envelope.body` as follows:
+1. Wayfarer app payload bodies MUST be deterministic CBOR (RFC 8949 deterministic encoding).
+2. JSON, plain text, and any non-CBOR encoding are invalid.
+3. There is no legacy or alternate encoding path.
+4. Bodies that fail CBOR decoding MUST be rejected.
+5. Decoded top-level value MUST be a map.
+6. Map keys MUST be CBOR text strings.
+7. Decoded map MUST include top-level `type` as a CBOR text string.
 
-1. Body bytes MUST be deterministic CBOR (RFC 8949 deterministic encoding).
-2. The CBOR top-level item MUST be a map.
-3. All map keys MUST be CBOR text strings.
-4. The decoded map MUST include top-level `type` with CBOR text string value.
-5. All string values are UTF-8 text strings.
-6. Unknown keys MUST be ignored by type-specific decoders.
-7. Clients SHOULD preserve raw body bytes when persisting accepted/unsupported payloads.
+If any requirement above fails, outcome is `reject`.
 
-If body bytes are not decodable into the required map shape (for example invalid CBOR, decoded non-map value, or non-text map keys), outcome is `reject`.
+## 4. Canonical classification algorithm (only allowed path)
 
-## 3. Type system and classification
+Implementations MUST classify payloads using exactly the following steps:
 
-### 3.1 Canonical type names
+1. Decode CBOR bytes.
+2. Value MUST be a map.
+3. Map keys MUST be text strings.
+4. Extract `type` as required text string.
+5. Route to exact type decoder.
+6. Unsupported known/unknown future types => `unsupported-safe-skip`; malformed supported types => `reject`.
 
-Active supported payload types in MVP0:
+No alternative classification path is allowed.
+
+- `manifest_id` and all other envelope/protocol metadata MUST NOT be used for payload type inference.
+- Heuristic or fallback decoding MUST NOT be used.
+
+## 5. Type registry
+
+Supported payload types in MVP0:
 
 - `wayfarer.chat.v1`
 - `wayfarer.media_manifest.v1`
@@ -53,30 +63,11 @@ Reserved payload types in MVP0:
 - `wayfarer.status_event.v1`
 - `wayfarer.notice.v1`
 
-Cross-cutting rule: every payload MUST carry top-level `type`.
+All payloads MUST carry top-level `type`.
 
-### 3.2 Classification-before-decode rule
+## 6. Supported payload specifications
 
-Classification is performed by minimal decode of `Envelope.body` to read `type`.
-
-Normative flow:
-
-1. Decode body to CBOR map with text keys.
-2. Read `type` string.
-3. Route to type-specific decode/validation based on `type`.
-
-`manifest_id` (or any protocol metadata) is NOT authoritative for app payload typing and MUST NOT be used as the app payload discriminator.
-
-### 3.3 Unsupported type rules
-
-1. Unsupported known types (for example `wayfarer.chat.v2`) are `unsupported-safe-skip`.
-2. Unknown future types (for example `future.poll.v1`) are `unsupported-safe-skip`.
-3. Unsupported known types and unknown future types MUST NOT be treated as malformed `wayfarer.chat.v1`.
-4. Clients MUST NOT run chat/media decoders when `type` is not that exact supported type.
-
-## 4. Supported payload type specifications
-
-## 4.1 `wayfarer.chat.v1`
+### 6.1 `wayfarer.chat.v1`
 
 Purpose: renderable human-readable chat message.
 
@@ -86,44 +77,35 @@ Canonical shape:
 {
   "type": "wayfarer.chat.v1",
   "text": "hello wayfarer",
-  "created_at_unix_ms": 1735689600000,
-  "author_wayfarer_id": "64-char lowercase hex"
+  "created_at_unix_ms": 1735689600000
 }
 ```
 
-Required fields and validation:
+Required fields:
 
 - `type`: MUST equal `wayfarer.chat.v1`.
 - `text`: UTF-8 string, MUST be non-empty.
-- `created_at_unix_ms`: integer timestamp (milliseconds).
-- `author_wayfarer_id`: exactly 64 lowercase hex characters.
-- `author_wayfarer_id` MUST match the canonical sender derived by protocol envelope attribution/signature rules in `docs/protocol/gossip.md` (§5, rules 6-8).
+- `created_at_unix_ms`: integer milliseconds timestamp.
 
-Optional fields:
+Unknown keys:
 
-- No additional standardized optional keys in MVP0.
-- Unknown keys are allowed and MUST be ignored.
+- Unknown keys MUST be ignored.
 
-Display/storage behavior:
+Identity authority:
 
-- Valid payload outcome: `accept/display`.
-- Clients SHOULD persist raw body bytes and MAY persist normalized typed projections.
+- Payload MUST NOT override envelope sender identity.
+- If `author_wayfarer_id` appears, it is NON-AUTHORITATIVE and MUST NOT drive attribution or classification.
 
-Malformed handling:
+Outcome:
 
-- Missing required fields, wrong types, or failed validation => `reject`.
+- Valid payload: `accept/display`.
+- Malformed payload (missing/invalid required fields): `reject`.
 
-Compatibility expectations:
-
-- Forward-compatible clients ignore unknown keys.
-- `wayfarer.chat.v2` (unsupported known version) is `unsupported-safe-skip`, not malformed chat.
-- Unknown future types are `unsupported-safe-skip`, not malformed chat.
-
-## 4.2 `wayfarer.media_manifest.v1`
+### 6.2 `wayfarer.media_manifest.v1`
 
 Purpose: app-layer metadata describing media/attachment assets.
 
-Important: this payload is not protocol chunking `ManifestV1`. Any transport reference here is opaque app data.
+This payload is not protocol chunking `ManifestV1`; `transfer_ref` is opaque app data.
 
 Canonical shape:
 
@@ -141,133 +123,105 @@ Canonical shape:
     }
   ],
   "caption": "optional string",
-  "created_at_unix_ms": 1735689601000,
-  "author_wayfarer_id": "64-char lowercase hex"
+  "created_at_unix_ms": 1735689601000
 }
 ```
 
-Required fields and validation:
+Required fields:
 
 - `type`: MUST equal `wayfarer.media_manifest.v1`.
-- `transfer_ref`: non-empty string (opaque; no chunking semantics defined here).
+- `transfer_ref`: non-empty string.
 - `media_kind`: one of `image`, `video`, `audio`, `file`.
 - `assets`: non-empty array of maps.
-- For each `assets[]` item:
-  - `asset_ref`: non-empty string.
-  - `mime_type`: non-empty string.
-  - `byte_length`: integer, MUST be `>= 0`.
-- `created_at_unix_ms`: integer timestamp (milliseconds).
-- `author_wayfarer_id`: exactly 64 lowercase hex characters and MUST match the canonical sender derived by protocol envelope attribution/signature rules in `docs/protocol/gossip.md` (§5, rules 6-8).
+- `assets[].asset_ref`: non-empty string.
+- `assets[].mime_type`: non-empty string.
+- `assets[].byte_length`: integer, MUST be `>= 0`.
+- `created_at_unix_ms`: integer milliseconds timestamp.
 
 Optional fields:
 
-- `caption`: optional UTF-8 string.
-- `assets[].name`: optional UTF-8 string.
-- Unknown keys are allowed and MUST be ignored.
+- `caption`: UTF-8 string.
+- `assets[].name`: UTF-8 string.
 
-Display/storage behavior:
+Unknown keys:
 
-- Valid payload default outcome: `accept/store-no-display`.
-- Products with explicit media UI support MAY render after successful decode.
+- Unknown keys MUST be ignored.
 
-Malformed handling:
+Identity authority:
 
-- Missing required fields, wrong types, or failed validation => `reject`.
+- Payload MUST NOT override envelope sender identity.
+- If `author_wayfarer_id` appears, it is NON-AUTHORITATIVE and MUST NOT drive attribution or classification.
 
-Compatibility expectations:
+Outcome:
 
-- Forward-compatible clients ignore unknown keys.
-- `wayfarer.media_manifest.v2` (unsupported known version) is `unsupported-safe-skip`.
-- Unknown future types are `unsupported-safe-skip`.
+- Valid payload: `accept/store-no-display` (default MVP0 behavior).
+- Malformed payload (missing/invalid required fields): `reject`.
 
-## 5. Reserved payload types
+## 7. Reserved payload semantics
 
-Reserved types are intentionally non-renderable in MVP0. They are not malformed when they satisfy base body requirements (top-level map with text keys and required `type`).
+Reserved payloads are intentionally non-renderable in MVP0.
 
-For each reserved type below, minimum shape is:
+- Reserved minimum shape: `{ "type": "<reserved-type>" }`
+- Additional keys MAY appear and MUST NOT cause fallback decode into chat/media.
+- Handling for all reserved types: `accept/store-no-display`.
 
-```json
-{
-  "type": "<reserved-type>"
-}
-```
+Reserved meanings:
 
-Any additional top-level keys are OPTIONAL, including `data`.
+- `wayfarer.profile.v1`: profile metadata evolution.
+- `wayfarer.reaction.v1`: reaction/acknowledgement semantics.
+- `wayfarer.message_update.v1`: edit/delete/update references.
+- `wayfarer.status_event.v1`: durable interaction events (for example read/viewed).
+- `wayfarer.notice.v1`: system/app informational notices.
 
-Recommended extension-container example (optional):
+Presence and typing signals remain out of scope for MVP0 and are not covered by `wayfarer.status_event.v1`.
 
-```json
-{
-  "type": "<reserved-type>",
-  "data": {}
-}
-```
+## 8. Malformed vs unsupported distinction (strict)
 
-Safe handling for all reserved types:
+- **Malformed** applies only after routing to a supported decoder (`wayfarer.chat.v1` or `wayfarer.media_manifest.v1`) when that schema validation fails => `reject`.
+- **Unsupported** applies when `type` is unsupported known version or unknown future extension => `unsupported-safe-skip`.
+- Unsupported payloads MUST NOT be reinterpreted as malformed supported payloads.
 
-- Outcome: `accept/store-no-display`.
-- MUST NOT be rendered as chat/media.
-- Unknown keys ignored; raw body SHOULD be preserved if stored.
+Invalid examples (MUST be handled exactly):
 
-### 5.1 `wayfarer.profile.v1`
+1. `{ "type": "future.poll.v1", "text": "..." }` MUST NOT run chat decoder; outcome `unsupported-safe-skip`.
+2. `{ "type": "wayfarer.chat.v1", "text": "", "created_at_unix_ms": "173..." }` is malformed supported chat; outcome `reject`.
+3. Non-CBOR bytes, CBOR non-map, or CBOR map with non-text keys => `reject`.
 
-Reserved for profile metadata evolution.
-
-### 5.2 `wayfarer.reaction.v1`
-
-Reserved for reaction/acknowledgement semantics.
-
-### 5.3 `wayfarer.message_update.v1`
-
-Reserved for edit/delete/update references to prior messages.
-
-### 5.4 `wayfarer.status_event.v1`
-
-Reserved for presence/status signaling.
-
-### 5.5 `wayfarer.notice.v1`
-
-Reserved for system/app informational notices.
-
-## 6. Inbound handling contract
-
-Outcome vocabulary:
+## 9. Outcome vocabulary
 
 - `accept/display`
 - `accept/store-no-display`
 - `unsupported-safe-skip`
 - `reject`
 
-Required client behavior:
+## 10. Non-goals
 
-| Inbound case | Required behavior | Outcome |
-| --- | --- | --- |
-| Supported `wayfarer.chat.v1` and valid | Decode + validate + render-eligible + persist | `accept/display` |
-| Supported `wayfarer.media_manifest.v1` and valid | Decode + validate + persist; default non-rendering | `accept/store-no-display` |
-| Reserved type (`wayfarer.profile.v1`, `wayfarer.reaction.v1`, `wayfarer.message_update.v1`, `wayfarer.status_event.v1`, `wayfarer.notice.v1`) | Do not render; optional durable persistence | `accept/store-no-display` |
-| Unsupported known payload type (for example `wayfarer.chat.v2`) | Skip type-specific decoder; keep protocol acceptance separate | `unsupported-safe-skip` |
-| Unknown future payload type (for example `future.poll.v1`) | Skip safely; do not fallback-decode as chat/media | `unsupported-safe-skip` |
-| Malformed payload (type-specific validation failure for supported type) | Fail closed at payload layer | `reject` |
-| Body bytes fail app decode requirements (for example invalid CBOR, decoded non-map, or non-text map keys) | Do not run chat/media decoders | `reject` |
+MVP0 explicitly does **not** include:
 
-## 7. Conformance expectations
+- JSON payload support
+- Fallback decoding
+- Dual-format compatibility paths
+- Implicit schema inference
 
-Implementations are conformant when they satisfy all of the following:
+## 11. Conformance requirements
 
-1. App classification uses decoded `type`, not `manifest_id`.
-2. All payloads require top-level `type`.
-3. Unknown keys are ignored by decoders.
-4. Unsupported known and unknown future types are `unsupported-safe-skip`.
-5. Supported malformed types are `reject`.
-6. Fixture expectations in `Fixtures/App/wayfarer-payload-taxonomy/` are matched exactly.
+Implementations are conformant only if all requirements below hold:
 
-## 8. Routing and relay guidance
+1. Classification follows Section 4 exactly.
+2. `manifest_id` and all non-body metadata are never used for type inference.
+3. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
+4. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
+5. Malformed supported payloads resolve to `reject`.
+6. Decode failures (including invalid CBOR/non-map/non-text-key map) resolve to `reject`.
+7. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
+
+## 12. Routing and relay guidance
 
 1. Gossip routing/forwarding is payload-agnostic.
 2. Payload taxonomy MUST NOT affect envelope hash/signature checks or other protocol invariants.
 3. Forwarding nodes preserve envelope bytes exactly, regardless of payload type support.
 
-## 9. Fixture linkage
+## 13. Fixture linkage
 
 Conformance fixtures live at:
 

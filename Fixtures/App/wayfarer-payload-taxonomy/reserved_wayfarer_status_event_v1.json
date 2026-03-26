@@ -1,20 +1,18 @@
 {
   "id": "reserved_wayfarer_status_event_v1",
   "description": "Reserved wayfarer.status_event.v1 payload placeholder",
-  "body_source": {
-    "format": "decoded_cbor_map",
-    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  "body_cbor_hex": "a26464617461a2656576656e746472656164717461726765745f6d6573736167655f69646b706c616365686f6c6465726474797065781877617966617265722e7374617475735f6576656e742e7631",
+  "expected_decoded_map": {
+    "type": "wayfarer.status_event.v1",
+    "data": {
+      "event": "read",
+      "target_message_id": "placeholder"
+    }
   },
   "envelope_context": {
     "transport_valid": true,
     "manifest_id": "8888888888888888888888888888888888888888888888888888888888888888",
     "canonical_author_wayfarer_id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-  },
-  "decoded_body_map": {
-    "type": "wayfarer.status_event.v1",
-    "data": {
-      "status": "placeholder"
-    }
   },
   "expected_outcome": "accept/store-no-display"
 }

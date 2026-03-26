@@ -11,18 +11,16 @@ Each fixture file is JSON with these top-level fields:
 
 - `id`: stable fixture identifier
 - `description`: human-readable scenario summary
-- `body_source`: how `Envelope.body` bytes are represented in the fixture
-  - `format=decoded_cbor_map`: fixture provides `decoded_body_map` (explicit decoded top-level CBOR map with text keys)
-  - `format=raw_bytes_hex`: fixture provides raw bytes for malformed body scenarios where app decode requirements fail (for example invalid CBOR, decoded non-map, or non-text keys)
-- `decoded_body_map`: decoded app-layer map used for classification/validation (present when `format=decoded_cbor_map`)
-- `envelope_context`: envelope metadata relevant to app-layer checks (for example canonical author identity)
+- `body_cbor_hex`: authoritative `Envelope.body` bytes (deterministic CBOR hex; authoritative fixture input)
+- `expected_decoded_map`: expected decoded top-level map representation (present for decode-success fixtures only)
+- `envelope_context`: envelope metadata relevant to app-layer checks
 - `expected_outcome`: one of:
   - `accept/display`
   - `accept/store-no-display`
   - `unsupported-safe-skip`
   - `reject`
 
-Classification MUST read `decoded_body_map.type` (or reject if no decodable map/type). Fixtures intentionally do not provide any `manifest_family` shortcut.
+For decode-failure fixtures, `body_cbor_hex` is still authoritative input and `expected_decoded_map` is omitted.
 
 `manifest.json` indexes all fixtures and repeats expected outcomes for machine-readable harnesses.
 
@@ -44,6 +42,20 @@ Classification MUST read `decoded_body_map.type` (or reject if no decodable map/
 
 Unknown or unsupported payload types MUST NOT be interpreted as `wayfarer.chat.v1`.
 
+## Conformance runner contract (MUST)
+
+Runners MUST execute fixtures in this order:
+
+1. Start from fixture `body_cbor_hex` bytes (authoritative input).
+2. Attempt CBOR decode.
+3. If decode succeeds, verify decoded top-level map exactly matches `expected_decoded_map`.
+4. Classify by decoded `type` only.
+5. Verify final handling outcome equals `expected_outcome`.
+
+No runner may start from `expected_decoded_map` as input.
+
+No runner may use `manifest_id` or any envelope metadata to infer payload type.
+
 ## Fixture mirroring status
 
-These fixtures are currently authoritative in `Fixtures/App/wayfarer-payload-taxonomy/` only. They are not mirrored into `AethosCore/Tests/.../Resources/Fixtures/App/...` yet because no app-layer fixture harness is wired there today, and this bead remains doc/fixture focused.
+These fixtures are authoritative in `Fixtures/App/wayfarer-payload-taxonomy/`.

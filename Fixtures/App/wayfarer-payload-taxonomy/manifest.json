@@ -1,76 +1,92 @@
 {
   "contract": "docs/app/WAYFARER_PAYLOAD_CONTRACT.md",
   "matrix": "docs/app/WAYFARER_COMPATIBILITY_MATRIX.md",
-  "version": 2,
+  "version": 3,
+  "fixture_schema": {
+    "authoritative_input_field": "body_cbor_hex",
+    "decoded_expectation_field": "expected_decoded_map",
+    "decode_failure_decoded_expectation": "must_be_omitted",
+    "runner_must_begin_from_body_cbor_hex": true
+  },
   "fixtures": [
     {
       "id": "valid_wayfarer_chat_v1",
       "path": "valid_wayfarer_chat_v1.json",
       "payload_type": "wayfarer.chat.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/display"
     },
     {
       "id": "valid_wayfarer_media_manifest_v1",
       "path": "valid_wayfarer_media_manifest_v1.json",
       "payload_type": "wayfarer.media_manifest.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     },
     {
       "id": "malformed_wayfarer_chat_v1",
       "path": "malformed_wayfarer_chat_v1.json",
       "payload_type": "wayfarer.chat.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "reject"
     },
     {
       "id": "unknown_future_payload_type_v1",
       "path": "unknown_future_payload_type_v1.json",
       "payload_type": "future.poll.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "unsupported-safe-skip"
     },
     {
       "id": "binary_non_utf8_body",
       "path": "binary_non_utf8_body.json",
       "payload_type": null,
-      "body_source_format": "raw_bytes_hex",
+      "body_encoding": "invalid_cbor_hex",
+      "has_expected_decoded_map": false,
       "expected_outcome": "reject"
     },
     {
       "id": "reserved_wayfarer_profile_v1",
       "path": "reserved_wayfarer_profile_v1.json",
       "payload_type": "wayfarer.profile.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     },
     {
       "id": "reserved_wayfarer_reaction_v1",
       "path": "reserved_wayfarer_reaction_v1.json",
       "payload_type": "wayfarer.reaction.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     },
     {
       "id": "reserved_wayfarer_message_update_v1",
       "path": "reserved_wayfarer_message_update_v1.json",
       "payload_type": "wayfarer.message_update.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     },
     {
       "id": "reserved_wayfarer_status_event_v1",
       "path": "reserved_wayfarer_status_event_v1.json",
       "payload_type": "wayfarer.status_event.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     },
     {
       "id": "reserved_wayfarer_notice_v1",
       "path": "reserved_wayfarer_notice_v1.json",
       "payload_type": "wayfarer.notice.v1",
-      "body_source_format": "decoded_cbor_map",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
       "expected_outcome": "accept/store-no-display"
     }
   ]
