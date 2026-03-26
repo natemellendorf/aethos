@@ -12,7 +12,7 @@ Each fixture file is JSON with these top-level fields:
 - `id`: stable fixture identifier
 - `description`: human-readable scenario summary
 - `body_cbor_hex`: authoritative `Envelope.body` bytes (deterministic CBOR for decode-success fixtures; may be invalid bytes for decode-failure fixtures)
-- `expected_decoded_map`: expected decoded top-level map representation (present for decode-success fixtures only)
+- `expected_decoded_map`: REQUIRED SUBSET assertions against the decoded top-level map (present for decode-success fixtures only)
 - `envelope_context`: envelope metadata relevant to app-layer checks
 - `expected_outcome`: one of:
   - `accept/display`
@@ -30,7 +30,7 @@ For decode-failure fixtures, `body_cbor_hex` remains authoritative input and `ex
 2. Valid `wayfarer.media_manifest.v1`
 3. Malformed `wayfarer.chat.v1`
 4. Unknown future payload type
-5. Body bytes failing app decode requirements (invalid CBOR / decoded non-map / non-text keys)
+5. Body bytes failing app decode requirements (invalid CBOR / decoded non-map / non-text top-level map keys)
 6. Reserved type placeholders:
    - `wayfarer.profile.v1`
    - `wayfarer.reaction.v1`
@@ -48,7 +48,11 @@ Runners MUST execute fixtures in this order:
 
 1. Start from fixture `body_cbor_hex` bytes (authoritative input).
 2. Attempt CBOR decode.
-3. If decode succeeds, verify decoded top-level map exactly matches `expected_decoded_map`.
+3. If decode succeeds and `expected_decoded_map` is present, verify it as a REQUIRED SUBSET of the decoded top-level map.
+   - Subset matching is deep-recursive for nested maps.
+   - Arrays are exact assertions when present and MUST match exactly (length, order, values).
+   - Scalars MUST match exactly.
+   - Additional decoded keys are allowed and MUST NOT fail conformance.
 4. Classify by decoded `type` only.
 5. Verify final handling outcome equals `expected_outcome`.
 
