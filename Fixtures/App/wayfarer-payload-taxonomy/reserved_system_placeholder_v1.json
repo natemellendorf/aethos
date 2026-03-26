@@ -1,0 +1,17 @@
+{
+  "id": "reserved_system_placeholder_v1",
+  "description": "Reserved system namespace payload placeholder",
+  "manifest_family": "reserved.system.audit.v1",
+  "envelope": {
+    "transport_valid": true,
+    "manifest_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "canonical_author_wayfarer_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "payload": {
+    "type": "reserved.system.audit.v1",
+    "data": {
+      "event": "placeholder"
+    }
+  },
+  "expected_outcome": "accept/store-no-display"
+}

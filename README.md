@@ -89,8 +89,16 @@ Key active protocol references:
 - `docs/spec/CLIENT_RELAY_PROTOCOL_V1.md`
 - `docs/spec/FEDERATION_PROTOCOL_V1.md`
 - `docs/spec/RECEIPTS.md`
+- `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
+- `docs/app/WAYFARER_COMPATIBILITY_MATRIX.md`
 - `docs/adr/ADR-0002-runtime-architecture-gossip-v1.md`
 - `Fixtures/Protocol/gossip-v1/`
+
+Application payload taxonomy and app-level interoperability fixtures:
+
+- `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
+- `docs/app/WAYFARER_COMPATIBILITY_MATRIX.md`
+- `Fixtures/App/wayfarer-payload-taxonomy/`
 
 ## License
 

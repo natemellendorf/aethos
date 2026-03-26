@@ -1,0 +1,17 @@
+{
+  "id": "valid_chat_v1",
+  "description": "Well-formed chat payload is accepted and renderable",
+  "manifest_family": "chat.v1",
+  "envelope": {
+    "transport_valid": true,
+    "manifest_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "canonical_author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "payload": {
+    "type": "chat.v1",
+    "text": "hello wayfarer",
+    "created_at_unix_ms": 1735689600000,
+    "author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "expected_outcome": "accept/display"
+}

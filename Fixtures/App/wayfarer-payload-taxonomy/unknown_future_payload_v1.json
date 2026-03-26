@@ -1,0 +1,23 @@
+{
+  "id": "unknown_future_payload_v1",
+  "description": "Unknown future family must be safely skipped and never decoded as chat",
+  "manifest_family": "future.poll.v1",
+  "envelope": {
+    "transport_valid": true,
+    "manifest_id": "4444444444444444444444444444444444444444444444444444444444444444",
+    "canonical_author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "payload": {
+    "type": "future.poll.v1",
+    "text": "this field name intentionally resembles chat",
+    "question": "choose one",
+    "options": [
+      "a",
+      "b"
+    ],
+    "created_at_unix_ms": 1735689603000,
+    "author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "expected_outcome": "unsupported-safe-skip",
+  "must_not_decode_as": "chat.v1"
+}

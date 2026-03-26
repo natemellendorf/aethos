@@ -1,0 +1,43 @@
+{
+  "contract": "docs/app/WAYFARER_PAYLOAD_CONTRACT.md",
+  "matrix": "docs/app/WAYFARER_COMPATIBILITY_MATRIX.md",
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "valid_chat_v1",
+      "path": "valid_chat_v1.json",
+      "manifest_family": "chat.v1",
+      "expected_outcome": "accept/display"
+    },
+    {
+      "id": "valid_media_manifest_v1",
+      "path": "valid_media_manifest_v1.json",
+      "manifest_family": "media_manifest.v1",
+      "expected_outcome": "accept/store-no-display"
+    },
+    {
+      "id": "malformed_chat_v1",
+      "path": "malformed_chat_v1.json",
+      "manifest_family": "chat.v1",
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "unknown_future_payload_v1",
+      "path": "unknown_future_payload_v1.json",
+      "manifest_family": "future.poll.v1",
+      "expected_outcome": "unsupported-safe-skip"
+    },
+    {
+      "id": "reserved_system_placeholder_v1",
+      "path": "reserved_system_placeholder_v1.json",
+      "manifest_family": "reserved.system.audit.v1",
+      "expected_outcome": "accept/store-no-display"
+    },
+    {
+      "id": "reserved_control_placeholder_v1",
+      "path": "reserved_control_placeholder_v1.json",
+      "manifest_family": "reserved.control.sync.v1",
+      "expected_outcome": "accept/store-no-display"
+    }
+  ]
+}

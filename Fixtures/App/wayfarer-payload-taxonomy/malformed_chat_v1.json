@@ -1,0 +1,18 @@
+{
+  "id": "malformed_chat_v1",
+  "description": "Declared chat payload is malformed and must be rejected",
+  "manifest_family": "chat.v1",
+  "envelope": {
+    "transport_valid": true,
+    "manifest_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "canonical_author_wayfarer_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "payload": {
+    "type": "chat.v1",
+    "text": "",
+    "created_at_unix_ms": "1735689602000",
+    "author_wayfarer_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "expected_outcome": "reject",
+  "expected_error": "invalid_chat_schema"
+}
