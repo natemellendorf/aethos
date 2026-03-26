@@ -161,6 +161,9 @@ Outcome:
 
 Reserved payloads are intentionally non-renderable in MVP0.
 
+- Reserved handling applies only after global base requirements are satisfied: CBOR decode succeeds, decoded top-level value is a map, map keys are text strings, and top-level `type` is a text string.
+- A payload MUST resolve to `accept/store-no-display` under reserved handling only when `type` exactly matches one of the reserved types in Section 5.
+- If base decode/classification requirements fail (including decode failure, missing `type`, or non-text `type`), payload is malformed and MUST be rejected.
 - Reserved minimum shape: `{ "type": "<reserved-type>" }`
 - Additional keys MAY appear and MUST NOT cause fallback decode into chat/media.
 - Handling for all reserved types: `accept/store-no-display`.
@@ -210,14 +213,18 @@ Implementations are conformant only if all requirements below hold:
 1. Classification follows Section 4 exactly.
 2. `manifest_id` and all non-body metadata are never used for type inference.
 3. Runners MUST begin from authoritative `body_cbor_hex` bytes.
-4. When `expected_decoded_map` is present, runners MUST decode `body_cbor_hex` bytes and compare decoded output to `expected_decoded_map`.
-5. Runners MUST NOT use `expected_decoded_map` as input.
-6. Decode-failure fixtures omit `expected_decoded_map`; decode failure MUST yield `reject` without invoking typed decoders.
-7. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
-8. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
-9. Malformed supported payloads resolve to `reject`.
-10. Decode failures (including invalid CBOR/non-map/non-text-key map) resolve to `reject`.
-11. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
+4. If `expected_decoded_map` is present, runners MUST decode authoritative `body_cbor_hex` bytes and compare assertions against the fully decoded raw map output.
+5. `expected_decoded_map` defines a REQUIRED subset assertion, not a complete-map assertion.
+6. For every key present in `expected_decoded_map`, the fully decoded raw map MUST contain the same key with exactly equal value.
+7. The fully decoded raw map MAY contain additional keys, including unknown keys, and those additional keys MUST NOT cause conformance failure.
+8. This subset assertion model is compatible with base-stage unknown-key tolerance in Sections 3 and 6.
+9. Runners MUST NOT use `expected_decoded_map` as input.
+10. Decode-failure fixtures omit `expected_decoded_map`; decode failure MUST yield `reject` without invoking typed decoders.
+11. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
+12. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
+13. Malformed supported payloads resolve to `reject`.
+14. Decode failures (including invalid CBOR/non-map/non-text-key map) resolve to `reject`.
+15. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
 
 ## 12. Routing and relay guidance
 

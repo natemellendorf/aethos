@@ -73,6 +73,8 @@ An implementation is MVP0-compatible when all fixture expected outcomes are matc
 Additional hard gates:
 
 1. Classification MUST begin from fixture `body_cbor_hex` bytes.
-2. Decoded map MUST match fixture `expected_decoded_map` when present.
-3. Chat decoder MUST run only for `type=wayfarer.chat.v1`.
-4. Decode-failure fixtures with invalid bytes MUST reject without typed decoder execution.
+2. When `expected_decoded_map` is present, it is a REQUIRED subset assertion over the fully decoded raw map (not a complete-map assertion).
+3. For every key in `expected_decoded_map`, decoded output MUST contain exactly equal value for that key.
+4. Additional decoded keys, including unknown keys, are tolerated and MUST NOT fail conformance.
+5. Chat decoder MUST run only for `type=wayfarer.chat.v1`.
+6. Decode-failure fixtures with invalid bytes MUST reject without typed decoder execution.
