@@ -1,0 +1,39 @@
+{
+  "id": "valid_wayfarer_media_manifest_v1",
+  "description": "Well-formed wayfarer.media_manifest.v1 payload is accepted and stored without default rendering",
+  "body_source": {
+    "format": "decoded_cbor_map",
+    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "canonical_author_wayfarer_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "decoded_body_map": {
+    "type": "wayfarer.media_manifest.v1",
+    "transfer_ref": "xfer:opaque:asset-bundle-01",
+    "media_kind": "image",
+    "assets": [
+      {
+        "asset_ref": "asset:photo-001",
+        "mime_type": "image/jpeg",
+        "byte_length": 4096,
+        "name": "photo.jpg"
+      },
+      {
+        "asset_ref": "asset:thumb-001",
+        "mime_type": "image/jpeg",
+        "byte_length": 512,
+        "name": "thumb.jpg"
+      }
+    ],
+    "caption": "photo",
+    "created_at_unix_ms": 1735689601000,
+    "author_wayfarer_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "future_extension": {
+      "hint": "unknown map keys ignored"
+    }
+  },
+  "expected_outcome": "accept/store-no-display"
+}

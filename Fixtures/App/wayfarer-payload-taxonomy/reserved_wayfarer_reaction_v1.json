@@ -1,0 +1,20 @@
+{
+  "id": "reserved_wayfarer_reaction_v1",
+  "description": "Reserved wayfarer.reaction.v1 payload placeholder",
+  "body_source": {
+    "format": "decoded_cbor_map",
+    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "6666666666666666666666666666666666666666666666666666666666666666",
+    "canonical_author_wayfarer_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "decoded_body_map": {
+    "type": "wayfarer.reaction.v1",
+    "data": {
+      "cursor": "placeholder"
+    }
+  },
+  "expected_outcome": "accept/store-no-display"
+}

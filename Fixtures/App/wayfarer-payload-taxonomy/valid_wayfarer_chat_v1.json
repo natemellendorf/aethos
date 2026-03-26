@@ -1,0 +1,21 @@
+{
+  "id": "valid_wayfarer_chat_v1",
+  "description": "Well-formed wayfarer.chat.v1 payload is accepted and renderable",
+  "body_source": {
+    "format": "decoded_cbor_map",
+    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "canonical_author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "decoded_body_map": {
+    "type": "wayfarer.chat.v1",
+    "text": "hello wayfarer",
+    "created_at_unix_ms": 1735689600000,
+    "author_wayfarer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "future_extension": "unknown keys are ignored"
+  },
+  "expected_outcome": "accept/display"
+}

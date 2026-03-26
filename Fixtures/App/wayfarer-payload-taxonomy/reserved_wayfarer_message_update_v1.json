@@ -1,0 +1,20 @@
+{
+  "id": "reserved_wayfarer_message_update_v1",
+  "description": "Reserved wayfarer.message_update.v1 payload placeholder",
+  "body_source": {
+    "format": "decoded_cbor_map",
+    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "7777777777777777777777777777777777777777777777777777777777777777",
+    "canonical_author_wayfarer_id": "abababababababababababababababababababababababababababababababab"
+  },
+  "decoded_body_map": {
+    "type": "wayfarer.message_update.v1",
+    "data": {
+      "target_message_id": "placeholder"
+    }
+  },
+  "expected_outcome": "accept/store-no-display"
+}

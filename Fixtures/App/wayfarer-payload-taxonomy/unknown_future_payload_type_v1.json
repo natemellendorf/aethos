@@ -1,13 +1,16 @@
 {
-  "id": "unknown_future_payload_v1",
-  "description": "Unknown future family must be safely skipped and never decoded as chat",
-  "manifest_family": "future.poll.v1",
-  "envelope": {
+  "id": "unknown_future_payload_type_v1",
+  "description": "Unknown future payload type must be safely skipped and never decoded as wayfarer.chat.v1",
+  "body_source": {
+    "format": "decoded_cbor_map",
+    "note": "Represents decoded deterministic-CBOR Envelope.body map with text keys"
+  },
+  "envelope_context": {
     "transport_valid": true,
     "manifest_id": "4444444444444444444444444444444444444444444444444444444444444444",
     "canonical_author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   },
-  "payload": {
+  "decoded_body_map": {
     "type": "future.poll.v1",
     "text": "this field name intentionally resembles chat",
     "question": "choose one",
@@ -19,5 +22,5 @@
     "author_wayfarer_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   },
   "expected_outcome": "unsupported-safe-skip",
-  "must_not_decode_as": "chat.v1"
+  "must_not_decode_as": "wayfarer.chat.v1"
 }
