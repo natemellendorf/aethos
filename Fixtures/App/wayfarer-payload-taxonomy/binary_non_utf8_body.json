@@ -1,6 +1,6 @@
 {
   "id": "binary_non_utf8_body",
-  "description": "Envelope body contains non-UTF8 binary bytes and must be rejected before typed decoders",
+  "description": "Envelope body bytes fail app decode requirements (invalid CBOR / decoded non-map / non-text keys) and must be rejected before typed decoders",
   "body_source": {
     "format": "raw_bytes_hex",
     "body_bytes_hex": "ff80c30000010203"

@@ -13,7 +13,7 @@ Each fixture file is JSON with these top-level fields:
 - `description`: human-readable scenario summary
 - `body_source`: how `Envelope.body` bytes are represented in the fixture
   - `format=decoded_cbor_map`: fixture provides `decoded_body_map` (explicit decoded top-level CBOR map with text keys)
-  - `format=raw_bytes_hex`: fixture provides raw non-decodable bytes for malformed body scenarios
+  - `format=raw_bytes_hex`: fixture provides raw bytes for malformed body scenarios where app decode requirements fail (for example invalid CBOR, decoded non-map, or non-text keys)
 - `decoded_body_map`: decoded app-layer map used for classification/validation (present when `format=decoded_cbor_map`)
 - `envelope_context`: envelope metadata relevant to app-layer checks (for example canonical author identity)
 - `expected_outcome`: one of:
@@ -32,7 +32,7 @@ Classification MUST read `decoded_body_map.type` (or reject if no decodable map/
 2. Valid `wayfarer.media_manifest.v1`
 3. Malformed `wayfarer.chat.v1`
 4. Unknown future payload type
-5. Binary/non-UTF8 body bytes
+5. Body bytes failing app decode requirements (invalid CBOR / decoded non-map / non-text keys)
 6. Reserved type placeholders:
    - `wayfarer.profile.v1`
    - `wayfarer.reaction.v1`

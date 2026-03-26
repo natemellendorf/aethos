@@ -38,7 +38,7 @@ Contract reference: `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
 | Envelope accepted, `type=wayfarer.media_manifest.v1`, schema invalid | Reject known-type malformed payload | `reject` |
 | `type` is not `wayfarer.chat.v1` | Chat decoder MUST NOT run | Not `accept/display` via chat |
 | `type` is reserved (`wayfarer.*.v1` reserved set) | Do not render; optional durable store | `accept/store-no-display` |
-| Body is binary/non-UTF8/non-map | Do not run type-specific decoders | `reject` |
+| Body bytes fail app decode requirements (for example invalid CBOR, decoded non-map, or non-text keys) | Do not run type-specific decoders | `reject` |
 | Type mismatch (payload shape resembles chat but `type` differs) | Route by `type`; no heuristic fallback | `unsupported-safe-skip` |
 
 ## 4. Fixture coverage mapping
@@ -49,7 +49,7 @@ Contract reference: `docs/app/WAYFARER_PAYLOAD_CONTRACT.md`
 | `valid_wayfarer_media_manifest_v1.json` | `wayfarer.media_manifest.v1` | `accept/store-no-display` | Happy-path media metadata payload. |
 | `malformed_wayfarer_chat_v1.json` | `wayfarer.chat.v1` | `reject` | Known-type malformed payload rejection. |
 | `unknown_future_payload_type_v1.json` | unknown future `type` | `unsupported-safe-skip` | Forward compatibility without chat misdecode. |
-| `binary_non_utf8_body.json` | invalid body bytes | `reject` | Reject non-UTF8/non-map body before typed decoders. |
+| `binary_non_utf8_body.json` | body bytes failing app decode requirements | `reject` | Reject invalid CBOR/decoded non-map/non-text-key bodies before typed decoders. |
 | `reserved_wayfarer_profile_v1.json` | `wayfarer.profile.v1` | `accept/store-no-display` | Reserved profile placeholder. |
 | `reserved_wayfarer_reaction_v1.json` | `wayfarer.reaction.v1` | `accept/store-no-display` | Reserved reaction placeholder. |
 | `reserved_wayfarer_message_update_v1.json` | `wayfarer.message_update.v1` | `accept/store-no-display` | Reserved message update placeholder. |

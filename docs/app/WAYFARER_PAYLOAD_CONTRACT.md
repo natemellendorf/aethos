@@ -34,7 +34,7 @@ After protocol-layer acceptance, Wayfarer clients MUST interpret `Envelope.body`
 6. Unknown keys MUST be ignored by type-specific decoders.
 7. Clients SHOULD preserve raw body bytes when persisting accepted/unsupported payloads.
 
-If body bytes are not decodable into the required map shape, outcome is `reject`.
+If body bytes are not decodable into the required map shape (for example invalid CBOR, decoded non-map value, or non-text map keys), outcome is `reject`.
 
 ## 3. Type system and classification
 
@@ -97,7 +97,7 @@ Required fields and validation:
 - `text`: UTF-8 string, MUST be non-empty.
 - `created_at_unix_ms`: integer timestamp (milliseconds).
 - `author_wayfarer_id`: exactly 64 lowercase hex characters.
-- `author_wayfarer_id` MUST match canonical sender identity derived from envelope/authorship rules.
+- `author_wayfarer_id` MUST match the canonical sender derived by protocol envelope attribution/signature rules in `docs/protocol/gossip.md` (§5, rules 6-8).
 
 Optional fields:
 
@@ -157,7 +157,7 @@ Required fields and validation:
   - `mime_type`: non-empty string.
   - `byte_length`: integer, MUST be `>= 0`.
 - `created_at_unix_ms`: integer timestamp (milliseconds).
-- `author_wayfarer_id`: exactly 64 lowercase hex characters and MUST match canonical sender identity.
+- `author_wayfarer_id`: exactly 64 lowercase hex characters and MUST match the canonical sender derived by protocol envelope attribution/signature rules in `docs/protocol/gossip.md` (§5, rules 6-8).
 
 Optional fields:
 
@@ -182,9 +182,19 @@ Compatibility expectations:
 
 ## 5. Reserved payload types
 
-Reserved types are intentionally non-renderable in MVP0. They are not malformed when they satisfy base body requirements (`type` present, map/text-key shape valid).
+Reserved types are intentionally non-renderable in MVP0. They are not malformed when they satisfy base body requirements (top-level map with text keys and required `type`).
 
 For each reserved type below, minimum shape is:
+
+```json
+{
+  "type": "<reserved-type>"
+}
+```
+
+Any additional top-level keys are OPTIONAL, including `data`.
+
+Recommended extension-container example (optional):
 
 ```json
 {
@@ -238,7 +248,7 @@ Required client behavior:
 | Unsupported known payload type (for example `wayfarer.chat.v2`) | Skip type-specific decoder; keep protocol acceptance separate | `unsupported-safe-skip` |
 | Unknown future payload type (for example `future.poll.v1`) | Skip safely; do not fallback-decode as chat/media | `unsupported-safe-skip` |
 | Malformed payload (type-specific validation failure for supported type) | Fail closed at payload layer | `reject` |
-| Binary / non-UTF8 / non-map body bytes | Do not run chat/media decoders | `reject` |
+| Body bytes fail app decode requirements (for example invalid CBOR, decoded non-map, or non-text map keys) | Do not run chat/media decoders | `reject` |
 
 ## 7. Conformance expectations
 
