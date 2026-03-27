@@ -1637,15 +1637,23 @@ struct CLI {
             throw CLIError.usage("Message not found: \(hex)")
         }
 
+        let bodyType: String?
         let decodedBody: String
         if row.kind == "message.v2" {
-            if let m = try? CanonicalEncoderV1.decodeMessage(canonical: row.canonical),
-               let s = String(data: m.body, encoding: .utf8) {
-                decodedBody = s
+            if let m = try? CanonicalEncoderV1.decodeMessage(canonical: row.canonical) {
+                if let classification = try? WayfarerPayloadCodec.classify(body: m.body) {
+                    bodyType = classification.type
+                    decodedBody = WayfarerPayloadCodec.chatText(body: m.body) ?? ""
+                } else {
+                    bodyType = nil
+                    decodedBody = String(data: m.body, encoding: .utf8) ?? ""
+                }
             } else {
+                bodyType = nil
                 decodedBody = ""
             }
         } else {
+            bodyType = nil
             decodedBody = ""
         }
 
@@ -1658,6 +1666,7 @@ struct CLI {
             "peer_to": row.peerTo ?? NSNull(),
             "created_at": iso8601(row.createdAt),
             "canonical_hex": row.canonical.hexString,
+            "body_type": bodyType ?? NSNull(),
             "body_utf8": decodedBody.isEmpty ? NSNull() : decodedBody,
         ]
 
@@ -1676,6 +1685,7 @@ struct CLI {
             print("peer_to:     \(row.peerTo ?? "")")
             print("created_at:  \(iso8601(row.createdAt))")
             print("canonical:   \(row.canonical.hexString)")
+            print("body_type:   \(bodyType ?? "")")
             if decodedBody.isEmpty {
                 print("body_utf8:   ")
             } else {
