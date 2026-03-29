@@ -1,7 +1,7 @@
 {
   "contract": "docs/app/WAYFARER_PAYLOAD_CONTRACT.md",
   "matrix": "docs/app/WAYFARER_COMPATIBILITY_MATRIX.md",
-  "version": 3,
+  "version": 4,
   "fixture_schema": {
     "authoritative_input_field": "body_cbor_hex",
     "decoded_expectation_field": "expected_decoded_map",
@@ -42,6 +42,14 @@
       "expected_outcome": "unsupported-safe-skip"
     },
     {
+      "id": "unsupported_known_wayfarer_chat_v2",
+      "path": "unsupported_known_wayfarer_chat_v2.json",
+      "payload_type": "wayfarer.chat.v2",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "unsupported-safe-skip"
+    },
+    {
       "id": "binary_non_utf8_body",
       "path": "binary_non_utf8_body.json",
       "payload_type": null,
@@ -50,8 +58,112 @@
       "expected_outcome": "reject"
     },
     {
+      "id": "nondeterministic_but_decodable_cbor",
+      "path": "nondeterministic_but_decodable_cbor.json",
+      "payload_type": null,
+      "body_encoding": "non_deterministic_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "duplicate_top_level_key",
+      "path": "duplicate_top_level_key.json",
+      "payload_type": null,
+      "body_encoding": "duplicate_key_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "duplicate_nested_key",
+      "path": "duplicate_nested_key.json",
+      "payload_type": null,
+      "body_encoding": "duplicate_key_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "missing_top_level_type",
+      "path": "missing_top_level_type.json",
+      "payload_type": null,
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "non_string_top_level_type",
+      "path": "non_string_top_level_type.json",
+      "payload_type": null,
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "top_level_non_map",
+      "path": "top_level_non_map.json",
+      "payload_type": null,
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "malformed_wayfarer_media_manifest_v1",
+      "path": "malformed_wayfarer_media_manifest_v1.json",
+      "payload_type": "wayfarer.media_manifest.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "valid_wayfarer_chat_v1_with_unknown_keys",
+      "path": "valid_wayfarer_chat_v1_with_unknown_keys.json",
+      "payload_type": "wayfarer.chat.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "accept/display"
+    },
+    {
+      "id": "negative_timestamp_wayfarer_chat_v1",
+      "path": "negative_timestamp_wayfarer_chat_v1.json",
+      "payload_type": "wayfarer.chat.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "out_of_range_timestamp_wayfarer_chat_v1",
+      "path": "out_of_range_timestamp_wayfarer_chat_v1.json",
+      "payload_type": "wayfarer.chat.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "negative_byte_length_wayfarer_media_manifest_v1",
+      "path": "negative_byte_length_wayfarer_media_manifest_v1.json",
+      "payload_type": "wayfarer.media_manifest.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "reject"
+    },
+    {
+      "id": "out_of_range_byte_length_wayfarer_media_manifest_v1",
+      "path": "out_of_range_byte_length_wayfarer_media_manifest_v1.json",
+      "payload_type": "wayfarer.media_manifest.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": false,
+      "expected_outcome": "reject"
+    },
+    {
       "id": "reserved_wayfarer_profile_v1",
       "path": "reserved_wayfarer_profile_v1.json",
+      "payload_type": "wayfarer.profile.v1",
+      "body_encoding": "deterministic_cbor_hex",
+      "has_expected_decoded_map": true,
+      "expected_outcome": "accept/store-no-display"
+    },
+    {
+      "id": "reserved_wayfarer_profile_v1_with_additional_keys",
+      "path": "reserved_wayfarer_profile_v1_with_additional_keys.json",
       "payload_type": "wayfarer.profile.v1",
       "body_encoding": "deterministic_cbor_hex",
       "has_expected_decoded_map": true,

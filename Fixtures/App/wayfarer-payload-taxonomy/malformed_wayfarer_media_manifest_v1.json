@@ -1,0 +1,18 @@
+{
+  "id": "malformed_wayfarer_media_manifest_v1",
+  "description": "Type is wayfarer.media_manifest.v1 but required fields are malformed, so payload is rejected",
+  "body_cbor_hex": "a56474797065781a77617966617265722e6d656469615f6d616e69666573742e763166617373657473806a6d656469615f6b696e6465696d6167656c7472616e736665725f726566781c786665723a6f70617175653a6261642d656d7074792d61737365747372637265617465645f61745f756e69785f6d731b000001941f298f88",
+  "expected_decoded_map": {
+    "type": "wayfarer.media_manifest.v1",
+    "transfer_ref": "xfer:opaque:bad-empty-assets",
+    "media_kind": "image",
+    "assets": [],
+    "created_at_unix_ms": 1735689605000
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "8080808080808080808080808080808080808080808080808080808080808080",
+    "canonical_author_wayfarer_id": "0808080808080808080808080808080808080808080808080808080808080808"
+  },
+  "expected_outcome": "reject"
+}

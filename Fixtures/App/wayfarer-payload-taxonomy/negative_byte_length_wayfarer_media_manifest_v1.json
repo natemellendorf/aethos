@@ -1,0 +1,24 @@
+{
+  "id": "negative_byte_length_wayfarer_media_manifest_v1",
+  "description": "Negative assets[].byte_length is malformed and rejected",
+  "body_cbor_hex": "a56474797065781a77617966617265722e6d656469615f6d616e69666573742e76316661737365747381a36961737365745f7265666961737365743a6e6567696d696d655f747970656a696d6167652f6a7065676b627974655f6c656e677468206a6d656469615f6b696e6465696d6167656c7472616e736665725f726566781b786665723a6f70617175653a6e65672d627974652d6c656e67746872637265617465645f61745f756e69785f6d731b000001941f299758",
+  "expected_decoded_map": {
+    "type": "wayfarer.media_manifest.v1",
+    "transfer_ref": "xfer:opaque:neg-byte-length",
+    "media_kind": "image",
+    "assets": [
+      {
+        "asset_ref": "asset:neg",
+        "mime_type": "image/jpeg",
+        "byte_length": -1
+      }
+    ],
+    "created_at_unix_ms": 1735689607000
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "canonical_author_wayfarer_id": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+  },
+  "expected_outcome": "reject"
+}

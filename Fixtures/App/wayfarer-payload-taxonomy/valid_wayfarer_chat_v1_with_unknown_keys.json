@@ -1,0 +1,20 @@
+{
+  "id": "valid_wayfarer_chat_v1_with_unknown_keys",
+  "description": "Well-formed wayfarer.chat.v1 payload with additional unknown top-level and nested keys remains accepted",
+  "body_cbor_hex": "a46474657874706368617420776974682065787472617364747970657077617966617265722e636861742e7631706675747572655f657874656e73696f6ea26c69676e6f7265645f666c6167f56e69676e6f7265645f6e65737465646576616c756572637265617465645f61745f756e69785f6d731b000001941f299370",
+  "expected_decoded_map": {
+    "type": "wayfarer.chat.v1",
+    "text": "chat with extras",
+    "created_at_unix_ms": 1735689606000,
+    "future_extension": {
+      "ignored_flag": true,
+      "ignored_nested": "value"
+    }
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "9090909090909090909090909090909090909090909090909090909090909090",
+    "canonical_author_wayfarer_id": "0909090909090909090909090909090909090909090909090909090909090909"
+  },
+  "expected_outcome": "accept/display"
+}

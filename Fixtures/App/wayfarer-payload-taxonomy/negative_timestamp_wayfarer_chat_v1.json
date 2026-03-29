@@ -1,0 +1,16 @@
+{
+  "id": "negative_timestamp_wayfarer_chat_v1",
+  "description": "Negative created_at_unix_ms is malformed and rejected",
+  "body_cbor_hex": "a364746578746b6e6567617469766520747364747970657077617966617265722e636861742e763172637265617465645f61745f756e69785f6d7320",
+  "expected_decoded_map": {
+    "type": "wayfarer.chat.v1",
+    "text": "negative ts",
+    "created_at_unix_ms": -1
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "canonical_author_wayfarer_id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+  },
+  "expected_outcome": "reject"
+}
