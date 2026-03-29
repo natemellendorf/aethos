@@ -1,0 +1,11 @@
+{
+  "id": "top_level_non_map",
+  "description": "Decoded top-level CBOR value is not a map and must be rejected",
+  "body_cbor_hex": "83010203",
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "6060606060606060606060606060606060606060606060606060606060606060",
+    "canonical_author_wayfarer_id": "0606060606060606060606060606060606060606060606060606060606060606"
+  },
+  "expected_outcome": "reject"
+}

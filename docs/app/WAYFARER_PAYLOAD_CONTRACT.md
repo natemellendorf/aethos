@@ -25,23 +25,31 @@ These decisions MUST remain separate.
 1. Wayfarer app payload bodies MUST be deterministic CBOR (RFC 8949 deterministic encoding).
 2. JSON, plain text, and any non-CBOR encoding are invalid.
 3. There is no legacy or alternate encoding path.
-4. Bodies that fail CBOR decoding MUST be rejected.
-5. Decoded top-level value MUST be a map.
-6. Top-level decoded map keys MUST be CBOR text strings.
-7. Decoded map MUST include top-level `type` as a CBOR text string.
+4. Decoder acceptance MUST enforce deterministic RFC 8949 form, not only successful CBOR parsing; non-deterministic but otherwise decodable bodies MUST be rejected.
+5. Bodies that fail deterministic CBOR decoding MUST be rejected.
+6. Top-level duplicate map keys MUST be rejected.
+7. Duplicate map keys within nested maps (including typed payload maps) MUST be rejected.
+8. Decoded top-level value MUST be a map.
+9. Top-level decoded map keys MUST be CBOR text strings.
+10. Decoded map MUST include top-level `type` as a CBOR text string.
 
 If any requirement above fails, outcome is `reject`.
+
+Validation boundary rule:
+
+- Deterministic CBOR and base classification gates are validated at the app classification boundary before typed decode success can be claimed.
 
 ## 4. Canonical classification algorithm (only allowed path)
 
 Implementations MUST classify payloads using exactly the following steps:
 
 1. Decode CBOR bytes.
-2. Value MUST be a map.
-3. Top-level decoded map keys MUST be text strings.
-4. Extract `type` as required text string.
-5. Route to exact type decoder.
-6. Unsupported known/unknown future types => `unsupported-safe-skip`; malformed supported types => `reject`.
+2. Decoder MUST reject non-deterministic encodings, duplicate map keys (top-level and nested), and other deterministic-form violations.
+3. Value MUST be a map.
+4. Top-level decoded map keys MUST be text strings.
+5. Extract `type` as required text string.
+6. Route to exact type decoder.
+7. Unsupported known/unknown future types => `unsupported-safe-skip`; malformed supported types => `reject`.
 
 No alternative classification path is allowed.
 
@@ -85,11 +93,13 @@ Required fields:
 
 - `type`: MUST equal `wayfarer.chat.v1`.
 - `text`: MUST be a non-empty UTF-8 string.
-- `created_at_unix_ms`: MUST be an integer milliseconds timestamp.
+- `created_at_unix_ms`: MUST be a non-negative integer milliseconds timestamp in range `0...9_223_372_036_854_775_807` (`Int64.max`).
 
 Unknown keys:
 
-- Unknown keys MUST be ignored.
+- Unknown keys at top level or in nested supported structures MUST be ignored.
+- Unknown keys are tolerated only when required schema fields remain present and valid.
+- Unknown keys MUST NOT affect classification or final outcome.
 
 Identity authority:
 
@@ -135,8 +145,8 @@ Required fields:
 - `assets`: MUST be a non-empty array of maps.
 - `assets[].asset_ref`: MUST be a non-empty string.
 - `assets[].mime_type`: MUST be a non-empty string.
-- `assets[].byte_length`: MUST be an integer and MUST be `>= 0`.
-- `created_at_unix_ms`: MUST be an integer milliseconds timestamp.
+- `assets[].byte_length`: MUST be an integer, MUST be `>= 0`, and MUST fit implementation numeric range `0...9_223_372_036_854_775_807` (`Int64.max`).
+- `created_at_unix_ms`: MUST be a non-negative integer milliseconds timestamp in range `0...9_223_372_036_854_775_807` (`Int64.max`).
 
 Optional fields:
 
@@ -145,7 +155,9 @@ Optional fields:
 
 Unknown keys:
 
-- Unknown keys MUST be ignored.
+- Unknown keys at top level or in nested supported structures MUST be ignored.
+- Unknown keys are tolerated only when required schema fields remain present and valid.
+- Unknown keys MUST NOT affect classification or final outcome.
 
 Identity authority:
 
@@ -162,6 +174,7 @@ Outcome:
 Reserved payloads are intentionally non-renderable in MVP0.
 
 - Reserved `accept/store-no-display` handling applies ONLY after all base classification gates succeed: CBOR decode succeeds, decoded top-level value is a map, decoded top-level map keys are text strings, and top-level `type` is a text string.
+- Deterministic-form gates (including duplicate-key rejection at any map depth) are base classification gates and MUST pass before reserved handling can run.
 - If any base classification gate above fails, payload is malformed, reserved handling MUST NOT run, and outcome is `reject`.
 - A payload MUST resolve to `accept/store-no-display` under reserved handling only when `type` exactly matches one of the reserved types in Section 5.
 - Reserved minimum shape: `{ "type": "<reserved-type>" }`
@@ -188,7 +201,7 @@ Invalid examples (MUST be handled exactly):
 
 1. `{ "type": "future.poll.v1", "text": "..." }` MUST NOT run chat decoder; outcome `unsupported-safe-skip`.
 2. `{ "type": "wayfarer.chat.v1", "text": "", "created_at_unix_ms": "173..." }` is malformed supported chat; outcome `reject`.
-3. Non-CBOR bytes, CBOR non-map, or CBOR map with non-text top-level map keys => `reject`.
+3. Non-CBOR bytes, non-deterministic CBOR bytes, CBOR non-map, or CBOR map with non-text top-level map keys => `reject`.
 
 ## 9. Outcome vocabulary
 
@@ -224,7 +237,7 @@ Implementations are conformant only if all requirements below hold:
 12. Chat decoder MUST run only when `type == "wayfarer.chat.v1"`.
 13. Unsupported known and unknown future types resolve to `unsupported-safe-skip`.
 14. Malformed supported payloads resolve to `reject`.
-15. Decode failures (including invalid CBOR/non-map/non-text-key top-level map) resolve to `reject`.
+15. Decode failures (including invalid/non-deterministic CBOR, duplicate map keys at any map depth, non-map top level, or non-text-key top-level map) resolve to `reject`.
 16. Fixture outcomes in `Fixtures/App/wayfarer-payload-taxonomy/` MUST be matched exactly.
 
 ## 12. Routing and relay guidance

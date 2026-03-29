@@ -1,0 +1,12 @@
+{
+  "id": "duplicate_top_level_key",
+  "description": "Duplicate top-level map key MUST reject at classification boundary",
+  "body_cbor_hex": "a264747970657077617966617265722e636861742e763164747970657077617966617265722e636861742e7632",
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "2020202020202020202020202020202020202020202020202020202020202020",
+    "canonical_author_wayfarer_id": "0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  "decode_error_expected": true,
+  "expected_outcome": "reject"
+}

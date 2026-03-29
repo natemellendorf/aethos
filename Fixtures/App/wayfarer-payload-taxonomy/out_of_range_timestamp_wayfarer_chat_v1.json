@@ -1,0 +1,11 @@
+{
+  "id": "out_of_range_timestamp_wayfarer_chat_v1",
+  "description": "created_at_unix_ms above shared runtime Int64 range is malformed and rejected",
+  "body_cbor_hex": "a364746578746f6f7574206f662072616e676520747364747970657077617966617265722e636861742e763172637265617465645f61745f756e69785f6d731b8000000000000000",
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+    "canonical_author_wayfarer_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+  },
+  "expected_outcome": "reject"
+}

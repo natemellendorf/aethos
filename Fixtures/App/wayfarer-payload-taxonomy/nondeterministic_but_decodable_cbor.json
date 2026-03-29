@@ -1,0 +1,12 @@
+{
+  "id": "nondeterministic_but_decodable_cbor",
+  "description": "Body decodes as CBOR but violates RFC 8949 deterministic encoding and must be rejected before typed decode",
+  "body_cbor_hex": "a3647465787478226e6f6e2064657465726d696e697374696320696e746567657220656e636f64696e6764747970657077617966617265722e636861742e763172637265617465645f61745f756e69785f6d731800",
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "1010101010101010101010101010101010101010101010101010101010101010",
+    "canonical_author_wayfarer_id": "0101010101010101010101010101010101010101010101010101010101010101"
+  },
+  "decode_error_expected": true,
+  "expected_outcome": "reject"
+}

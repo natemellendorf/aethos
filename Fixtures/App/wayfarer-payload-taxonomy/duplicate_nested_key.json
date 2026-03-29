@@ -1,0 +1,12 @@
+{
+  "id": "duplicate_nested_key",
+  "description": "Duplicate nested map key MUST reject before reserved/supported handling",
+  "body_cbor_hex": "a26464617461a2616b01616b0264747970657377617966617265722e70726f66696c652e7631",
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "3030303030303030303030303030303030303030303030303030303030303030",
+    "canonical_author_wayfarer_id": "0303030303030303030303030303030303030303030303030303030303030303"
+  },
+  "decode_error_expected": true,
+  "expected_outcome": "reject"
+}

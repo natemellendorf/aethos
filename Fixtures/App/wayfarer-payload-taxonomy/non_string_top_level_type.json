@@ -1,0 +1,16 @@
+{
+  "id": "non_string_top_level_type",
+  "description": "Top-level type discriminator is non-text and payload is rejected",
+  "body_cbor_hex": "a364746578746568656c6c6f64747970650172637265617465645f61745f756e69785f6d731b000001941f297c00",
+  "expected_decoded_map": {
+    "type": 1,
+    "text": "hello",
+    "created_at_unix_ms": 1735689600000
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "5050505050505050505050505050505050505050505050505050505050505050",
+    "canonical_author_wayfarer_id": "0505050505050505050505050505050505050505050505050505050505050505"
+  },
+  "expected_outcome": "reject"
+}

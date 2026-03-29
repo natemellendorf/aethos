@@ -1,0 +1,16 @@
+{
+  "id": "unsupported_known_wayfarer_chat_v2",
+  "description": "Supported-family future known version (wayfarer.chat.v2) is unsupported-safe-skip",
+  "body_cbor_hex": "a3647465787474667574757265206b6e6f776e2076657273696f6e64747970657077617966617265722e636861742e763272637265617465645f61745f756e69785f6d731b000001941f298ba0",
+  "expected_decoded_map": {
+    "type": "wayfarer.chat.v2",
+    "text": "future known version",
+    "created_at_unix_ms": 1735689604000
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "7070707070707070707070707070707070707070707070707070707070707070",
+    "canonical_author_wayfarer_id": "0707070707070707070707070707070707070707070707070707070707070707"
+  },
+  "expected_outcome": "unsupported-safe-skip"
+}

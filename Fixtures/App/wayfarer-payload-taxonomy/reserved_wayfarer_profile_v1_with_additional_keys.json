@@ -1,0 +1,22 @@
+{
+  "id": "reserved_wayfarer_profile_v1_with_additional_keys",
+  "description": "Reserved wayfarer.profile.v1 payload accepts additional unknown keys and remains non-renderable",
+  "body_cbor_hex": "a36464617461a2656576656e746b706c616365686f6c6465726764657461696c736769676e6f72656464747970657377617966617265722e70726f66696c652e7631706675747572655f657874656e73696f6e8261616162",
+  "expected_decoded_map": {
+    "type": "wayfarer.profile.v1",
+    "data": {
+      "event": "placeholder",
+      "details": "ignored"
+    },
+    "future_extension": [
+      "a",
+      "b"
+    ]
+  },
+  "envelope_context": {
+    "transport_valid": true,
+    "manifest_id": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0",
+    "canonical_author_wayfarer_id": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"
+  },
+  "expected_outcome": "accept/store-no-display"
+}
