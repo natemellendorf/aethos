@@ -11,3 +11,5 @@ DerivedData/
 .beads/
 .worktrees/
 .opencode/
+.opencode/package.json
+.opencode/
