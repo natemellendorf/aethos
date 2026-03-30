@@ -10,11 +10,14 @@ func wayfarerPayloadFixturesMatchExpectedOutcomes() throws {
         let fixture = try loadWayfarerFixture(named: fixtureRef.path)
         let body = try #require(Hex.decode(fixture.bodyCborHex))
 
+        #expect(fixture.id == fixtureRef.id)
+        #expect(fixture.payloadType == nil)
+
         switch fixture.expectedOutcome {
         case "accept/display":
             let classification = try WayfarerPayloadCodec.classify(body: body)
             #expect(classification.outcome == .acceptDisplay)
-            #expect(classification.type == fixture.payloadType)
+            #expect(classification.type == fixtureRef.payloadType)
             if case .chat(let chat) = classification {
                 #expect(chat.text == stringValue(fixture.expectedDecodedMap?["text"]))
                 #expect(chat.createdAtUnixMs == intValue(fixture.expectedDecodedMap?["created_at_unix_ms"]))
@@ -25,12 +28,12 @@ func wayfarerPayloadFixturesMatchExpectedOutcomes() throws {
         case "accept/store-no-display":
             let classification = try WayfarerPayloadCodec.classify(body: body)
             #expect(classification.outcome == .acceptStoreNoDisplay)
-            #expect(classification.type == fixture.payloadType)
+            #expect(classification.type == fixtureRef.payloadType)
 
         case "unsupported-safe-skip":
             let classification = try WayfarerPayloadCodec.classify(body: body)
             #expect(classification.outcome == .unsupportedSafeSkip)
-            #expect(classification.type == fixture.payloadType)
+            #expect(classification.type == fixtureRef.payloadType)
 
         case "reject":
             #expect(throws: (any Error).self) {
@@ -59,6 +62,13 @@ private struct WayfarerFixtureManifest: Decodable {
     struct FixtureRef: Decodable {
         let id: String
         let path: String
+        let payloadType: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case path
+            case payloadType = "payload_type"
+        }
     }
 
     let fixtures: [FixtureRef]

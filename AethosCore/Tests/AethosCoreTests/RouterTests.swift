@@ -155,3 +155,73 @@ func receiptHasPriorityOverChunks() throws {
     let plan = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 10), now: now)
     #expect(plan.first?.priority == .receipt)
 }
+
+@Test
+func missingChunkBytesThrowsExpectedError() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 1_000)
+
+    let payload = Data(repeating: 0xCD, count: Chunking.chunkSize + 1)
+    let manifest = Chunking.buildManifest(for: payload)
+    let manifestBytes = CanonicalEncoderV1.encode(manifest)
+    let manifestId = AethosIDs.manifestId(from: manifest)
+    let envelope = EnvelopeV1(toWayfarerId: Data(repeating: 0xAA, count: 32), manifestId: manifestId, body: Data([0x01]))
+    let envelopeBytes = CanonicalEncoderV1.encode(envelope)
+
+    try store.enqueue(item: OutboxItem(id: Data([0x10]), kind: .manifest, payload: manifestBytes, enqueuedAt: now))
+    try store.enqueue(item: OutboxItem(id: Data([0x11]), kind: .envelope, payload: envelopeBytes, enqueuedAt: now))
+
+    var didThrowExpected = false
+    do {
+        _ = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 10), now: now)
+    } catch Router.RouterError.missingChunkBytes {
+        didThrowExpected = true
+    } catch {
+        didThrowExpected = false
+    }
+    #expect(didThrowExpected)
+}
+
+@Test
+func invalidCanonicalTypeThrowsWhenManifestPayloadMalformed() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 1_000)
+
+    let malformedManifestBytes = Data([0xFF, 0x00, 0x00, 0x00, 0x00])
+    try store.enqueue(item: OutboxItem(id: Data([0x10]), kind: .manifest, payload: malformedManifestBytes, enqueuedAt: now))
+
+    #expect(throws: Router.RouterError.invalidCanonicalType) {
+        _ = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 10), now: now)
+    }
+}
+
+@Test
+func zeroItemBudgetReturnsEmptyPlan() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 1_000)
+
+    let payload = Data(repeating: 0xCD, count: Chunking.chunkSize)
+    let manifestBytes = CanonicalEncoderV1.encode(Chunking.buildManifest(for: payload))
+    try store.enqueue(item: OutboxItem(id: Data([0x10]), kind: .manifest, payload: manifestBytes, enqueuedAt: now))
+
+    let plan = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 0), now: now)
+    #expect(plan.isEmpty)
+}

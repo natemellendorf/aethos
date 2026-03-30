@@ -75,3 +75,41 @@ func missingChunkFails() {
 
     #expect(didThrowExpected)
 }
+
+@Test
+func invalidChunkBytesFailReassembly() {
+    let data = Data(repeating: 0xAB, count: Chunking.chunkSize + 1)
+    let chunks = Chunking.chunk(data)
+    let manifest = Chunking.buildManifest(for: data)
+
+    var map: [Data: Data] = [:]
+    for chunk in chunks {
+        map[chunk.id] = chunk.bytes
+    }
+
+    let firstId = manifest.chunkIds[0]
+    map[firstId] = Data(repeating: 0x00, count: chunks[0].bytes.count)
+
+    var didThrowExpected = false
+    do {
+        _ = try Chunking.reassemble(chunksById: map, manifest: manifest)
+    } catch let err as Chunking.ChunkingError {
+        didThrowExpected = (err == .invalidChunk(id: firstId))
+    } catch {
+        didThrowExpected = false
+    }
+
+    #expect(didThrowExpected)
+}
+
+@Test
+func dedupKeyIsStableAndLowercaseHex() {
+    let chunkId = Data([0x00, 0x0A, 0xBC, 0xF0, 0x1D, 0x2E])
+
+    let key1 = Chunking.dedupKey(chunkId: chunkId)
+    let key2 = Chunking.dedupKey(chunkId: chunkId)
+
+    #expect(key1 == key2)
+    #expect(key1 == "000abcf01d2e")
+    #expect(key1 == key1.lowercased())
+}
