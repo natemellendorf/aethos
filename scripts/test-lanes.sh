@@ -54,7 +54,7 @@ PY
 }
 
 run_mvp0_lane() {
-  swift test --skip "AethosCoreExtendedTests\." --skip "AethosCLITests\.relay"
+  swift test --skip "AethosCoreExtendedTests\." --skip "AethosCLITests\..*[Rr]elay.*"
 }
 
 run_extended_lane() {

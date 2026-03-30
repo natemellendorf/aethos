@@ -12,6 +12,8 @@ Phase 1 introduces explicit, runnable test lanes:
   - `RelayTransportTests`
   - `RelayLinkTests`
   - `RelayForwardingTests`
+- MVP0 lane also skips relay-focused CLI snapshot tests by regex matching
+  `AethosCLITests\..*[Rr]elay.*` against `swift test list` names.
 
 ## Commands
 
