@@ -62,6 +62,13 @@ let package = Package(
             resources: [
                 .copy("Resources")
             ]
+        ),
+        .testTarget(
+            name: "AethosCoreExtendedTests",
+            dependencies: [
+                "AethosCore"
+            ],
+            path: "AethosCore/Tests/AethosCoreExtendedTests"
         )
     ]
 )

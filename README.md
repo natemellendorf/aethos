@@ -103,3 +103,7 @@ Application payload taxonomy and app-level interoperability fixtures:
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+## Testing lanes
+
+Phase 1 test lanes and commands are documented in `docs/testing/test-lanes.md`.

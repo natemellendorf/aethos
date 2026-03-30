@@ -70,6 +70,52 @@ func outboxEnqueueDequeueOrdering() throws {
 }
 
 @Test
+func markDeliveredThenAckedTransitionsCorrectly() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let now = Date(timeIntervalSince1970: 1_000)
+    let id = Data([0x44])
+
+    try store.enqueue(item: OutboxItem(id: id, kind: .envelope, payload: Data([0xAA]), enqueuedAt: now))
+    try store.markDelivered(itemId: id)
+
+    #expect(try store.peekQueuedOutbox(limit: 10).isEmpty)
+
+    try store.markAcked(envelopeId: id)
+    #expect(try store.peekQueuedOutbox(limit: 10).isEmpty)
+}
+
+@Test
+func deleteOutboxByIdsDeletesOnlySelectedRows() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let store = try AethosStore(path: dir.appendingPathComponent("store.sqlite"))
+    let now = Date(timeIntervalSince1970: 2_000)
+
+    let id1 = Data([0x01])
+    let id2 = Data([0x02])
+    let id3 = Data([0x03])
+
+    try store.enqueue(item: OutboxItem(id: id1, kind: .manifest, payload: Data([0xA1]), enqueuedAt: now))
+    try store.enqueue(item: OutboxItem(id: id2, kind: .envelope, payload: Data([0xA2]), enqueuedAt: now))
+    try store.enqueue(item: OutboxItem(id: id3, kind: .receipt, payload: Data([0xA3]), enqueuedAt: now))
+
+    let deleted = try store.deleteOutboxByIds([id1, id3])
+
+    #expect(deleted == 2)
+    let remaining = try store.peekQueuedOutbox(limit: 10)
+    #expect(remaining.count == 1)
+    #expect(remaining.first?.id == id2)
+}
+
+@Test
 func evictionRemovesExpiredRows() throws {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)

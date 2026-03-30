@@ -34,5 +34,12 @@ let package = Package(
             ],
             path: "Tests/AethosCoreTests"
         ),
+        .testTarget(
+            name: "AethosCoreExtendedTests",
+            dependencies: [
+                "AethosCore"
+            ],
+            path: "Tests/AethosCoreExtendedTests"
+        ),
     ]
 )
