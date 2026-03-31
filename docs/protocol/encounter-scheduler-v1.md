@@ -208,6 +208,32 @@ Budget constraints MAY include:
 - `maxDurationMs` (planner estimate)
 - `durableCargoRatioCap` (ratio for tier 4/5 bytes)
 
+`durableCargoRatioCap` semantics are canonical and MUST be enforced as a projected pre-append check:
+
+- Let `projectedTotalBytes = selectedTotalBytes + candidate.sizeBytes`.
+- Let `projectedDurableCargoBytes = selectedDurableCargoBytes + (candidate.tier in {4,5} ? candidate.sizeBytes : 0)`.
+- If `projectedTotalBytes > 0`, define:
+
+`projectedDurableCargoRatio = projectedDurableCargoBytes / projectedTotalBytes`
+
+- The candidate MUST be rejected when `projectedDurableCargoRatio > durableCargoRatioCap`.
+- If `projectedTotalBytes == 0` (only possible before first append), ratio is treated as `0`.
+
+`selectedDurableCargoBytes` counts only bytes from selected tier-4 and tier-5 items.
+
+### 10.1 Canonical constraint evaluation order
+
+When testing whether the next ranked candidate can be appended, implementations MUST evaluate constraints in this exact order:
+
+1. `maxItems`
+2. `maxBytes`
+3. `maxDurationMs`
+4. `durableCargoRatioCap`
+
+The first failing constraint in this sequence defines the terminal stop reason.
+
+If no eligible candidates exist before selection starts, stop reason is `no-eligible-items`.
+
 Canonical stop reasons:
 
 - `completed`
