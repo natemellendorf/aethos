@@ -1,0 +1,13 @@
+{
+  "name": "short",
+  "estimated_duration_seconds": 45,
+  "max_bytes": 65536,
+  "max_items": 40,
+  "expected_focus": [
+    "tier0-control",
+    "tier1-tiny-endangered-destination",
+    "tier3-metadata",
+    "tier4-small-cargo"
+  ],
+  "stop_reason": "completedCandidates"
+}

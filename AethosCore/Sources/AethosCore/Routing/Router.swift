@@ -11,8 +11,20 @@ public final class Router {
         let enqueuedAt: Date
         var manifestBytes: Data?
         var envelopeBytes: Data?
+        var envelopeDestination: Data?
         var chunkOrder: [Data]
         var nextChunkIndex: Int
+    }
+
+    private struct EncounterCandidate {
+        let itemId: Data
+        let item: CargoItem
+        let tier: EncounterTier
+        let enqueuedAt: Date
+        let expiresAt: Date?
+        let destinationRelevant: Bool
+        let transitForwardingCandidate: Bool
+        let resumeCapable: Bool
     }
 
     private let store: AethosStore
@@ -22,145 +34,45 @@ public final class Router {
     }
 
     public func planNextSession(budget: SessionBudget, now: Date) throws -> [CargoItem] {
-        var plan: [CargoItem] = []
-        plan.reserveCapacity(min(budget.maxItems, 64))
+        let context = EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: budget.maxBytes, maxItems: budget.maxItems)
+        )
+        return try planNextEncounter(context: context, now: now).items
+    }
 
-        var usedBytes = 0
-
-        func canAdd(_ item: CargoItem) -> Bool {
-            if plan.count + 1 > budget.maxItems { return false }
-            if usedBytes + item.sizeBytes > budget.maxBytes { return false }
-            return true
-        }
-
-        func addIfFits(_ item: CargoItem) {
-            guard canAdd(item) else { return }
-            plan.append(item)
-            usedBytes += item.sizeBytes
-        }
-
+    public func planNextEncounter(context: EncounterSchedulingContext, now: Date) throws -> EncounterPlan {
         let outbox = try store.peekQueuedOutbox(limit: 10_000)
         let activeOutbox = outbox.filter { $0.expiresAt.map { $0 > now } ?? true }
+        let encounterClass = classifyEncounter(context: context)
 
-        // Priority 1: receipts
+        var candidates: [EncounterCandidate] = []
+        candidates.reserveCapacity(activeOutbox.count * 2)
+
         for item in activeOutbox where item.kind == .receipt {
-            let cargo = CargoItem.receipt(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
+            candidates.append(makeCandidate(from: item, as: .receipt, tier: .tier0Control, context: context))
         }
-
-        // Priority 2: inventory requests
         for item in activeOutbox where item.kind == .inventoryRequest {
-            let cargo = CargoItem.inventoryRequest(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
+            candidates.append(makeCandidate(from: item, as: .inventoryRequest, tier: .tier0Control, context: context))
         }
 
-        // Priority 3: inventory advertisements
         for item in activeOutbox where item.kind == .inventory {
-            let cargo = CargoItem.inventory(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
+            candidates.append(makeCandidate(from: item, as: .inventory, tier: .tier3Metadata, context: context))
         }
 
-        // Priority 3b: messages (same class as inventory; keep ahead of metadata/chunks)
         for item in activeOutbox where item.kind == .message {
-            let cargo = CargoItem.message(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
+            let tier: EncounterTier = classifyMessageTier(item: item, context: context, now: now)
+            candidates.append(makeCandidate(from: item, as: .message, tier: tier, context: context))
         }
 
-        // Build pending transfers keyed by manifestId.
-        var transfers: [Data: PendingTransfer] = [:]
+        let transferCandidates = try buildTransferCandidates(from: activeOutbox, now: now, context: context)
+        candidates.append(contentsOf: transferCandidates)
 
-        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-
-        // First, manifests define chunk ordering.
-        for item in activeOutbox where item.kind == .manifest {
-            let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
-            let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
-
-            let rotation = chunkRotationOffset(nowMs: nowMs, manifestId: manifestId, count: parsed.chunkIds.count)
-            let chunkOrder = rotate(parsed.chunkIds, by: rotation)
-
-            let t = PendingTransfer(
-                manifestId: manifestId,
-                enqueuedAt: item.enqueuedAt,
-                manifestBytes: item.payload,
-                envelopeBytes: nil,
-                chunkOrder: chunkOrder,
-                nextChunkIndex: 0
-            )
-            transfers[manifestId] = t
-        }
-
-        // Envelopes reference manifests; they may arrive without the manifest outbox item.
-        for item in activeOutbox where item.kind == .envelope {
-            let parsed = try CanonicalParserV1.parseEnvelope(canonical: item.payload)
-            let manifestId = parsed.manifestId
-
-            if var existing = transfers[manifestId] {
-                if existing.envelopeBytes == nil {
-                    existing.envelopeBytes = item.payload
-                }
-                transfers[manifestId] = existing
-            } else {
-                // No manifest known yet; keep as a transfer with no chunks.
-                transfers[manifestId] = PendingTransfer(
-                    manifestId: manifestId,
-                    enqueuedAt: item.enqueuedAt,
-                    manifestBytes: nil,
-                    envelopeBytes: item.payload,
-                    chunkOrder: [],
-                    nextChunkIndex: 0
-                )
-            }
-        }
-
-        // Priority 4: metadata (manifest/envelope), stable by enqueue time.
-        var orderedTransfers = transfers.values.sorted { $0.enqueuedAt < $1.enqueuedAt }
-        for t in orderedTransfers {
-            if let manifestBytes = t.manifestBytes {
-                let cargo = CargoItem.manifest(manifestBytes)
-                if !canAdd(cargo) { return plan }
-                addIfFits(cargo)
-            }
-            if let envelopeBytes = t.envelopeBytes {
-                let cargo = CargoItem.envelope(envelopeBytes)
-                if !canAdd(cargo) { return plan }
-                addIfFits(cargo)
-            }
-        }
-
-        // Priority 5: chunks, round-robin across transfers.
-        // Filter to transfers that have chunkIds.
-        orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
-        var idx = 0
-        while !orderedTransfers.isEmpty {
-            if plan.count >= budget.maxItems { break }
-
-            if idx >= orderedTransfers.count { idx = 0 }
-            var t = orderedTransfers[idx]
-            if t.nextChunkIndex >= t.chunkOrder.count {
-                orderedTransfers.remove(at: idx)
-                continue
-            }
-
-            let chunkId = t.chunkOrder[t.nextChunkIndex]
-            guard let bytes = try store.getChunk(id: chunkId) else {
-                throw RouterError.missingChunkBytes(id: chunkId)
-            }
-
-            let cargo = CargoItem.chunk(id: chunkId, bytes: bytes)
-            if !canAdd(cargo) { break }
-            addIfFits(cargo)
-
-            t.nextChunkIndex += 1
-            orderedTransfers[idx] = t
-            idx += 1
-        }
-
-        return plan
+        return buildPlan(
+            candidates: candidates,
+            encounterClass: encounterClass,
+            context: context,
+            now: now
+        )
     }
 
     private func chunkRotationOffset(nowMs: Int64, manifestId: Data, count: Int) -> Int {
@@ -176,6 +88,426 @@ public final class Router {
         if o == 0 { return items }
         return Array(items[o...]) + Array(items[..<o])
     }
+
+    private func classifyEncounter(context: EncounterSchedulingContext) -> EncounterClass {
+        guard let estimatedDurationSeconds = context.budget.estimatedDurationSeconds else {
+            return .short
+        }
+        if estimatedDurationSeconds <= 12 { return .blink }
+        if estimatedDurationSeconds <= 90 { return .short }
+        return .durable
+    }
+
+    private func classifyMessageTier(item: OutboxItem, context: EncounterSchedulingContext, now: Date) -> EncounterTier {
+        guard item.payload.count <= 1024 else { return .tier4BodyAndSmallAttachment }
+        let isUrgent = expiryUrgency(expiresAt: item.expiresAt, now: now) >= 0.8
+        if isUrgent { return .tier1TinyEndangeredDestination }
+        return .tier4BodyAndSmallAttachment
+    }
+
+    private func makeCandidate(
+        from item: OutboxItem,
+        as cargoItem: CargoItem,
+        tier: EncounterTier,
+        context: EncounterSchedulingContext,
+        destinationOverride: Data? = nil,
+        resumeCapable: Bool = false
+    ) -> EncounterCandidate {
+        let destination = destinationOverride
+        let destinationRelevant = isDestinationRelevant(destination: destination, context: context)
+        let transitForwardingCandidate = isTransitForwardingCandidate(destination: destination, context: context)
+        return EncounterCandidate(
+            itemId: item.id,
+            item: cargoItem,
+            tier: tier,
+            enqueuedAt: item.enqueuedAt,
+            expiresAt: item.expiresAt,
+            destinationRelevant: destinationRelevant,
+            transitForwardingCandidate: transitForwardingCandidate,
+            resumeCapable: resumeCapable
+        )
+    }
+
+    private func buildTransferCandidates(
+        from activeOutbox: [OutboxItem],
+        now: Date,
+        context: EncounterSchedulingContext
+    ) throws -> [EncounterCandidate] {
+        var candidates: [EncounterCandidate] = []
+        var transfers: [Data: PendingTransfer] = [:]
+        var manifestOutboxItemByManifestId: [Data: OutboxItem] = [:]
+        var envelopeOutboxItemByManifestId: [Data: OutboxItem] = [:]
+
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+
+        for item in activeOutbox where item.kind == .manifest {
+            let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
+            let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
+            let rotation = chunkRotationOffset(nowMs: nowMs, manifestId: manifestId, count: parsed.chunkIds.count)
+            let chunkOrder = rotate(parsed.chunkIds, by: rotation)
+            transfers[manifestId] = PendingTransfer(
+                manifestId: manifestId,
+                enqueuedAt: item.enqueuedAt,
+                manifestBytes: item.payload,
+                envelopeBytes: nil,
+                envelopeDestination: nil,
+                chunkOrder: chunkOrder,
+                nextChunkIndex: 0
+            )
+            manifestOutboxItemByManifestId[manifestId] = item
+        }
+
+        for item in activeOutbox where item.kind == .envelope {
+            let parsed = try CanonicalParserV1.parseEnvelope(canonical: item.payload)
+            let manifestId = parsed.manifestId
+            if var existing = transfers[manifestId] {
+                if existing.envelopeBytes == nil {
+                    existing.envelopeBytes = item.payload
+                    existing.envelopeDestination = parsed.toWayfarerId
+                }
+                transfers[manifestId] = existing
+            } else {
+                transfers[manifestId] = PendingTransfer(
+                    manifestId: manifestId,
+                    enqueuedAt: item.enqueuedAt,
+                    manifestBytes: nil,
+                    envelopeBytes: item.payload,
+                    envelopeDestination: parsed.toWayfarerId,
+                    chunkOrder: [],
+                    nextChunkIndex: 0
+                )
+            }
+            envelopeOutboxItemByManifestId[manifestId] = item
+        }
+
+        var orderedTransfers = transfers.values.sorted { lhs, rhs in
+            if lhs.enqueuedAt == rhs.enqueuedAt {
+                return lhs.manifestId.lexicographicallyPrecedes(rhs.manifestId)
+            }
+            return lhs.enqueuedAt < rhs.enqueuedAt
+        }
+
+        for transfer in orderedTransfers {
+            let destination = transfer.envelopeDestination
+            if let manifestBytes = transfer.manifestBytes,
+               let manifestItem = manifestOutboxItemByManifestId[transfer.manifestId] {
+                candidates.append(makeCandidate(
+                    from: manifestItem,
+                    as: .manifest(manifestBytes),
+                    tier: .tier3Metadata,
+                    context: context,
+                    destinationOverride: destination,
+                    resumeCapable: true
+                ))
+            }
+            if let envelopeBytes = transfer.envelopeBytes,
+               let envelopeItem = envelopeOutboxItemByManifestId[transfer.manifestId] {
+                let envelopeTier: EncounterTier = isTransitForwardingCandidate(destination: destination, context: context)
+                    ? .tier2TinyEndangeredTransit
+                    : .tier3Metadata
+                candidates.append(makeCandidate(
+                    from: envelopeItem,
+                    as: .envelope(envelopeBytes),
+                    tier: envelopeTier,
+                    context: context,
+                    destinationOverride: destination,
+                    resumeCapable: true
+                ))
+            }
+        }
+
+        orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
+        var idx = 0
+        while !orderedTransfers.isEmpty {
+            if idx >= orderedTransfers.count { idx = 0 }
+            var transfer = orderedTransfers[idx]
+            if transfer.nextChunkIndex >= transfer.chunkOrder.count {
+                orderedTransfers.remove(at: idx)
+                continue
+            }
+
+            let chunkId = transfer.chunkOrder[transfer.nextChunkIndex]
+            guard let chunkBytes = try store.getChunk(id: chunkId) else {
+                throw RouterError.missingChunkBytes(id: chunkId)
+            }
+
+            candidates.append(EncounterCandidate(
+                itemId: chunkId,
+                item: .chunk(id: chunkId, bytes: chunkBytes),
+                tier: .tier5LargeMediaChunk,
+                enqueuedAt: transfer.enqueuedAt,
+                expiresAt: nil,
+                destinationRelevant: isDestinationRelevant(destination: transfer.envelopeDestination, context: context),
+                transitForwardingCandidate: isTransitForwardingCandidate(destination: transfer.envelopeDestination, context: context),
+                resumeCapable: true
+            ))
+
+            transfer.nextChunkIndex += 1
+            orderedTransfers[idx] = transfer
+            idx += 1
+        }
+
+        return candidates
+    }
+
+    private func buildPlan(
+        candidates: [EncounterCandidate],
+        encounterClass: EncounterClass,
+        context: EncounterSchedulingContext,
+        now: Date
+    ) -> EncounterPlan {
+        let countsByTier = EncounterTier.allCases.reduce(into: [EncounterTier: Int]()) { result, tier in
+            result[tier] = 0
+        }
+        var candidateCountsByTier = countsByTier
+        for candidate in candidates {
+            candidateCountsByTier[candidate.tier, default: 0] += 1
+        }
+
+        var selected: [CargoItem] = []
+        selected.reserveCapacity(min(context.budget.maxItems, 128))
+
+        var decisionLogs: [EncounterDecisionLog] = []
+        decisionLogs.reserveCapacity(min(context.budget.maxItems + 1, 256))
+
+        var usedBytes = 0
+        var usedDurableCargoBytes = 0
+        var estimatedSecondsUsed: TimeInterval = 0
+        let durableRatioCap = durableCargoRatioCap(encounterClass: encounterClass, context: context)
+        let durableByteCap = Int(Double(context.budget.maxBytes) * durableRatioCap)
+        let estimatedThroughputBytesPerSecond = 48_000.0
+
+        for tier in EncounterTier.allCases.sorted() {
+            let tierCandidates = candidates
+                .filter { $0.tier == tier }
+                .sorted { lhs, rhs in
+                    let lhsScore = score(candidate: lhs, now: now, context: context)
+                    let rhsScore = score(candidate: rhs, now: now, context: context)
+                    if lhsScore.total == rhsScore.total {
+                        return lhs.itemId.lexicographicallyPrecedes(rhs.itemId)
+                    }
+                    return lhsScore.total > rhsScore.total
+                }
+
+            for candidate in tierCandidates {
+                if selected.count >= context.budget.maxItems {
+                    decisionLogs.append(EncounterDecisionLog(
+                        encounterClass: encounterClass,
+                        selectedBearer: context.selectedBearer,
+                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                        estimatedByteBudget: context.budget.maxBytes,
+                        candidateCountsByTier: candidateCountsByTier,
+                        chosenItemIdHex: nil,
+                        scoreBreakdown: nil,
+                        stopReason: .maxItemsReached,
+                        interruptionMarker: .interruptionDetected
+                    ))
+                    return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+                }
+
+                let itemBytes = candidate.item.sizeBytes
+                let projectedSecondsUsed = estimatedSecondsUsed + (Double(itemBytes) / estimatedThroughputBytesPerSecond)
+                if let timeBudget = context.budget.estimatedDurationSeconds,
+                   projectedSecondsUsed > timeBudget {
+                    decisionLogs.append(EncounterDecisionLog(
+                        encounterClass: encounterClass,
+                        selectedBearer: context.selectedBearer,
+                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                        estimatedByteBudget: context.budget.maxBytes,
+                        candidateCountsByTier: candidateCountsByTier,
+                        chosenItemIdHex: nil,
+                        scoreBreakdown: nil,
+                        stopReason: .estimatedTimeBudgetReached,
+                        interruptionMarker: .interruptionDetected
+                    ))
+                    return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+                }
+                if usedBytes + itemBytes > context.budget.maxBytes {
+                    decisionLogs.append(EncounterDecisionLog(
+                        encounterClass: encounterClass,
+                        selectedBearer: context.selectedBearer,
+                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                        estimatedByteBudget: context.budget.maxBytes,
+                        candidateCountsByTier: candidateCountsByTier,
+                        chosenItemIdHex: nil,
+                        scoreBreakdown: nil,
+                        stopReason: .maxBytesReached,
+                        interruptionMarker: .interruptionDetected
+                    ))
+                    return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+                }
+
+                let isDurableCargoTier = candidate.tier == .tier4BodyAndSmallAttachment || candidate.tier == .tier5LargeMediaChunk
+                if isDurableCargoTier && usedDurableCargoBytes + itemBytes > durableByteCap {
+                    decisionLogs.append(EncounterDecisionLog(
+                        encounterClass: encounterClass,
+                        selectedBearer: context.selectedBearer,
+                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                        estimatedByteBudget: context.budget.maxBytes,
+                        candidateCountsByTier: candidateCountsByTier,
+                        chosenItemIdHex: nil,
+                        scoreBreakdown: nil,
+                        stopReason: .durableCargoCapReached,
+                        interruptionMarker: .interruptionDetected
+                    ))
+                    continue
+                }
+
+                let scoreBreakdown = score(candidate: candidate, now: now, context: context)
+                selected.append(candidate.item)
+                usedBytes += itemBytes
+                estimatedSecondsUsed = projectedSecondsUsed
+                if isDurableCargoTier { usedDurableCargoBytes += itemBytes }
+
+                decisionLogs.append(EncounterDecisionLog(
+                    encounterClass: encounterClass,
+                    selectedBearer: context.selectedBearer,
+                    estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                    estimatedByteBudget: context.budget.maxBytes,
+                    candidateCountsByTier: candidateCountsByTier,
+                    chosenItemIdHex: Hex.encode(candidate.itemId),
+                    scoreBreakdown: scoreBreakdown,
+                    stopReason: nil,
+                    interruptionMarker: candidate.resumeCapable ? .resumeReady : .none
+                ))
+            }
+        }
+
+        decisionLogs.append(EncounterDecisionLog(
+            encounterClass: encounterClass,
+            selectedBearer: context.selectedBearer,
+            estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+            estimatedByteBudget: context.budget.maxBytes,
+            candidateCountsByTier: candidateCountsByTier,
+            chosenItemIdHex: nil,
+            scoreBreakdown: nil,
+            stopReason: .completedCandidates,
+            interruptionMarker: .none
+        ))
+
+        return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+    }
+
+    private func score(
+        candidate: EncounterCandidate,
+        now: Date,
+        context: EncounterSchedulingContext
+    ) -> EncounterScoreBreakdown {
+        let scarcity = replicationScarcity(candidate: candidate)
+        let proximity = deliveryProximity(candidate: candidate)
+        let urgency = expiryUrgency(expiresAt: candidate.expiresAt, now: now)
+        let sizePenalty = sizeCost(sizeBytes: candidate.item.sizeBytes)
+        let stagnation = stagnationLackOfProgress(enqueuedAt: candidate.enqueuedAt, now: now)
+        let safety = relaySafety(context: context)
+        let userIntent = context.userIntentBoostItemIDs.contains(candidate.itemId) ? 1.0 : 0.0
+        let contentClass = contentClassWeight(candidate: candidate)
+
+        let total = (scarcity * 2.0)
+            + (proximity * 1.8)
+            + (urgency * 2.0)
+            + (sizePenalty * 1.3)
+            + (stagnation * 1.2)
+            + (safety * 0.8)
+            + (userIntent * 1.6)
+            + (contentClass * 1.5)
+
+        return EncounterScoreBreakdown(
+            replicationScarcity: scarcity,
+            deliveryProximity: proximity,
+            expiryUrgency: urgency,
+            sizeCost: sizePenalty,
+            stagnationLackOfProgress: stagnation,
+            relayIngestOrDurableStorageSafety: safety,
+            userIntentBoost: userIntent,
+            contentClass: contentClass,
+            total: total
+        )
+    }
+
+    private func replicationScarcity(candidate: EncounterCandidate) -> Double {
+        switch candidate.tier {
+        case .tier0Control:
+            return 1.0
+        case .tier1TinyEndangeredDestination, .tier2TinyEndangeredTransit:
+            return 0.95
+        case .tier3Metadata:
+            return 0.7
+        case .tier4BodyAndSmallAttachment:
+            return 0.45
+        case .tier5LargeMediaChunk:
+            return 0.25
+        }
+    }
+
+    private func deliveryProximity(candidate: EncounterCandidate) -> Double {
+        if candidate.destinationRelevant { return 1.0 }
+        if candidate.transitForwardingCandidate { return 0.75 }
+        return 0.4
+    }
+
+    private func expiryUrgency(expiresAt: Date?, now: Date) -> Double {
+        guard let expiresAt else { return 0.25 }
+        let secondsLeft = expiresAt.timeIntervalSince(now)
+        if secondsLeft <= 0 { return 1.0 }
+        if secondsLeft <= 20 { return 1.0 }
+        if secondsLeft <= 120 { return 0.85 }
+        if secondsLeft <= 600 { return 0.6 }
+        return 0.2
+    }
+
+    private func sizeCost(sizeBytes: Int) -> Double {
+        let normalized = min(max(Double(sizeBytes) / Double(Chunking.chunkSize), 0.0), 1.0)
+        return 1.0 - normalized
+    }
+
+    private func stagnationLackOfProgress(enqueuedAt: Date, now: Date) -> Double {
+        let ageSeconds = max(0, now.timeIntervalSince(enqueuedAt))
+        if ageSeconds >= 900 { return 1.0 }
+        return min(ageSeconds / 900.0, 1.0)
+    }
+
+    private func relaySafety(context: EncounterSchedulingContext) -> Double {
+        context.relayIngestSafetyAvailable ? 1.0 : 0.0
+    }
+
+    private func contentClassWeight(candidate: EncounterCandidate) -> Double {
+        switch candidate.item {
+        case .receipt, .inventoryRequest:
+            return 1.0
+        case .message:
+            return 0.95
+        case .inventory, .manifest, .envelope:
+            return 0.7
+        case .chunk:
+            return 0.35
+        }
+    }
+
+    private func durableCargoRatioCap(encounterClass: EncounterClass, context: EncounterSchedulingContext) -> Double {
+        if let explicitCap = context.budget.durableCargoRatioCap {
+            return min(max(explicitCap, 0.0), 1.0)
+        }
+        switch encounterClass {
+        case .blink:
+            return 0.10
+        case .short:
+            return 0.40
+        case .durable:
+            return 0.80
+        }
+    }
+
+    private func isDestinationRelevant(destination: Data?, context: EncounterSchedulingContext) -> Bool {
+        guard let remote = context.remoteWayfarerId else { return true }
+        guard let destination else { return true }
+        return destination == remote
+    }
+
+    private func isTransitForwardingCandidate(destination: Data?, context: EncounterSchedulingContext) -> Bool {
+        guard let remote = context.remoteWayfarerId else { return false }
+        guard let destination else { return false }
+        return destination != remote
+    }
 }
 
 private enum CanonicalParserV1 {
@@ -184,6 +516,7 @@ private enum CanonicalParserV1 {
     }
 
     struct ParsedEnvelope {
+        let toWayfarerId: Data
         let manifestId: Data
     }
 
@@ -197,10 +530,11 @@ private enum CanonicalParserV1 {
 
     static func parseEnvelope(canonical: Data) throws -> ParsedEnvelope {
         let fields = try parseFields(expectedType: CanonicalEncoderV1.TypeDiscriminator.envelope.rawValue, canonical: canonical)
+        let toWayfarerId = fields[CanonicalEncoderV1.EnvelopeField.toWayfarerId.rawValue] ?? Data()
         guard let raw = fields[CanonicalEncoderV1.EnvelopeField.manifestId.rawValue] else {
-            return ParsedEnvelope(manifestId: Data())
+            return ParsedEnvelope(toWayfarerId: toWayfarerId, manifestId: Data())
         }
-        return ParsedEnvelope(manifestId: raw)
+        return ParsedEnvelope(toWayfarerId: toWayfarerId, manifestId: raw)
     }
 
     private static func parseFields(expectedType: UInt8, canonical: Data) throws -> [UInt8: Data] {

@@ -1,0 +1,12 @@
+{
+  "name": "blink",
+  "estimated_duration_seconds": 8,
+  "max_bytes": 12288,
+  "max_items": 12,
+  "expected_focus": [
+    "tier0-control",
+    "tier1-tiny-endangered-destination",
+    "tier2-transit"
+  ],
+  "stop_reason": "maxBytesReached"
+}
