@@ -1,0 +1,12 @@
+{
+  "name": "durable",
+  "estimated_duration_seconds": 240,
+  "max_bytes": 524288,
+  "max_items": 256,
+  "expected_focus": [
+    "tier0-control",
+    "tier3-metadata",
+    "tier5-large-media"
+  ],
+  "stop_reason": "completedCandidates"
+}

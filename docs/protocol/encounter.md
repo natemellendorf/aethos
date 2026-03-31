@@ -185,6 +185,8 @@ During constrained encounters, nodes MAY prioritize transfer scheduling by local
 
 This scheduling guidance MUST NOT alter protocol validity, interoperability, or acceptance semantics.
 
+For runtime budgeting/prioritization hook design, see `docs/protocol/encounter-budgeting.md`.
+
 ## 9. Transport-neutral correctness constraints
 
 1. Bearers MAY differ in discovery and channel setup.
