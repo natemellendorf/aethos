@@ -231,20 +231,32 @@ func transitTierTwoRequiresEndangerment() throws {
     let thirdPartyPeerId = Data(repeating: 0x62, count: 32)
 
     let destinationEnvelope = EnvelopeV1(toWayfarerId: remotePeerId, manifestId: Data(repeating: 0x63, count: 32), body: Data([0x01]))
+    let transitEnvelopeEndangered = EnvelopeV1(toWayfarerId: thirdPartyPeerId, manifestId: Data(repeating: 0x65, count: 32), body: Data([0x03]))
     let transitEnvelopeNotEndangered = EnvelopeV1(toWayfarerId: thirdPartyPeerId, manifestId: Data(repeating: 0x64, count: 32), body: Data([0x02]))
 
-    try store.enqueue(item: OutboxItem(id: Data([0xD1]), kind: .envelope, payload: CanonicalEncoderV1.encode(destinationEnvelope), enqueuedAt: now))
+    let destinationBytes = CanonicalEncoderV1.encode(destinationEnvelope)
+    let endangeredBytes = CanonicalEncoderV1.encode(transitEnvelopeEndangered)
+    let notEndangeredBytes = CanonicalEncoderV1.encode(transitEnvelopeNotEndangered)
+
+    try store.enqueue(item: OutboxItem(id: Data([0xD1]), kind: .envelope, payload: destinationBytes, enqueuedAt: now))
+    try store.enqueue(item: OutboxItem(
+        id: Data([0xD3]),
+        kind: .envelope,
+        payload: endangeredBytes,
+        enqueuedAt: now,
+        expiresAt: now.addingTimeInterval(10)
+    ))
     try store.enqueue(item: OutboxItem(
         id: Data([0xD2]),
         kind: .envelope,
-        payload: CanonicalEncoderV1.encode(transitEnvelopeNotEndangered),
+        payload: notEndangeredBytes,
         enqueuedAt: now,
         expiresAt: now.addingTimeInterval(600)
     ))
 
     let plan = try router.planNextEncounter(
         context: EncounterSchedulingContext(
-            budget: EncounterBudgetProfile(maxBytes: 16_000, maxItems: 10, estimatedDurationSeconds: 20),
+            budget: EncounterBudgetProfile(maxBytes: 16_000, maxItems: 2, estimatedDurationSeconds: 20),
             selectedBearer: "sim-link",
             remoteWayfarerId: remotePeerId
         ),
@@ -252,11 +264,24 @@ func transitTierTwoRequiresEndangerment() throws {
     )
 
     let stopReasons = plan.decisionLogs.compactMap(\.stopReason)
-    #expect(stopReasons.contains(.completedCandidates))
-    let firstEnvelope = plan.items.first { if case .envelope = $0 { true } else { false } }
-    if case let .envelope(firstBytes)? = firstEnvelope {
-        #expect(firstBytes == CanonicalEncoderV1.encode(destinationEnvelope))
+    #expect(stopReasons.contains(.maxItemsReached))
+
+    let selectedEnvelopePayloads = plan.items.compactMap { item -> Data? in
+        if case let .envelope(bytes) = item { return bytes }
+        return nil
     }
+
+    // Explicit tier-semantics evidence:
+    // - endangered transit envelope must be selected (tier 2)
+    // - non-endangered transit envelope must not be selected as tier 2 when budget only allows two picks
+    // - destination envelope is selected ahead of non-endangered transit envelope in remaining slot
+    #expect(selectedEnvelopePayloads.contains(endangeredBytes))
+    #expect(selectedEnvelopePayloads.contains(destinationBytes))
+    #expect(!selectedEnvelopePayloads.contains(notEndangeredBytes))
+
+    let selectedIds = Set(plan.decisionLogs.compactMap(\.chosenItemIdHex))
+    #expect(selectedIds.contains(Hex.encode(Data([0xD3]))))
+    #expect(!selectedIds.contains(Hex.encode(Data([0xD2]))))
 }
 
 @Test
