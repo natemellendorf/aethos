@@ -46,19 +46,19 @@ public final class Router {
         candidates.reserveCapacity(activeOutbox.count * 2)
 
         for item in activeOutbox where item.kind == .receipt {
-            candidates.append(makeCandidate(from: item, as: .receipt, tier: .tier0Control, context: context))
+            candidates.append(makeCandidate(from: item, as: .receipt(item.payload), tier: .tier0Control, context: context))
         }
         for item in activeOutbox where item.kind == .inventoryRequest {
-            candidates.append(makeCandidate(from: item, as: .inventoryRequest, tier: .tier0Control, context: context))
+            candidates.append(makeCandidate(from: item, as: .inventoryRequest(item.payload), tier: .tier0Control, context: context))
         }
 
         for item in activeOutbox where item.kind == .inventory {
-            candidates.append(makeCandidate(from: item, as: .inventory, tier: .tier3Metadata, context: context))
+            candidates.append(makeCandidate(from: item, as: .inventory(item.payload), tier: .tier3Metadata, context: context))
         }
 
         for item in activeOutbox where item.kind == .message {
             let tier: EncounterTier = classifyMessageTier(item: item, context: context, now: now)
-            candidates.append(makeCandidate(from: item, as: .message, tier: tier, context: context))
+            candidates.append(makeCandidate(from: item, as: .message(item.payload), tier: tier, context: context))
         }
 
         let transferCandidates = try buildTransferCandidates(from: activeOutbox, now: now, context: context)
@@ -385,7 +385,7 @@ public final class Router {
         candidate: EncounterCandidate,
         now: Date,
         context: EncounterSchedulingContext
-    ) -> EncounterScoreBreakdown {
+    ) -> EncounterDecisionScoreBreakdown {
         let scarcity = replicationScarcity(candidate: candidate)
         let proximity = deliveryProximity(candidate: candidate)
         let urgency = expiryUrgency(expiresAt: candidate.expiresAt, now: now)
@@ -404,7 +404,7 @@ public final class Router {
             + (userIntent * 1.6)
             + (contentClass * 1.5)
 
-        return EncounterScoreBreakdown(
+        return EncounterDecisionScoreBreakdown(
             replicationScarcity: scarcity,
             deliveryProximity: proximity,
             expiryUrgency: urgency,

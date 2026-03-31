@@ -66,7 +66,7 @@ public struct EncounterSchedulingContext: Equatable, Sendable {
     }
 }
 
-public struct EncounterScoreBreakdown: Equatable, Sendable {
+public struct EncounterDecisionScoreBreakdown: Equatable, Sendable {
     public let replicationScarcity: Double
     public let deliveryProximity: Double
     public let expiryUrgency: Double
@@ -121,7 +121,7 @@ public struct EncounterDecisionLog: Equatable, Sendable {
     public let estimatedByteBudget: Int
     public let candidateCountsByTier: [EncounterTier: Int]
     public let chosenItemIdHex: String?
-    public let scoreBreakdown: EncounterScoreBreakdown?
+    public let scoreBreakdown: EncounterDecisionScoreBreakdown?
     public let stopReason: StopReason?
     public let interruptionMarker: InterruptionMarker
 
@@ -132,7 +132,7 @@ public struct EncounterDecisionLog: Equatable, Sendable {
         estimatedByteBudget: Int,
         candidateCountsByTier: [EncounterTier: Int],
         chosenItemIdHex: String?,
-        scoreBreakdown: EncounterScoreBreakdown?,
+        scoreBreakdown: EncounterDecisionScoreBreakdown?,
         stopReason: StopReason?,
         interruptionMarker: InterruptionMarker
     ) {
