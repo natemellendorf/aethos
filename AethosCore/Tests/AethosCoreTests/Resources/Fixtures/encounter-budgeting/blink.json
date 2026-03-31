@@ -8,5 +8,5 @@
     "tier1-tiny-endangered-destination",
     "tier2-transit"
   ],
-  "stop_reason": "maxBytesReached"
+  "stop_reason": "maxItemsReached"
 }

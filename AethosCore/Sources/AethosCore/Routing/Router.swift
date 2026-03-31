@@ -434,7 +434,7 @@ public final class Router {
 
     private func deliveryProximity(candidate: EncounterCandidate) -> Double {
         if candidate.destinationRelevant { return 1.0 }
-        if candidate.transitForwardingCandidate { return 0.75 }
+        if candidate.transitForwardingCandidate { return 0.6 }
         return 0.4
     }
 
@@ -485,9 +485,12 @@ public final class Router {
         if let explicitCap = context.budget.durableCargoRatioCap {
             return min(max(explicitCap, 0.0), 1.0)
         }
+        if context.budget.estimatedDurationSeconds == nil {
+            return 0.0
+        }
         switch encounterClass {
         case .blink:
-            return 0.10
+            return 1.0
         case .short:
             return 0.40
         case .durable:
