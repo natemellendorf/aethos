@@ -34,10 +34,7 @@ public final class Router {
     }
 
     public func planNextSession(budget: SessionBudget, now: Date) throws -> [CargoItem] {
-        let context = EncounterSchedulingContext(
-            budget: EncounterBudgetProfile(maxBytes: budget.maxBytes, maxItems: budget.maxItems)
-        )
-        return try planNextEncounter(context: context, now: now).items
+        try planNextSessionLegacy(budget: budget, now: now)
     }
 
     public func planNextEncounter(context: EncounterSchedulingContext, now: Date) throws -> EncounterPlan {
@@ -99,9 +96,14 @@ public final class Router {
     }
 
     private func classifyMessageTier(item: OutboxItem, context: EncounterSchedulingContext, now: Date) -> EncounterTier {
-        guard item.payload.count <= 1024 else { return .tier4BodyAndSmallAttachment }
-        let isUrgent = expiryUrgency(expiresAt: item.expiresAt, now: now) >= 0.8
-        if isUrgent { return .tier1TinyEndangeredDestination }
+        let isTinyAndEndangered = isTinyAndEndangered(sizeBytes: item.payload.count, expiresAt: item.expiresAt, now: now)
+        guard isTinyAndEndangered else { return .tier4BodyAndSmallAttachment }
+        if isTransitForwardingCandidate(destination: nil, context: context) {
+            return .tier2TinyEndangeredTransit
+        }
+        if isDestinationRelevant(destination: nil, context: context) {
+            return .tier1TinyEndangeredDestination
+        }
         return .tier4BodyAndSmallAttachment
     }
 
@@ -203,6 +205,7 @@ public final class Router {
             if let envelopeBytes = transfer.envelopeBytes,
                let envelopeItem = envelopeOutboxItemByManifestId[transfer.manifestId] {
                 let envelopeTier: EncounterTier = isTransitForwardingCandidate(destination: destination, context: context)
+                    && isTinyAndEndangered(sizeBytes: envelopeBytes.count, expiresAt: envelopeItem.expiresAt, now: now)
                     ? .tier2TinyEndangeredTransit
                     : .tier3Metadata
                 candidates.append(makeCandidate(
@@ -276,31 +279,31 @@ public final class Router {
         let durableRatioCap = durableCargoRatioCap(encounterClass: encounterClass, context: context)
         let durableByteCap = Int(Double(context.budget.maxBytes) * durableRatioCap)
         let estimatedThroughputBytesPerSecond = 48_000.0
+        var finalStopReason: EncounterDecisionLog.StopReason = .completedCandidates
 
         for tier in EncounterTier.allCases.sorted() {
-            let tierCandidates = candidates
+            let scoredTierCandidates = candidates
                 .filter { $0.tier == tier }
+                .map { candidate in
+                    (candidate: candidate, score: score(candidate: candidate, now: now, context: context))
+                }
                 .sorted { lhs, rhs in
-                    let lhsScore = score(candidate: lhs, now: now, context: context)
-                    let rhsScore = score(candidate: rhs, now: now, context: context)
-                    if lhsScore.total == rhsScore.total {
-                        return lhs.itemId.lexicographicallyPrecedes(rhs.itemId)
+                    if lhs.score.total == rhs.score.total {
+                        return lhs.candidate.itemId.lexicographicallyPrecedes(rhs.candidate.itemId)
                     }
-                    return lhsScore.total > rhsScore.total
+                    return lhs.score.total > rhs.score.total
                 }
 
-            for candidate in tierCandidates {
+            for scoredCandidate in scoredTierCandidates {
+                let candidate = scoredCandidate.candidate
                 if selected.count >= context.budget.maxItems {
-                    decisionLogs.append(EncounterDecisionLog(
+                    finalStopReason = .maxItemsReached
+                    decisionLogs.append(makeDecisionLog(
                         encounterClass: encounterClass,
-                        selectedBearer: context.selectedBearer,
-                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
-                        estimatedByteBudget: context.budget.maxBytes,
+                        context: context,
                         candidateCountsByTier: candidateCountsByTier,
-                        chosenItemIdHex: nil,
-                        scoreBreakdown: nil,
-                        stopReason: .maxItemsReached,
-                        interruptionMarker: .interruptionDetected
+                        stopReason: finalStopReason,
+                        interruption: .interruptionDetected
                     ))
                     return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
                 }
@@ -309,51 +312,41 @@ public final class Router {
                 let projectedSecondsUsed = estimatedSecondsUsed + (Double(itemBytes) / estimatedThroughputBytesPerSecond)
                 if let timeBudget = context.budget.estimatedDurationSeconds,
                    projectedSecondsUsed > timeBudget {
-                    decisionLogs.append(EncounterDecisionLog(
+                    decisionLogs.append(makeDecisionLog(
                         encounterClass: encounterClass,
-                        selectedBearer: context.selectedBearer,
-                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
-                        estimatedByteBudget: context.budget.maxBytes,
+                        context: context,
                         candidateCountsByTier: candidateCountsByTier,
-                        chosenItemIdHex: nil,
-                        scoreBreakdown: nil,
                         stopReason: .estimatedTimeBudgetReached,
-                        interruptionMarker: .interruptionDetected
+                        interruption: .interruptionDetected
                     ))
-                    return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+                    finalStopReason = .estimatedTimeBudgetReached
+                    continue
                 }
                 if usedBytes + itemBytes > context.budget.maxBytes {
-                    decisionLogs.append(EncounterDecisionLog(
+                    decisionLogs.append(makeDecisionLog(
                         encounterClass: encounterClass,
-                        selectedBearer: context.selectedBearer,
-                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
-                        estimatedByteBudget: context.budget.maxBytes,
+                        context: context,
                         candidateCountsByTier: candidateCountsByTier,
-                        chosenItemIdHex: nil,
-                        scoreBreakdown: nil,
                         stopReason: .maxBytesReached,
-                        interruptionMarker: .interruptionDetected
+                        interruption: .interruptionDetected
                     ))
-                    return EncounterPlan(encounterClass: encounterClass, items: selected, decisionLogs: decisionLogs)
+                    finalStopReason = .maxBytesReached
+                    continue
                 }
 
                 let isDurableCargoTier = candidate.tier == .tier4BodyAndSmallAttachment || candidate.tier == .tier5LargeMediaChunk
                 if isDurableCargoTier && usedDurableCargoBytes + itemBytes > durableByteCap {
-                    decisionLogs.append(EncounterDecisionLog(
+                    decisionLogs.append(makeDecisionLog(
                         encounterClass: encounterClass,
-                        selectedBearer: context.selectedBearer,
-                        estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
-                        estimatedByteBudget: context.budget.maxBytes,
+                        context: context,
                         candidateCountsByTier: candidateCountsByTier,
-                        chosenItemIdHex: nil,
-                        scoreBreakdown: nil,
                         stopReason: .durableCargoCapReached,
-                        interruptionMarker: .interruptionDetected
+                        interruption: .interruptionDetected
                     ))
+                    finalStopReason = .durableCargoCapReached
                     continue
                 }
 
-                let scoreBreakdown = score(candidate: candidate, now: now, context: context)
                 selected.append(candidate.item)
                 usedBytes += itemBytes
                 estimatedSecondsUsed = projectedSecondsUsed
@@ -366,7 +359,7 @@ public final class Router {
                     estimatedByteBudget: context.budget.maxBytes,
                     candidateCountsByTier: candidateCountsByTier,
                     chosenItemIdHex: Hex.encode(candidate.itemId),
-                    scoreBreakdown: scoreBreakdown,
+                    scoreBreakdown: scoredCandidate.score,
                     stopReason: nil,
                     interruptionMarker: candidate.resumeCapable ? .resumeReady : .none
                 ))
@@ -381,7 +374,7 @@ public final class Router {
             candidateCountsByTier: candidateCountsByTier,
             chosenItemIdHex: nil,
             scoreBreakdown: nil,
-            stopReason: .completedCandidates,
+            stopReason: finalStopReason,
             interruptionMarker: .none
         ))
 
@@ -460,6 +453,11 @@ public final class Router {
         return 1.0 - normalized
     }
 
+    private func isTinyAndEndangered(sizeBytes: Int, expiresAt: Date?, now: Date) -> Bool {
+        guard sizeBytes <= 1024 else { return false }
+        return expiryUrgency(expiresAt: expiresAt, now: now) >= 0.8
+    }
+
     private func stagnationLackOfProgress(enqueuedAt: Date, now: Date) -> Double {
         let ageSeconds = max(0, now.timeIntervalSince(enqueuedAt))
         if ageSeconds >= 900 { return 1.0 }
@@ -507,6 +505,158 @@ public final class Router {
         guard let remote = context.remoteWayfarerId else { return false }
         guard let destination else { return false }
         return destination != remote
+    }
+
+    private func makeDecisionLog(
+        encounterClass: EncounterClass,
+        context: EncounterSchedulingContext,
+        candidateCountsByTier: [EncounterTier: Int],
+        stopReason: EncounterDecisionLog.StopReason,
+        interruption: EncounterDecisionLog.InterruptionMarker
+    ) -> EncounterDecisionLog {
+        EncounterDecisionLog(
+            encounterClass: encounterClass,
+            selectedBearer: context.selectedBearer,
+            estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+            estimatedByteBudget: context.budget.maxBytes,
+            candidateCountsByTier: candidateCountsByTier,
+            chosenItemIdHex: nil,
+            scoreBreakdown: nil,
+            stopReason: stopReason,
+            interruptionMarker: interruption
+        )
+    }
+
+    private func planNextSessionLegacy(budget: SessionBudget, now: Date) throws -> [CargoItem] {
+        var plan: [CargoItem] = []
+        plan.reserveCapacity(min(budget.maxItems, 64))
+
+        var usedBytes = 0
+
+        func canAdd(_ item: CargoItem) -> Bool {
+            if plan.count + 1 > budget.maxItems { return false }
+            if usedBytes + item.sizeBytes > budget.maxBytes { return false }
+            return true
+        }
+
+        func addIfFits(_ item: CargoItem) {
+            guard canAdd(item) else { return }
+            plan.append(item)
+            usedBytes += item.sizeBytes
+        }
+
+        let outbox = try store.peekQueuedOutbox(limit: 10_000)
+        let activeOutbox = outbox.filter { $0.expiresAt.map { $0 > now } ?? true }
+
+        for item in activeOutbox where item.kind == .receipt {
+            let cargo = CargoItem.receipt(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
+        for item in activeOutbox where item.kind == .inventoryRequest {
+            let cargo = CargoItem.inventoryRequest(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
+        for item in activeOutbox where item.kind == .inventory {
+            let cargo = CargoItem.inventory(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
+        for item in activeOutbox where item.kind == .message {
+            let cargo = CargoItem.message(item.payload)
+            if !canAdd(cargo) { return plan }
+            addIfFits(cargo)
+        }
+
+        var transfers: [Data: PendingTransfer] = [:]
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+
+        for item in activeOutbox where item.kind == .manifest {
+            let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
+            let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
+
+            let rotation = chunkRotationOffset(nowMs: nowMs, manifestId: manifestId, count: parsed.chunkIds.count)
+            let chunkOrder = rotate(parsed.chunkIds, by: rotation)
+
+            let transfer = PendingTransfer(
+                manifestId: manifestId,
+                enqueuedAt: item.enqueuedAt,
+                manifestBytes: item.payload,
+                envelopeBytes: nil,
+                envelopeDestination: nil,
+                chunkOrder: chunkOrder,
+                nextChunkIndex: 0
+            )
+            transfers[manifestId] = transfer
+        }
+
+        for item in activeOutbox where item.kind == .envelope {
+            let parsed = try CanonicalParserV1.parseEnvelope(canonical: item.payload)
+            let manifestId = parsed.manifestId
+
+            if var existing = transfers[manifestId] {
+                if existing.envelopeBytes == nil {
+                    existing.envelopeBytes = item.payload
+                }
+                transfers[manifestId] = existing
+            } else {
+                transfers[manifestId] = PendingTransfer(
+                    manifestId: manifestId,
+                    enqueuedAt: item.enqueuedAt,
+                    manifestBytes: nil,
+                    envelopeBytes: item.payload,
+                    envelopeDestination: nil,
+                    chunkOrder: [],
+                    nextChunkIndex: 0
+                )
+            }
+        }
+
+        var orderedTransfers = transfers.values.sorted { $0.enqueuedAt < $1.enqueuedAt }
+        for transfer in orderedTransfers {
+            if let manifestBytes = transfer.manifestBytes {
+                let cargo = CargoItem.manifest(manifestBytes)
+                if !canAdd(cargo) { return plan }
+                addIfFits(cargo)
+            }
+            if let envelopeBytes = transfer.envelopeBytes {
+                let cargo = CargoItem.envelope(envelopeBytes)
+                if !canAdd(cargo) { return plan }
+                addIfFits(cargo)
+            }
+        }
+
+        orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
+        var index = 0
+        while !orderedTransfers.isEmpty {
+            if plan.count >= budget.maxItems { break }
+
+            if index >= orderedTransfers.count { index = 0 }
+            var transfer = orderedTransfers[index]
+            if transfer.nextChunkIndex >= transfer.chunkOrder.count {
+                orderedTransfers.remove(at: index)
+                continue
+            }
+
+            let chunkId = transfer.chunkOrder[transfer.nextChunkIndex]
+            guard let bytes = try store.getChunk(id: chunkId) else {
+                throw RouterError.missingChunkBytes(id: chunkId)
+            }
+
+            let cargo = CargoItem.chunk(id: chunkId, bytes: bytes)
+            if !canAdd(cargo) { break }
+            addIfFits(cargo)
+
+            transfer.nextChunkIndex += 1
+            orderedTransfers[index] = transfer
+            index += 1
+        }
+
+        return plan
     }
 }
 

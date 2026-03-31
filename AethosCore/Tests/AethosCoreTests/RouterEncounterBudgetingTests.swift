@@ -126,14 +126,187 @@ func explainabilityLogsCaptureDecisionBreakdownAndInterruptionResumeMarkers() th
 }
 
 @Test
-func encounterBudgetFixturesDecode() throws {
+func encounterBudgetFixturesDriveExpectedEncounterClassesAndStops() throws {
     let fixtures = ["blink", "short", "durable"]
     for fixture in fixtures {
+        let store = try makeStore()
+        let router = Router(store: store)
+        let now = Date(timeIntervalSince1970: 50_000)
+        let peerId = Data(repeating: 0xA1, count: 32)
+
         let parsed = try loadFixture(named: fixture)
         #expect(parsed.maxBytes > 0)
         #expect(parsed.maxItems > 0)
         #expect(!parsed.expectedFocus.isEmpty)
+
+        let receipt = ReceiptV1(envelopeId: Data(repeating: 0x41, count: 32), manifestId: Data(repeating: 0x51, count: 32), receivedAtUnixMs: 1, signature: Data())
+        try store.enqueue(item: OutboxItem(id: Data([0x31]), kind: .receipt, payload: CanonicalEncoderV1.encode(receipt), enqueuedAt: now))
+        try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0x71)
+        try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0x72)
+        try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0x73)
+
+        let context = EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(
+                maxBytes: parsed.maxBytes,
+                maxItems: parsed.maxItems,
+                estimatedDurationSeconds: parsed.estimatedDurationSeconds
+            ),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: peerId
+        )
+        let plan = try router.planNextEncounter(context: context, now: now)
+        #expect(plan.encounterClass.rawValue == parsed.name)
+        #expect(plan.decisionLogs.last?.stopReason?.rawValue == parsed.stopReason)
+        #expect(plan.items.contains { $0.priority == .receipt })
     }
+}
+
+@Test
+func plannerIsDeterministicForSameInputsIncludingDecisionLogs() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 60_000)
+    let peerId = Data(repeating: 0xD2, count: 32)
+
+    let receipt = ReceiptV1(envelopeId: Data(repeating: 0x33, count: 32), manifestId: Data(repeating: 0x44, count: 32), receivedAtUnixMs: 1, signature: Data())
+    try store.enqueue(item: OutboxItem(id: Data([0x90]), kind: .receipt, payload: CanonicalEncoderV1.encode(receipt), enqueuedAt: now))
+    try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0x91)
+
+    let context = EncounterSchedulingContext(
+        budget: EncounterBudgetProfile(maxBytes: 90_000, maxItems: 50, estimatedDurationSeconds: 45),
+        selectedBearer: "sim-link",
+        remoteWayfarerId: peerId
+    )
+
+    let planA = try router.planNextEncounter(context: context, now: now)
+    let planB = try router.planNextEncounter(context: context, now: now)
+    #expect(planA == planB)
+}
+
+@Test
+func plannerContinuesAfterNonFittingCandidateToAvoidUnderfill() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 70_000)
+    let peerId = Data(repeating: 0xE2, count: 32)
+
+    let oversizedBody = Data(repeating: 0x41, count: 4_500)
+    let oversizedMessage = MessageV1(createdAtUnixMs: Int64(now.timeIntervalSince1970 * 1000), authorWayfarerId: peerId, body: oversizedBody)
+    let oversizedId = Data([0xA0])
+    try store.enqueue(item: OutboxItem(
+        id: oversizedId,
+        kind: .message,
+        payload: CanonicalEncoderV1.encode(oversizedMessage),
+        enqueuedAt: now.addingTimeInterval(-3_000)
+    ))
+
+    let smallBody = Data(repeating: 0x42, count: 512)
+    let smallMessage = MessageV1(createdAtUnixMs: Int64(now.timeIntervalSince1970 * 1000), authorWayfarerId: peerId, body: smallBody)
+    let smallId = Data([0xA1])
+    try store.enqueue(item: OutboxItem(
+        id: smallId,
+        kind: .message,
+        payload: CanonicalEncoderV1.encode(smallMessage),
+        enqueuedAt: now
+    ))
+
+    let context = EncounterSchedulingContext(
+        budget: EncounterBudgetProfile(maxBytes: 1_500, maxItems: 10, estimatedDurationSeconds: 20),
+        selectedBearer: "sim-link",
+        remoteWayfarerId: peerId,
+        userIntentBoostItemIDs: Set([oversizedId])
+    )
+    let plan = try router.planNextEncounter(context: context, now: now)
+
+    #expect(plan.items.contains { if case let .message(bytes) = $0 { bytes == CanonicalEncoderV1.encode(smallMessage) } else { false } })
+    #expect(!plan.items.contains { if case let .message(bytes) = $0 { bytes == CanonicalEncoderV1.encode(oversizedMessage) } else { false } })
+}
+
+@Test
+func transitTierTwoRequiresEndangerment() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 75_000)
+    let remotePeerId = Data(repeating: 0x61, count: 32)
+    let thirdPartyPeerId = Data(repeating: 0x62, count: 32)
+
+    let destinationEnvelope = EnvelopeV1(toWayfarerId: remotePeerId, manifestId: Data(repeating: 0x63, count: 32), body: Data([0x01]))
+    let transitEnvelopeNotEndangered = EnvelopeV1(toWayfarerId: thirdPartyPeerId, manifestId: Data(repeating: 0x64, count: 32), body: Data([0x02]))
+
+    try store.enqueue(item: OutboxItem(id: Data([0xD1]), kind: .envelope, payload: CanonicalEncoderV1.encode(destinationEnvelope), enqueuedAt: now))
+    try store.enqueue(item: OutboxItem(
+        id: Data([0xD2]),
+        kind: .envelope,
+        payload: CanonicalEncoderV1.encode(transitEnvelopeNotEndangered),
+        enqueuedAt: now,
+        expiresAt: now.addingTimeInterval(600)
+    ))
+
+    let plan = try router.planNextEncounter(
+        context: EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: 16_000, maxItems: 10, estimatedDurationSeconds: 20),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: remotePeerId
+        ),
+        now: now
+    )
+
+    let stopReasons = plan.decisionLogs.compactMap(\.stopReason)
+    #expect(stopReasons.contains(.completedCandidates))
+    let firstEnvelope = plan.items.first { if case .envelope = $0 { true } else { false } }
+    if case let .envelope(firstBytes)? = firstEnvelope {
+        #expect(firstBytes == CanonicalEncoderV1.encode(destinationEnvelope))
+    }
+}
+
+@Test
+func legacyPlanNextSessionPreservesPreEncounterDurableCapSemantics() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 80_000)
+    let peerId = Data(repeating: 0xF2, count: 32)
+
+    try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0xB1)
+
+    let legacyPlan = try router.planNextSession(budget: SessionBudget(maxBytes: 5_000, maxItems: 10), now: now)
+    #expect(legacyPlan.contains { if case .chunk = $0 { true } else { false } })
+
+    let encounterPlan = try router.planNextEncounter(
+        context: EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: 5_000, maxItems: 10, estimatedDurationSeconds: nil),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: peerId
+        ),
+        now: now
+    )
+    #expect(!encounterPlan.items.contains { if case .chunk = $0 { true } else { false } })
+}
+
+@Test
+func explainabilityLogsDoNotLeakRawPayloadContent() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 90_000)
+    let peerId = Data(repeating: 0xC2, count: 32)
+    let secret = Data("super-secret-payload".utf8)
+    let secretHex = Hex.encode(secret)
+
+    let message = MessageV1(createdAtUnixMs: Int64(now.timeIntervalSince1970 * 1000), authorWayfarerId: peerId, body: secret)
+    try store.enqueue(item: OutboxItem(id: Data([0xCC]), kind: .message, payload: CanonicalEncoderV1.encode(message), enqueuedAt: now))
+
+    let plan = try router.planNextEncounter(
+        context: EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: 30_000, maxItems: 10, estimatedDurationSeconds: 30),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: peerId
+        ),
+        now: now
+    )
+
+    #expect(plan.decisionLogs.allSatisfy { log in
+        let chosen = log.chosenItemIdHex ?? ""
+        return chosen != secretHex && !chosen.contains("73757065722d736563726574")
+    })
 }
 
 private struct EncounterBudgetFixture: Codable {

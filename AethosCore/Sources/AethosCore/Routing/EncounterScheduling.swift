@@ -107,7 +107,6 @@ public struct EncounterDecisionLog: Equatable, Sendable {
         case maxBytesReached
         case estimatedTimeBudgetReached
         case durableCargoCapReached
-        case lowerTierPreemptedByHigherTier
     }
 
     public enum InterruptionMarker: String, Equatable, Sendable {
