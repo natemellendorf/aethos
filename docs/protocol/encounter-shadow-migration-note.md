@@ -1,8 +1,8 @@
 # Encounter Scheduler v1 Shadow Migration Note
 
-Status: audit + shadow-only comparison (no production cutover)
+Status: canonical cutover complete (Encounter Scheduler v1 is primary)
 
-## Current routing audit (legacy planner behavior)
+## Current routing audit (canonical primary behavior)
 
 ### Transfer candidate gathering
 
@@ -12,19 +12,16 @@ Status: audit + shadow-only comparison (no production cutover)
 ### Where ordering happens today
 
 - Store read order is FIFO-like from `AethosStore.peekQueuedOutbox(limit:)` (`AethosCore/Sources/AethosCore/Store/AethosStore.swift`), using SQL `ORDER BY enqueued_at ASC, rowid ASC`.
-- Encounter planner ordering:
-  - hard-tier bucket order (`EncounterTier` ascending) in `Router.buildPlan(...)`;
-  - intra-tier weighted score descending;
-  - tie-break by `itemId` lexicographic order.
-- Legacy session planner ordering:
-  - fixed kind pass order in `Router.planNextSessionLegacy(...)`;
-  - transfer sort by `enqueuedAt` only;
-  - chunk round-robin by grouped transfer.
+- Canonical planner ordering:
+  - hard-tier ordering, deterministic score ordering, and tie-break behavior in `EncounterSchedulerV1`;
+  - canonical selection is projected back into `EncounterPlan.items` + explainability logs by `Router.buildCanonicalPlan(...)`.
+- Session planning (`Router.planNextSession`) delegates to canonical encounter planning with session-compatible defaults.
+- Legacy weighted-order implementation is now isolated to `Router.buildLegacyFallbackPlan(...)` and used only for DEBUG shadow telemetry.
 
 ### Implicit FIFO
 
-- Yes, implicit FIFO exists from store read ordering plus stable per-kind loops.
-- It is partial FIFO because hard tiers and scoring can reorder candidates within encounter planning.
+- Input candidate collection still starts from store FIFO-like ordering.
+- Final selection ordering is canonical scheduler output (deterministic, score/tie-break driven), not FIFO.
 
 ### Direct destination relevance dominance
 
@@ -34,28 +31,27 @@ Status: audit + shadow-only comparison (no production cutover)
 
 ### Receipts/checkpoints protection
 
-- Yes, primarily protected:
-  - legacy planner sends receipts/inventory requests first;
-  - encounter planner places receipts/inventory requests in tier 0.
+- Yes, protected via canonical tiering:
+  - receipts/inventory requests remain tier 0 and are favored by canonical ranking/selection.
 - Not mathematically absolute under impossible budgets (for example item does not fit `maxBytes`).
 
 ### Nondeterminism entry points
 
-- Time-dependent chunk rotation seed (`chunkRotationOffset(nowMs:manifestId:count:)`) changes ordering between runs with different `now`.
-- Legacy transfer tie ordering on equal `enqueuedAt` depends on dictionary value iteration before sort key tie-break.
-- Encounter path reduces this by explicit secondary sort key (`manifestId`) in transfer ordering.
+- Time-dependent chunk rotation seed (`chunkRotationOffset(nowMs:manifestId:count:)`) remains intentional and affects candidate ordering across different `now` inputs.
+- Canonical scheduling itself is deterministic for the same input set.
 
-## Shadow-mode implementation (this bead)
+## Shadow-mode implementation (post-cutover)
 
-- Legacy encounter plan remains authoritative.
-- In debug/test builds, `EncounterSchedulerV1` runs on the **same candidate set** as legacy planning.
-- Shadow output is exposed in `EncounterPlan.shadowComparison` (no wire changes, no primary selection changes).
+- Canonical encounter plan is authoritative in all production builds.
+- In debug/test builds, legacy fallback planning can be compared against canonical output using `EncounterShadowMode.compareLegacyFallbackV1`.
+- Shadow output remains exposed in `EncounterPlan.shadowComparison` (no wire or frame changes).
 
 Key code:
 
 - `EncounterSchedulingContext.shadowMode`, `shadowTopN` and `EncounterShadowMode`.
 - `EncounterShadowComparison` telemetry payload with normalized diff flags.
-- `Router.buildShadowComparison(...)` runs canonical scheduler and compares against legacy selected outputs.
+- `Router.buildCanonicalPlan(...)` maps canonical scheduler output to router items + decision logs.
+- `Router.buildShadowComparison(...)` compares canonical primary outputs against legacy fallback outputs.
 
 ## Known mismatch classes captured by telemetry
 
@@ -65,12 +61,10 @@ Key code:
 - `tierDistributionChanged`
 - `transitDirectBalanceChanged`
 - `selectedItemMappingLoss`
-- `schedulerError`
+- `schedulerError` (reserved; not expected on canonical primary path)
 
-## Low-risk cutover path
+## Post-cutover verification notes
 
-1. Keep production at `shadowMode = .disabled`.
-2. Run debug/test suites and scenario tests, inspect `shadowComparison.differences` frequency and shape.
-3. Resolve deterministic mismatch hotspots first (notably legacy transfer equal-enqueue tie handling and stop-reason semantics alignment).
-4. Add guardrail threshold (for example fail CI on unexpected diff classes) before any runtime switch.
-5. Introduce explicit runtime flag for canonical-primary mode only after sustained zero-regression shadow runs.
+1. Keep production default at `shadowMode = .disabled`.
+2. Use DEBUG `compareLegacyFallbackV1` only for temporary telemetry while retiring legacy assumptions in tests/consumers.
+3. Remove legacy fallback path once shadow telemetry is no longer needed.

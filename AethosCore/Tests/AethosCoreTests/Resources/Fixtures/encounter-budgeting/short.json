@@ -9,5 +9,5 @@
     "tier3-metadata",
     "tier4-small-cargo"
   ],
-  "stop_reason": "completedCandidates"
+  "stop_reason": "durableCargoCapReached"
 }

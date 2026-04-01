@@ -74,11 +74,12 @@ public struct EncounterSchedulingContext: Equatable, Sendable {
 
 public enum EncounterShadowMode: String, Equatable, Sendable {
     case disabled
-    case compareCanonicalV1
+    /// DEBUG-only telemetry mode: compare canonical primary outputs with legacy fallback outputs.
+    case compareLegacyFallbackV1
 
     public static var defaultForCurrentBuild: EncounterShadowMode {
         #if DEBUG
-        return .compareCanonicalV1
+        return .compareLegacyFallbackV1
         #else
         return .disabled
         #endif

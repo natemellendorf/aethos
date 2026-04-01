@@ -4,6 +4,7 @@ public final class Router {
     public enum RouterError: Swift.Error, Equatable {
         case invalidCanonicalType
         case missingChunkBytes(id: Data)
+        case canonicalSelectionMappingLoss(itemIDHex: String)
     }
 
     private struct PendingTransfer {
@@ -30,9 +31,11 @@ public final class Router {
     private struct ShadowCandidate {
         let canonicalItemIDHex: String
         let legacyItemIDHex: String
+        let cargoItem: CargoItem
         let tier: EncounterTier
         let destinationRelevant: Bool
         let transitForwardingCandidate: Bool
+        let resumeCapable: Bool
         let schedulerItem: EncounterSchedulerV1.CargoItem
     }
 
@@ -43,13 +46,44 @@ public final class Router {
     }
 
     public func planNextSession(budget: SessionBudget, now: Date) throws -> [CargoItem] {
-        try planNextSessionLegacy(budget: budget, now: now)
+        guard budget.maxItems > 0, budget.maxBytes > 0 else { return [] }
+
+        let context = EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(
+                maxBytes: budget.maxBytes,
+                maxItems: budget.maxItems,
+                estimatedDurationSeconds: nil,
+                durableCargoRatioCap: 1.0
+            ),
+            selectedBearer: "session",
+            shadowMode: .disabled
+        )
+        return try planNextEncounter(context: context, now: now).items
     }
 
     public func planNextEncounter(context: EncounterSchedulingContext, now: Date) throws -> EncounterPlan {
+        let encounterClass = classifyEncounter(context: context)
+
+        guard context.budget.maxItems > 0, context.budget.maxBytes > 0 else {
+            let stopReason: EncounterDecisionLog.StopReason = context.budget.maxItems <= 0 ? .maxItemsReached : .maxBytesReached
+            return EncounterPlan(
+                encounterClass: encounterClass,
+                items: [],
+                decisionLogs: [
+                    makeDecisionLog(
+                        encounterClass: encounterClass,
+                        context: context,
+                        candidateCountsByTier: candidateCountsByTier(candidates: []),
+                        stopReason: stopReason,
+                        interruption: .interruptionDetected
+                    )
+                ],
+                shadowComparison: nil
+            )
+        }
+
         let outbox = try store.peekQueuedOutbox(limit: 10_000)
         let activeOutbox = outbox.filter { $0.expiresAt.map { $0 > now } ?? true }
-        let encounterClass = classifyEncounter(context: context)
 
         var candidates: [EncounterCandidate] = []
         candidates.reserveCapacity(activeOutbox.count * 2)
@@ -73,7 +107,7 @@ public final class Router {
         let transferCandidates = try buildTransferCandidates(from: activeOutbox, now: now, context: context)
         candidates.append(contentsOf: transferCandidates)
 
-        let legacyPlan = buildPlan(
+        let canonicalPlan = try buildCanonicalPlan(
             candidates: candidates,
             encounterClass: encounterClass,
             context: context,
@@ -84,126 +118,163 @@ public final class Router {
             mode: context.shadowMode,
             topN: context.shadowTopN,
             candidates: candidates,
-            legacyPlan: legacyPlan,
+            canonicalPlan: canonicalPlan,
             encounterClass: encounterClass,
             context: context,
             now: now
         )
 
         return EncounterPlan(
-            encounterClass: legacyPlan.encounterClass,
-            items: legacyPlan.items,
-            decisionLogs: legacyPlan.decisionLogs,
+            encounterClass: canonicalPlan.encounterClass,
+            items: canonicalPlan.items,
+            decisionLogs: canonicalPlan.decisionLogs,
             shadowComparison: shadowComparison
         )
+    }
+
+    private func buildCanonicalPlan(
+        candidates: [EncounterCandidate],
+        encounterClass: EncounterClass,
+        context: EncounterSchedulingContext,
+        now: Date
+    ) throws -> EncounterPlan {
+        let nowUnixMs = unixMilliseconds(date: now)
+        let canonicalBudget = canonicalBudgetProfile(encounterClass: encounterClass, context: context)
+        let shadowCandidates = makeShadowCandidates(candidates: candidates, context: context)
+        let canonicalScheduler = EncounterSchedulerV1()
+        let schedulerResult = try canonicalScheduler.schedule(
+            encounterClass: encounterClass,
+            budget: canonicalBudget,
+            nowUnixMs: nowUnixMs,
+            cargoItems: shadowCandidates.map(\.schedulerItem)
+        )
+
+        let selectedCanonicalItemIDs = schedulerResult.selectedPrefix.map(\.cargoItem.itemID)
+        let shadowCandidatesByCanonicalID = candidatesByCanonicalItemID(candidates: shadowCandidates)
+        let selectionMapping = mapSelectedShadowCandidates(
+            itemIDsHex: selectedCanonicalItemIDs,
+            candidatesByCanonicalItemID: shadowCandidatesByCanonicalID
+        )
+        if selectionMapping.unmappedCount > 0 {
+            throw RouterError.canonicalSelectionMappingLoss(itemIDHex: selectedCanonicalItemIDs.first ?? "")
+        }
+
+        let selectedCandidates = selectionMapping.selectedCandidates
+        let selectedItems = selectedCandidates.map(\.cargoItem)
+        let scoreByCanonicalItemID = Dictionary(uniqueKeysWithValues: schedulerResult.selectedPrefix.map {
+            ($0.cargoItem.itemID, $0.scoreBreakdown)
+        })
+
+        let candidateCountsByTier = candidateCountsByTier(candidates: candidates)
+        var decisionLogs: [EncounterDecisionLog] = []
+        decisionLogs.reserveCapacity(selectedCandidates.count + 1)
+
+        for candidate in selectedCandidates {
+            guard let scoreBreakdown = scoreByCanonicalItemID[candidate.canonicalItemIDHex] else {
+                throw RouterError.canonicalSelectionMappingLoss(itemIDHex: candidate.canonicalItemIDHex)
+            }
+
+            decisionLogs.append(EncounterDecisionLog(
+                encounterClass: encounterClass,
+                selectedBearer: context.selectedBearer,
+                estimatedTimeBudgetSeconds: context.budget.estimatedDurationSeconds,
+                estimatedByteBudget: context.budget.maxBytes,
+                candidateCountsByTier: candidateCountsByTier,
+                chosenItemIdHex: candidate.legacyItemIDHex,
+                scoreBreakdown: encounterDecisionScoreBreakdown(from: scoreBreakdown),
+                stopReason: nil,
+                interruptionMarker: candidate.resumeCapable ? .resumeReady : .none
+            ))
+        }
+
+        let stopReason = encounterDecisionStopReason(from: schedulerResult.stopReason)
+        let finalInterruption: EncounterDecisionLog.InterruptionMarker = stopReason == .completedCandidates ? .none : .interruptionDetected
+        decisionLogs.append(makeDecisionLog(
+            encounterClass: encounterClass,
+            context: context,
+            candidateCountsByTier: candidateCountsByTier,
+            stopReason: stopReason,
+            interruption: finalInterruption
+        ))
+
+        return EncounterPlan(encounterClass: encounterClass, items: selectedItems, decisionLogs: decisionLogs)
     }
 
     private func buildShadowComparison(
         mode: EncounterShadowMode,
         topN: Int,
         candidates: [EncounterCandidate],
-        legacyPlan: EncounterPlan,
+        canonicalPlan: EncounterPlan,
         encounterClass: EncounterClass,
         context: EncounterSchedulingContext,
         now: Date
     ) -> EncounterShadowComparison? {
         guard isShadowComparisonEnabled(mode: mode) else { return nil }
 
-        let selectedLegacyItemIDs = legacyPlan.decisionLogs.compactMap(\.chosenItemIdHex)
+        let legacyFallbackPlan = buildLegacyFallbackPlan(
+            candidates: candidates,
+            encounterClass: encounterClass,
+            context: context,
+            now: now
+        )
+
+        let selectedLegacyItemIDs = legacyFallbackPlan.decisionLogs.compactMap { $0.chosenItemIdHex }
         let legacyCandidatesByID = candidatesByLegacyItemID(candidates: candidates)
         let legacySelectionMapping = mapSelectedLegacyCandidates(
             itemIDsHex: selectedLegacyItemIDs,
             candidatesByLegacyItemID: legacyCandidatesByID
         )
-        let legacyStopReason = normalizedStopReason(legacyPlan: legacyPlan)
+        let legacyStopReason = normalizedStopReason(decisionLogs: legacyFallbackPlan.decisionLogs)
+
+        let selectedCanonicalItemIDs = canonicalPlan.decisionLogs.compactMap { $0.chosenItemIdHex }
+        let canonicalSelectionMapping = mapSelectedLegacyCandidates(
+            itemIDsHex: selectedCanonicalItemIDs,
+            candidatesByLegacyItemID: legacyCandidatesByID
+        )
+        let canonicalStopReason = normalizedStopReason(decisionLogs: canonicalPlan.decisionLogs)
 
         let normalizedTopN = max(topN, 1)
         let legacyTopN = Array(selectedLegacyItemIDs.prefix(normalizedTopN))
+        let canonicalTopN = Array(selectedCanonicalItemIDs.prefix(normalizedTopN))
         let legacyTierDistribution = tierDistribution(selectedCandidates: legacySelectionMapping.selectedCandidates)
+        let canonicalTierDistribution = tierDistribution(selectedCandidates: canonicalSelectionMapping.selectedCandidates)
         let legacyTransitDirectBalance = transitDirectBalance(selectedCandidates: legacySelectionMapping.selectedCandidates)
+        let canonicalTransitDirectBalance = transitDirectBalance(selectedCandidates: canonicalSelectionMapping.selectedCandidates)
         let legacyUnmappedSelectedItemCount = legacySelectionMapping.unmappedCount
+        let canonicalUnmappedSelectedItemCount = canonicalSelectionMapping.unmappedCount
 
-        let nowUnixMs = unixMilliseconds(date: now)
-        let canonicalBudget = canonicalBudgetProfile(encounterClass: encounterClass, context: context)
-        let shadowCandidates = makeShadowCandidates(candidates: candidates, context: context)
-        let canonicalScheduler = EncounterSchedulerV1()
+        let differences = EncounterShadowComparison.Difference.detect(
+            legacyTopNItemIDsHex: legacyTopN,
+            canonicalTopNItemIDsHex: canonicalTopN,
+            legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
+            canonicalFirstSelectedItemIDHex: selectedCanonicalItemIDs.first,
+            legacyStopReason: legacyStopReason,
+            canonicalStopReason: canonicalStopReason,
+            legacyTierDistribution: legacyTierDistribution,
+            canonicalTierDistribution: canonicalTierDistribution,
+            legacyTransitDirectBalance: legacyTransitDirectBalance,
+            canonicalTransitDirectBalance: canonicalTransitDirectBalance,
+            legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
+            canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount
+        )
 
-        do {
-            let result = try canonicalScheduler.schedule(
-                encounterClass: encounterClass,
-                budget: canonicalBudget,
-                nowUnixMs: nowUnixMs,
-                cargoItems: shadowCandidates.map(\.schedulerItem)
-            )
-
-            let shadowCandidatesByCanonicalID = candidatesByCanonicalItemID(candidates: shadowCandidates)
-            let selectedCanonicalItemIDs = result.selectedPrefix.map(\.cargoItem.itemID)
-            let canonicalSelectionMapping = mapSelectedShadowCandidates(
-                itemIDsHex: selectedCanonicalItemIDs,
-                candidatesByCanonicalItemID: shadowCandidatesByCanonicalID
-            )
-            let selectedCanonical = canonicalSelectionMapping.selectedCandidates
-            let selectedCanonicalLegacyIDs = selectedCanonical.map(\.legacyItemIDHex)
-            let canonicalTopN = Array(selectedCanonicalLegacyIDs.prefix(normalizedTopN))
-            let canonicalTierDistribution = tierDistribution(selectedCandidates: selectedCanonical)
-            let canonicalTransitDirectBalance = transitDirectBalance(selectedCandidates: selectedCanonical)
-            let canonicalUnmappedSelectedItemCount = canonicalSelectionMapping.unmappedCount
-
-            let differences = EncounterShadowComparison.Difference.detect(
-                legacyTopNItemIDsHex: legacyTopN,
-                canonicalTopNItemIDsHex: canonicalTopN,
-                legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
-                canonicalFirstSelectedItemIDHex: selectedCanonicalLegacyIDs.first,
-                legacyStopReason: legacyStopReason,
-                canonicalStopReason: result.stopReason.rawValue,
-                legacyTierDistribution: legacyTierDistribution,
-                canonicalTierDistribution: canonicalTierDistribution,
-                legacyTransitDirectBalance: legacyTransitDirectBalance,
-                canonicalTransitDirectBalance: canonicalTransitDirectBalance,
-                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
-                canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount
-            )
-
-            return EncounterShadowComparison(
-                topN: normalizedTopN,
-                legacyTopNItemIDsHex: legacyTopN,
-                canonicalTopNItemIDsHex: canonicalTopN,
-                legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
-                canonicalFirstSelectedItemIDHex: selectedCanonicalLegacyIDs.first,
-                legacyStopReason: legacyStopReason,
-                canonicalStopReason: result.stopReason.rawValue,
-                legacyTierDistribution: legacyTierDistribution,
-                canonicalTierDistribution: canonicalTierDistribution,
-                legacyTransitDirectBalance: legacyTransitDirectBalance,
-                canonicalTransitDirectBalance: canonicalTransitDirectBalance,
-                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
-                canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount,
-                schedulerErrorDescription: nil,
-                differences: differences
-            )
-        } catch {
-            var differences: [EncounterShadowComparison.Difference] = [.schedulerError]
-            if legacyUnmappedSelectedItemCount > 0 {
-                differences.append(.selectedItemMappingLoss)
-            }
-            return EncounterShadowComparison(
-                topN: normalizedTopN,
-                legacyTopNItemIDsHex: legacyTopN,
-                canonicalTopNItemIDsHex: [],
-                legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
-                canonicalFirstSelectedItemIDHex: nil,
-                legacyStopReason: legacyStopReason,
-                canonicalStopReason: nil,
-                legacyTierDistribution: legacyTierDistribution,
-                canonicalTierDistribution: nil,
-                legacyTransitDirectBalance: legacyTransitDirectBalance,
-                canonicalTransitDirectBalance: nil,
-                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
-                canonicalUnmappedSelectedItemCount: 0,
-                schedulerErrorDescription: String(describing: error),
-                differences: differences
-            )
-        }
+        return EncounterShadowComparison(
+            topN: normalizedTopN,
+            legacyTopNItemIDsHex: legacyTopN,
+            canonicalTopNItemIDsHex: canonicalTopN,
+            legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
+            canonicalFirstSelectedItemIDHex: selectedCanonicalItemIDs.first,
+            legacyStopReason: legacyStopReason,
+            canonicalStopReason: canonicalStopReason,
+            legacyTierDistribution: legacyTierDistribution,
+            canonicalTierDistribution: canonicalTierDistribution,
+            legacyTransitDirectBalance: legacyTransitDirectBalance,
+            canonicalTransitDirectBalance: canonicalTransitDirectBalance,
+            legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
+            canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount,
+            schedulerErrorDescription: nil,
+            differences: differences
+        )
     }
 
     private func canonicalBudgetProfile(
@@ -220,7 +291,7 @@ public final class Router {
     }
 
     private func isShadowComparisonEnabled(mode: EncounterShadowMode) -> Bool {
-        guard mode == .compareCanonicalV1 else { return false }
+        guard mode == .compareLegacyFallbackV1 else { return false }
         #if DEBUG
         return true
         #else
@@ -228,9 +299,9 @@ public final class Router {
         #endif
     }
 
-    private func normalizedStopReason(legacyPlan: EncounterPlan) -> String {
-        let legacyStop = legacyPlan.decisionLogs.compactMap(\.stopReason).last ?? .completedCandidates
-        switch legacyStop {
+    private func normalizedStopReason(decisionLogs: [EncounterDecisionLog]) -> String {
+        let stopReason = decisionLogs.compactMap(\.stopReason).last ?? .completedCandidates
+        switch stopReason {
         case .completedCandidates:
             return EncounterSelectionStopReason.completed.rawValue
         case .maxItemsReached:
@@ -241,6 +312,45 @@ public final class Router {
             return EncounterSelectionStopReason.encounterTimeExhausted.rawValue
         case .durableCargoCapReached:
             return EncounterSelectionStopReason.durableRatioCapReached.rawValue
+        }
+    }
+
+    private func encounterDecisionStopReason(from stopReason: EncounterSelectionStopReason) -> EncounterDecisionLog.StopReason {
+        switch stopReason {
+        case .completed, .noEligibleItems:
+            return .completedCandidates
+        case .budgetItemsExhausted:
+            return .maxItemsReached
+        case .budgetBytesExhausted:
+            return .maxBytesReached
+        case .encounterTimeExhausted:
+            return .estimatedTimeBudgetReached
+        case .durableRatioCapReached:
+            return .durableCargoCapReached
+        }
+    }
+
+    private func encounterDecisionScoreBreakdown(from scoreBreakdown: EncounterScoreBreakdown) -> EncounterDecisionScoreBreakdown {
+        EncounterDecisionScoreBreakdown(
+            replicationScarcity: scoreBreakdown.components.scarcity,
+            deliveryProximity: scoreBreakdown.components.proximity,
+            expiryUrgency: scoreBreakdown.components.expiry,
+            sizeCost: scoreBreakdown.components.size,
+            stagnationLackOfProgress: scoreBreakdown.components.stagnation,
+            relayIngestOrDurableStorageSafety: scoreBreakdown.components.safety,
+            userIntentBoost: scoreBreakdown.components.intent,
+            contentClass: scoreBreakdown.components.contentClass,
+            total: scoreBreakdown.score
+        )
+    }
+
+    private func candidateCountsByTier(candidates: [EncounterCandidate]) -> [EncounterTier: Int] {
+        let counts = EncounterTier.allCases.reduce(into: [EncounterTier: Int]()) { result, tier in
+            result[tier] = 0
+        }
+
+        return candidates.reduce(into: counts) { result, candidate in
+            result[candidate.tier, default: 0] += 1
         }
     }
 
@@ -255,7 +365,7 @@ public final class Router {
         }
         var duplicateOccurrenceByLegacyID: [String: Int] = [:]
 
-        return candidates.map { candidate in
+        return candidates.enumerated().map { index, candidate in
             let legacyItemIDHex = Hex.encode(candidate.itemId)
             let duplicateOccurrence: Int?
             if duplicateCountByLegacyID[legacyItemIDHex, default: 0] > 1 {
@@ -283,7 +393,7 @@ public final class Router {
                 durablyStored: context.relayIngestSafetyAvailable,
                 relayIngested: context.relayIngestSafetyAvailable,
                 receiptCoverage: receiptCoverage(candidate: candidate),
-                lastForwardedAtUnixMs: unixMilliseconds(date: candidate.enqueuedAt),
+                lastForwardedAtUnixMs: canonicalLastForwardedAtUnixMs(candidate: candidate, sequenceIndex: index),
                 proximityClass: proximityClass(candidate: candidate),
                 explicitUserInitiated: context.userIntentBoostItemIDs.contains(candidate.itemId),
                 contentClassScore: contentClassWeight(candidate: candidate),
@@ -294,9 +404,11 @@ public final class Router {
             return ShadowCandidate(
                 canonicalItemIDHex: canonicalItemIDHex,
                 legacyItemIDHex: legacyItemIDHex,
+                cargoItem: candidate.item,
                 tier: candidate.tier,
                 destinationRelevant: candidate.destinationRelevant,
                 transitForwardingCandidate: candidate.transitForwardingCandidate,
+                resumeCapable: candidate.resumeCapable,
                 schedulerItem: schedulerItem
             )
         }
@@ -455,6 +567,14 @@ public final class Router {
     private func expiryUnixMilliseconds(_ date: Date?) -> UInt64 {
         guard let date else { return UInt64.max }
         return unixMilliseconds(date: date)
+    }
+
+    private func canonicalLastForwardedAtUnixMs(candidate: EncounterCandidate, sequenceIndex: Int) -> UInt64 {
+        let base = unixMilliseconds(date: candidate.enqueuedAt)
+        let safeIndex = max(sequenceIndex, 0)
+        let offset = UInt64(safeIndex)
+        let (sum, overflow) = base.addingReportingOverflow(offset)
+        return overflow ? UInt64.max : sum
     }
 
     private func chunkRotationOffset(nowMs: Int64, manifestId: Data, count: Int) -> Int {
@@ -638,7 +758,8 @@ public final class Router {
         return candidates
     }
 
-    private func buildPlan(
+    /// Legacy ordering fallback kept only for DEBUG shadow comparison against canonical primary planner.
+    private func buildLegacyFallbackPlan(
         candidates: [EncounterCandidate],
         encounterClass: EncounterClass,
         context: EncounterSchedulingContext,
@@ -915,137 +1036,6 @@ public final class Router {
         )
     }
 
-    private func planNextSessionLegacy(budget: SessionBudget, now: Date) throws -> [CargoItem] {
-        var plan: [CargoItem] = []
-        plan.reserveCapacity(min(budget.maxItems, 64))
-
-        var usedBytes = 0
-
-        func canAdd(_ item: CargoItem) -> Bool {
-            if plan.count + 1 > budget.maxItems { return false }
-            if usedBytes + item.sizeBytes > budget.maxBytes { return false }
-            return true
-        }
-
-        func addIfFits(_ item: CargoItem) {
-            guard canAdd(item) else { return }
-            plan.append(item)
-            usedBytes += item.sizeBytes
-        }
-
-        let outbox = try store.peekQueuedOutbox(limit: 10_000)
-        let activeOutbox = outbox.filter { $0.expiresAt.map { $0 > now } ?? true }
-
-        for item in activeOutbox where item.kind == .receipt {
-            let cargo = CargoItem.receipt(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
-        }
-
-        for item in activeOutbox where item.kind == .inventoryRequest {
-            let cargo = CargoItem.inventoryRequest(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
-        }
-
-        for item in activeOutbox where item.kind == .inventory {
-            let cargo = CargoItem.inventory(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
-        }
-
-        for item in activeOutbox where item.kind == .message {
-            let cargo = CargoItem.message(item.payload)
-            if !canAdd(cargo) { return plan }
-            addIfFits(cargo)
-        }
-
-        var transfers: [Data: PendingTransfer] = [:]
-        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-
-        for item in activeOutbox where item.kind == .manifest {
-            let manifestId = AethosIDs.manifestId(canonicalBytes: item.payload)
-            let parsed = try CanonicalParserV1.parseManifest(canonical: item.payload)
-
-            let rotation = chunkRotationOffset(nowMs: nowMs, manifestId: manifestId, count: parsed.chunkIds.count)
-            let chunkOrder = rotate(parsed.chunkIds, by: rotation)
-
-            let transfer = PendingTransfer(
-                manifestId: manifestId,
-                enqueuedAt: item.enqueuedAt,
-                manifestBytes: item.payload,
-                envelopeBytes: nil,
-                envelopeDestination: nil,
-                chunkOrder: chunkOrder,
-                nextChunkIndex: 0
-            )
-            transfers[manifestId] = transfer
-        }
-
-        for item in activeOutbox where item.kind == .envelope {
-            let parsed = try CanonicalParserV1.parseEnvelope(canonical: item.payload)
-            let manifestId = parsed.manifestId
-
-            if var existing = transfers[manifestId] {
-                if existing.envelopeBytes == nil {
-                    existing.envelopeBytes = item.payload
-                }
-                transfers[manifestId] = existing
-            } else {
-                transfers[manifestId] = PendingTransfer(
-                    manifestId: manifestId,
-                    enqueuedAt: item.enqueuedAt,
-                    manifestBytes: nil,
-                    envelopeBytes: item.payload,
-                    envelopeDestination: nil,
-                    chunkOrder: [],
-                    nextChunkIndex: 0
-                )
-            }
-        }
-
-        var orderedTransfers = transfers.values.sorted { $0.enqueuedAt < $1.enqueuedAt }
-        for transfer in orderedTransfers {
-            if let manifestBytes = transfer.manifestBytes {
-                let cargo = CargoItem.manifest(manifestBytes)
-                if !canAdd(cargo) { return plan }
-                addIfFits(cargo)
-            }
-            if let envelopeBytes = transfer.envelopeBytes {
-                let cargo = CargoItem.envelope(envelopeBytes)
-                if !canAdd(cargo) { return plan }
-                addIfFits(cargo)
-            }
-        }
-
-        orderedTransfers = orderedTransfers.filter { !$0.chunkOrder.isEmpty }
-        var index = 0
-        while !orderedTransfers.isEmpty {
-            if plan.count >= budget.maxItems { break }
-
-            if index >= orderedTransfers.count { index = 0 }
-            var transfer = orderedTransfers[index]
-            if transfer.nextChunkIndex >= transfer.chunkOrder.count {
-                orderedTransfers.remove(at: index)
-                continue
-            }
-
-            let chunkId = transfer.chunkOrder[transfer.nextChunkIndex]
-            guard let bytes = try store.getChunk(id: chunkId) else {
-                throw RouterError.missingChunkBytes(id: chunkId)
-            }
-
-            let cargo = CargoItem.chunk(id: chunkId, bytes: bytes)
-            if !canAdd(cargo) { break }
-            addIfFits(cargo)
-
-            transfer.nextChunkIndex += 1
-            orderedTransfers[index] = transfer
-            index += 1
-        }
-
-        return plan
-    }
 }
 
 private enum CanonicalParserV1 {

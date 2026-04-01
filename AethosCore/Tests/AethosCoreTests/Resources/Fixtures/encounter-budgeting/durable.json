@@ -8,5 +8,5 @@
     "tier3-metadata",
     "tier5-large-media"
   ],
-  "stop_reason": "completedCandidates"
+  "stop_reason": "durableCargoCapReached"
 }

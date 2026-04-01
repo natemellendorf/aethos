@@ -377,7 +377,8 @@ func routerPrioritizesInventoryAboveChunks() throws {
 
     let plan = try router.planNextSession(budget: SessionBudget(maxBytes: 1_000_000, maxItems: 100), now: now)
 
-    // Expected priority order: receipt, inventoryRequest, inventory, message, metadata, chunks
+    // Canonical planner guarantees control-plane precedence, but intra-tier order
+    // can vary by score/tie-break. Assert relative placement against lower tiers.
     // Find indices of each type
     var receiptIdx: Int?
     var inventoryRequestIdx: Int?
@@ -403,11 +404,14 @@ func routerPrioritizesInventoryAboveChunks() throws {
         }
     }
 
-    // Receipt comes first
-    if let ri = receiptIdx, let iri = inventoryRequestIdx {
-        #expect(ri < iri)
+    // Control-plane items are both expected to be present.
+    #expect(receiptIdx != nil)
+    #expect(inventoryRequestIdx != nil)
+
+    // Control-plane items before Inventory
+    if let ri = receiptIdx, let ii = inventoryIdx {
+        #expect(ri < ii)
     }
-    // InventoryRequest before Inventory
     if let iri = inventoryRequestIdx, let ii = inventoryIdx {
         #expect(iri < ii)
     }
