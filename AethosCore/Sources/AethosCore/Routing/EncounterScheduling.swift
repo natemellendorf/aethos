@@ -50,19 +50,103 @@ public struct EncounterSchedulingContext: Equatable, Sendable {
     public let remoteWayfarerId: Data?
     public let userIntentBoostItemIDs: Set<Data>
     public let relayIngestSafetyAvailable: Bool
+    public let shadowMode: EncounterShadowMode
+    public let shadowTopN: Int
 
     public init(
         budget: EncounterBudgetProfile,
         selectedBearer: String = "unspecified",
         remoteWayfarerId: Data? = nil,
         userIntentBoostItemIDs: Set<Data> = [],
-        relayIngestSafetyAvailable: Bool = false
+        relayIngestSafetyAvailable: Bool = false,
+        shadowMode: EncounterShadowMode = .defaultForCurrentBuild,
+        shadowTopN: Int = 5
     ) {
         self.budget = budget
         self.selectedBearer = selectedBearer
         self.remoteWayfarerId = remoteWayfarerId
         self.userIntentBoostItemIDs = userIntentBoostItemIDs
         self.relayIngestSafetyAvailable = relayIngestSafetyAvailable
+        self.shadowMode = shadowMode
+        self.shadowTopN = max(shadowTopN, 1)
+    }
+}
+
+public enum EncounterShadowMode: String, Equatable, Sendable {
+    case disabled
+    case compareCanonicalV1
+
+    public static var defaultForCurrentBuild: EncounterShadowMode {
+        #if DEBUG
+        return .compareCanonicalV1
+        #else
+        return .disabled
+        #endif
+    }
+}
+
+public struct EncounterShadowTransitDirectBalance: Equatable, Sendable {
+    public let directCount: Int
+    public let transitCount: Int
+
+    public init(directCount: Int, transitCount: Int) {
+        self.directCount = directCount
+        self.transitCount = transitCount
+    }
+}
+
+public struct EncounterShadowComparison: Equatable, Sendable {
+    public enum Difference: String, Equatable, Sendable {
+        case topNChanged
+        case firstSelectedChanged
+        case stopReasonChanged
+        case tierDistributionChanged
+        case transitDirectBalanceChanged
+        case schedulerError
+    }
+
+    public let topN: Int
+    public let legacyTopNItemIDsHex: [String]
+    public let canonicalTopNItemIDsHex: [String]
+    public let legacyFirstSelectedItemIDHex: String?
+    public let canonicalFirstSelectedItemIDHex: String?
+    public let legacyStopReason: String
+    public let canonicalStopReason: String?
+    public let legacyTierDistribution: [Int]
+    public let canonicalTierDistribution: [Int]?
+    public let legacyTransitDirectBalance: EncounterShadowTransitDirectBalance
+    public let canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance?
+    public let schedulerErrorDescription: String?
+    public let differences: [Difference]
+
+    public init(
+        topN: Int,
+        legacyTopNItemIDsHex: [String],
+        canonicalTopNItemIDsHex: [String],
+        legacyFirstSelectedItemIDHex: String?,
+        canonicalFirstSelectedItemIDHex: String?,
+        legacyStopReason: String,
+        canonicalStopReason: String?,
+        legacyTierDistribution: [Int],
+        canonicalTierDistribution: [Int]?,
+        legacyTransitDirectBalance: EncounterShadowTransitDirectBalance,
+        canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance?,
+        schedulerErrorDescription: String?,
+        differences: [Difference]
+    ) {
+        self.topN = topN
+        self.legacyTopNItemIDsHex = legacyTopNItemIDsHex
+        self.canonicalTopNItemIDsHex = canonicalTopNItemIDsHex
+        self.legacyFirstSelectedItemIDHex = legacyFirstSelectedItemIDHex
+        self.canonicalFirstSelectedItemIDHex = canonicalFirstSelectedItemIDHex
+        self.legacyStopReason = legacyStopReason
+        self.canonicalStopReason = canonicalStopReason
+        self.legacyTierDistribution = legacyTierDistribution
+        self.canonicalTierDistribution = canonicalTierDistribution
+        self.legacyTransitDirectBalance = legacyTransitDirectBalance
+        self.canonicalTransitDirectBalance = canonicalTransitDirectBalance
+        self.schedulerErrorDescription = schedulerErrorDescription
+        self.differences = differences
     }
 }
 
@@ -152,10 +236,17 @@ public struct EncounterPlan: Equatable, Sendable {
     public let encounterClass: EncounterClass
     public let items: [CargoItem]
     public let decisionLogs: [EncounterDecisionLog]
+    public let shadowComparison: EncounterShadowComparison?
 
-    public init(encounterClass: EncounterClass, items: [CargoItem], decisionLogs: [EncounterDecisionLog]) {
+    public init(
+        encounterClass: EncounterClass,
+        items: [CargoItem],
+        decisionLogs: [EncounterDecisionLog],
+        shadowComparison: EncounterShadowComparison? = nil
+    ) {
         self.encounterClass = encounterClass
         self.items = items
         self.decisionLogs = decisionLogs
+        self.shadowComparison = shadowComparison
     }
 }
