@@ -32,7 +32,14 @@ let package = Package(
             dependencies: [
                 "AethosCore"
             ],
-            path: "Tests/AethosCoreTests"
+            path: "Tests/AethosCoreTests",
+            exclude: [
+                "Resources/Fixtures/Protocol/gossip-v1/README.md",
+                "Resources/Fixtures/Protocol/message-v2/README.md"
+            ],
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "AethosCoreExtendedTests",

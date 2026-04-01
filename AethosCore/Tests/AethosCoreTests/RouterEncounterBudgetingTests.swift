@@ -152,12 +152,17 @@ func encounterBudgetFixturesDriveExpectedEncounterClassesAndStops() throws {
                 estimatedDurationSeconds: parsed.estimatedDurationSeconds
             ),
             selectedBearer: "sim-link",
-            remoteWayfarerId: peerId
+            remoteWayfarerId: peerId,
+            shadowMode: .compareCanonicalV1,
+            shadowTopN: 4
         )
         let plan = try router.planNextEncounter(context: context, now: now)
         #expect(plan.encounterClass.rawValue == parsed.name)
         #expect(plan.decisionLogs.last?.stopReason?.rawValue == parsed.stopReason)
         #expect(plan.items.contains { $0.priority == .receipt })
+        let comparison = try #require(plan.shadowComparison)
+        #expect(comparison.topN == 4)
+        #expect(comparison.canonicalStopReason != nil)
     }
 }
 
@@ -334,6 +339,174 @@ func explainabilityLogsDoNotLeakRawPayloadContent() throws {
     })
 }
 
+@Test
+func shadowModeComparisonIncludesTelemetryForRepresentativeBlinkLane() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 100_000)
+    let peerId = Data(repeating: 0xA9, count: 32)
+
+    let receipt = ReceiptV1(
+        envelopeId: Data(repeating: 0x12, count: 32),
+        manifestId: Data(repeating: 0x34, count: 32),
+        receivedAtUnixMs: 1,
+        signature: Data()
+    )
+    try store.enqueue(item: OutboxItem(id: Data([0xE0]), kind: .receipt, payload: CanonicalEncoderV1.encode(receipt), enqueuedAt: now))
+
+    let urgentMessage = MessageV1(createdAtUnixMs: Int64(now.timeIntervalSince1970 * 1000), authorWayfarerId: peerId, body: Data("blink".utf8))
+    try store.enqueue(item: OutboxItem(
+        id: Data([0xE1]),
+        kind: .message,
+        payload: CanonicalEncoderV1.encode(urgentMessage),
+        enqueuedAt: now,
+        expiresAt: now.addingTimeInterval(15)
+    ))
+
+    let plan = try router.planNextEncounter(
+        context: EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: 16_000, maxItems: 10, estimatedDurationSeconds: 8),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: peerId,
+            shadowMode: .compareCanonicalV1,
+            shadowTopN: 3
+        ),
+        now: now
+    )
+
+    let comparison = try #require(plan.shadowComparison)
+    #expect(comparison.topN == 3)
+    #expect(!comparison.legacyTopNItemIDsHex.isEmpty)
+    #expect(comparison.legacyStopReason == canonicalStopReason(from: plan.decisionLogs))
+    #expect(comparison.canonicalStopReason != nil)
+}
+
+@Test
+func shadowModeComparisonDifferenceFlagsReflectComparedTelemetryFields() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 110_000)
+    let peerId = Data(repeating: 0xB9, count: 32)
+
+    let oversizedEnvelope = EnvelopeV1(
+        toWayfarerId: peerId,
+        manifestId: Data(repeating: 0x91, count: 32),
+        body: Data(repeating: 0x41, count: 2_500)
+    )
+    try store.enqueue(item: OutboxItem(
+        id: Data([0xF0]),
+        kind: .envelope,
+        payload: CanonicalEncoderV1.encode(oversizedEnvelope),
+        enqueuedAt: now
+    ))
+
+    let smallMessage = MessageV1(
+        createdAtUnixMs: Int64(now.timeIntervalSince1970 * 1000),
+        authorWayfarerId: peerId,
+        body: Data(repeating: 0x42, count: 64)
+    )
+    try store.enqueue(item: OutboxItem(
+        id: Data([0xF1]),
+        kind: .message,
+        payload: CanonicalEncoderV1.encode(smallMessage),
+        enqueuedAt: now
+    ))
+
+    let plan = try router.planNextEncounter(
+        context: EncounterSchedulingContext(
+            budget: EncounterBudgetProfile(maxBytes: 600, maxItems: 5, estimatedDurationSeconds: 30),
+            selectedBearer: "sim-link",
+            remoteWayfarerId: peerId,
+            shadowMode: .compareCanonicalV1,
+            shadowTopN: 2
+        ),
+        now: now
+    )
+
+    let comparison = try #require(plan.shadowComparison)
+    #expect(comparison.differences.contains(.topNChanged) == (comparison.legacyTopNItemIDsHex != comparison.canonicalTopNItemIDsHex))
+    #expect(comparison.differences.contains(.firstSelectedChanged) == (comparison.legacyFirstSelectedItemIDHex != comparison.canonicalFirstSelectedItemIDHex))
+
+    let canonicalStopReason = try #require(comparison.canonicalStopReason)
+    #expect(comparison.differences.contains(.stopReasonChanged) == (comparison.legacyStopReason != canonicalStopReason))
+
+    let canonicalTierDistribution = try #require(comparison.canonicalTierDistribution)
+    #expect(comparison.differences.contains(.tierDistributionChanged) == (comparison.legacyTierDistribution != canonicalTierDistribution))
+
+    let canonicalTransitDirectBalance = try #require(comparison.canonicalTransitDirectBalance)
+    #expect(comparison.differences.contains(.transitDirectBalanceChanged) == (comparison.legacyTransitDirectBalance != canonicalTransitDirectBalance))
+
+    let hasMappingLoss = comparison.legacyUnmappedSelectedItemCount > 0 || comparison.canonicalUnmappedSelectedItemCount > 0
+    #expect(comparison.differences.contains(.selectedItemMappingLoss) == hasMappingLoss)
+}
+
+@Test
+func shadowModeDifferenceDetectionIsDeterministicForForcedDriftInputs() {
+    let differences = EncounterShadowComparison.Difference.detect(
+        legacyTopNItemIDsHex: ["a"],
+        canonicalTopNItemIDsHex: ["b"],
+        legacyFirstSelectedItemIDHex: "a",
+        canonicalFirstSelectedItemIDHex: "b",
+        legacyStopReason: EncounterSelectionStopReason.completed.rawValue,
+        canonicalStopReason: EncounterSelectionStopReason.budgetItemsExhausted.rawValue,
+        legacyTierDistribution: [1, 0, 0, 0, 0, 0],
+        canonicalTierDistribution: [0, 1, 0, 0, 0, 0],
+        legacyTransitDirectBalance: EncounterShadowTransitDirectBalance(directCount: 1, transitCount: 0),
+        canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance(directCount: 0, transitCount: 1),
+        legacyUnmappedSelectedItemCount: 1,
+        canonicalUnmappedSelectedItemCount: 0
+    )
+
+    #expect(differences == [
+        .topNChanged,
+        .firstSelectedChanged,
+        .stopReasonChanged,
+        .tierDistributionChanged,
+        .transitDirectBalanceChanged,
+        .selectedItemMappingLoss,
+    ])
+}
+
+@Test
+func shadowModeDisabledPreservesLegacyOutputsWithoutTelemetry() throws {
+    let store = try makeStore()
+    let router = Router(store: store)
+    let now = Date(timeIntervalSince1970: 120_000)
+    let peerId = Data(repeating: 0xC9, count: 32)
+
+    let receipt = ReceiptV1(
+        envelopeId: Data(repeating: 0x71, count: 32),
+        manifestId: Data(repeating: 0x72, count: 32),
+        receivedAtUnixMs: 1,
+        signature: Data()
+    )
+    try store.enqueue(item: OutboxItem(id: Data([0xD0]), kind: .receipt, payload: CanonicalEncoderV1.encode(receipt), enqueuedAt: now))
+    try seedChunkTransfer(store: store, now: now, toWayfarerId: peerId, idSeed: 0xD1)
+
+    let compareContext = EncounterSchedulingContext(
+        budget: EncounterBudgetProfile(maxBytes: 20_000, maxItems: 20, estimatedDurationSeconds: 45),
+        selectedBearer: "sim-link",
+        remoteWayfarerId: peerId,
+        shadowMode: .compareCanonicalV1
+    )
+    let disabledContext = EncounterSchedulingContext(
+        budget: compareContext.budget,
+        selectedBearer: compareContext.selectedBearer,
+        remoteWayfarerId: compareContext.remoteWayfarerId,
+        userIntentBoostItemIDs: compareContext.userIntentBoostItemIDs,
+        relayIngestSafetyAvailable: compareContext.relayIngestSafetyAvailable,
+        shadowMode: .disabled
+    )
+
+    let compared = try router.planNextEncounter(context: compareContext, now: now)
+    let disabled = try router.planNextEncounter(context: disabledContext, now: now)
+
+    #expect(compared.items == disabled.items)
+    #expect(compared.decisionLogs == disabled.decisionLogs)
+    #expect(compared.shadowComparison != nil)
+    #expect(disabled.shadowComparison == nil)
+}
+
 private struct EncounterBudgetFixture: Codable {
     let name: String
     let estimatedDurationSeconds: Double
@@ -376,9 +549,29 @@ private func seedChunkTransfer(store: AethosStore, now: Date, toWayfarerId: Data
 }
 
 private func loadFixture(named name: String) throws -> EncounterBudgetFixture {
-    guard let url = Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures/encounter-budgeting") else {
-        fatalError("missing fixture: \(name)")
+    guard let url = Bundle.module.url(
+        forResource: name,
+        withExtension: "json",
+        subdirectory: "Fixtures/encounter-budgeting"
+    ) else {
+        throw NSError(domain: "RouterEncounterBudgetingTests", code: 2)
     }
     let bytes = try Data(contentsOf: url)
     return try JSONDecoder().decode(EncounterBudgetFixture.self, from: bytes)
+}
+
+private func canonicalStopReason(from decisionLogs: [EncounterDecisionLog]) -> String {
+    let legacyReason = decisionLogs.compactMap(\.stopReason).last ?? .completedCandidates
+    switch legacyReason {
+    case .completedCandidates:
+        return EncounterSelectionStopReason.completed.rawValue
+    case .maxItemsReached:
+        return EncounterSelectionStopReason.budgetItemsExhausted.rawValue
+    case .maxBytesReached:
+        return EncounterSelectionStopReason.budgetBytesExhausted.rawValue
+    case .estimatedTimeBudgetReached:
+        return EncounterSelectionStopReason.encounterTimeExhausted.rawValue
+    case .durableCargoCapReached:
+        return EncounterSelectionStopReason.durableRatioCapReached.rawValue
+    }
 }
