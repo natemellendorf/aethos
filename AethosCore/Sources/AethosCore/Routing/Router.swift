@@ -110,15 +110,18 @@ public final class Router {
         guard isShadowComparisonEnabled(mode: mode) else { return nil }
 
         let selectedLegacyItemIDs = legacyPlan.decisionLogs.compactMap(\.chosenItemIdHex)
-        let legacyCandidateByID = candidates.reduce(into: [String: EncounterCandidate]()) { result, candidate in
-            result[Hex.encode(candidate.itemId)] = candidate
-        }
+        let legacyCandidatesByID = candidatesByLegacyItemID(candidates: candidates)
+        let legacySelectionMapping = mapSelectedLegacyCandidates(
+            itemIDsHex: selectedLegacyItemIDs,
+            candidatesByLegacyItemID: legacyCandidatesByID
+        )
         let legacyStopReason = normalizedStopReason(legacyPlan: legacyPlan)
 
         let normalizedTopN = max(topN, 1)
         let legacyTopN = Array(selectedLegacyItemIDs.prefix(normalizedTopN))
-        let legacyTierDistribution = tierDistribution(itemIDsHex: selectedLegacyItemIDs, candidatesByID: legacyCandidateByID)
-        let legacyTransitDirectBalance = transitDirectBalance(itemIDsHex: selectedLegacyItemIDs, candidatesByID: legacyCandidateByID)
+        let legacyTierDistribution = tierDistribution(selectedCandidates: legacySelectionMapping.selectedCandidates)
+        let legacyTransitDirectBalance = transitDirectBalance(selectedCandidates: legacySelectionMapping.selectedCandidates)
+        let legacyUnmappedSelectedItemCount = legacySelectionMapping.unmappedCount
 
         let nowUnixMs = unixMilliseconds(date: now)
         let canonicalBudget = canonicalBudgetProfile(encounterClass: encounterClass, context: context)
@@ -133,21 +136,33 @@ public final class Router {
                 cargoItems: shadowCandidates.map(\.schedulerItem)
             )
 
-            let shadowByCanonicalID = shadowCandidates.reduce(into: [String: ShadowCandidate]()) { result, candidate in
-                result[candidate.canonicalItemIDHex] = candidate
-            }
-            let selectedCanonical = result.selectedPrefix.compactMap { shadowByCanonicalID[$0.cargoItem.itemID] }
+            let shadowCandidatesByCanonicalID = candidatesByCanonicalItemID(candidates: shadowCandidates)
+            let selectedCanonicalItemIDs = result.selectedPrefix.map(\.cargoItem.itemID)
+            let canonicalSelectionMapping = mapSelectedShadowCandidates(
+                itemIDsHex: selectedCanonicalItemIDs,
+                candidatesByCanonicalItemID: shadowCandidatesByCanonicalID
+            )
+            let selectedCanonical = canonicalSelectionMapping.selectedCandidates
             let selectedCanonicalLegacyIDs = selectedCanonical.map(\.legacyItemIDHex)
             let canonicalTopN = Array(selectedCanonicalLegacyIDs.prefix(normalizedTopN))
             let canonicalTierDistribution = tierDistribution(selectedCandidates: selectedCanonical)
             let canonicalTransitDirectBalance = transitDirectBalance(selectedCandidates: selectedCanonical)
+            let canonicalUnmappedSelectedItemCount = canonicalSelectionMapping.unmappedCount
 
-            var differences: [EncounterShadowComparison.Difference] = []
-            if legacyTopN != canonicalTopN { differences.append(.topNChanged) }
-            if selectedLegacyItemIDs.first != selectedCanonicalLegacyIDs.first { differences.append(.firstSelectedChanged) }
-            if legacyStopReason != result.stopReason.rawValue { differences.append(.stopReasonChanged) }
-            if legacyTierDistribution != canonicalTierDistribution { differences.append(.tierDistributionChanged) }
-            if legacyTransitDirectBalance != canonicalTransitDirectBalance { differences.append(.transitDirectBalanceChanged) }
+            let differences = EncounterShadowComparison.Difference.detect(
+                legacyTopNItemIDsHex: legacyTopN,
+                canonicalTopNItemIDsHex: canonicalTopN,
+                legacyFirstSelectedItemIDHex: selectedLegacyItemIDs.first,
+                canonicalFirstSelectedItemIDHex: selectedCanonicalLegacyIDs.first,
+                legacyStopReason: legacyStopReason,
+                canonicalStopReason: result.stopReason.rawValue,
+                legacyTierDistribution: legacyTierDistribution,
+                canonicalTierDistribution: canonicalTierDistribution,
+                legacyTransitDirectBalance: legacyTransitDirectBalance,
+                canonicalTransitDirectBalance: canonicalTransitDirectBalance,
+                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
+                canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount
+            )
 
             return EncounterShadowComparison(
                 topN: normalizedTopN,
@@ -161,10 +176,16 @@ public final class Router {
                 canonicalTierDistribution: canonicalTierDistribution,
                 legacyTransitDirectBalance: legacyTransitDirectBalance,
                 canonicalTransitDirectBalance: canonicalTransitDirectBalance,
+                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
+                canonicalUnmappedSelectedItemCount: canonicalUnmappedSelectedItemCount,
                 schedulerErrorDescription: nil,
                 differences: differences
             )
         } catch {
+            var differences: [EncounterShadowComparison.Difference] = [.schedulerError]
+            if legacyUnmappedSelectedItemCount > 0 {
+                differences.append(.selectedItemMappingLoss)
+            }
             return EncounterShadowComparison(
                 topN: normalizedTopN,
                 legacyTopNItemIDsHex: legacyTopN,
@@ -177,8 +198,10 @@ public final class Router {
                 canonicalTierDistribution: nil,
                 legacyTransitDirectBalance: legacyTransitDirectBalance,
                 canonicalTransitDirectBalance: nil,
+                legacyUnmappedSelectedItemCount: legacyUnmappedSelectedItemCount,
+                canonicalUnmappedSelectedItemCount: 0,
                 schedulerErrorDescription: String(describing: error),
-                differences: [.schedulerError]
+                differences: differences
             )
         }
     }
@@ -187,10 +210,7 @@ public final class Router {
         encounterClass: EncounterClass,
         context: EncounterSchedulingContext
     ) -> EncounterSchedulerV1.BudgetProfile {
-        let maxDurationMs = context.budget.estimatedDurationSeconds.map { seconds -> Int in
-            let milliseconds = Int((seconds * 1000).rounded(.toNearestOrEven))
-            return max(milliseconds, 0)
-        }
+        let maxDurationMs = context.budget.estimatedDurationSeconds.map(saturatedDurationMilliseconds)
         return EncounterSchedulerV1.BudgetProfile(
             maxItems: context.budget.maxItems,
             maxBytes: context.budget.maxBytes,
@@ -229,10 +249,29 @@ public final class Router {
         context: EncounterSchedulingContext
     ) -> [ShadowCandidate] {
         let throughputBytesPerSecond = 48_000.0
-        return candidates.enumerated().map { index, candidate in
-            let canonicalItemIDHex = shadowCanonicalItemIDHex(candidate: candidate, index: index)
+        let duplicateCountByLegacyID = candidates.reduce(into: [String: Int]()) { result, candidate in
             let legacyItemIDHex = Hex.encode(candidate.itemId)
-            let estimatedDurationMs = Int((Double(candidate.item.sizeBytes) / throughputBytesPerSecond * 1000).rounded(.toNearestOrEven))
+            result[legacyItemIDHex, default: 0] += 1
+        }
+        var duplicateOccurrenceByLegacyID: [String: Int] = [:]
+
+        return candidates.map { candidate in
+            let legacyItemIDHex = Hex.encode(candidate.itemId)
+            let duplicateOccurrence: Int?
+            if duplicateCountByLegacyID[legacyItemIDHex, default: 0] > 1 {
+                duplicateOccurrence = duplicateOccurrenceByLegacyID[legacyItemIDHex, default: 0]
+                duplicateOccurrenceByLegacyID[legacyItemIDHex, default: 0] += 1
+            } else {
+                duplicateOccurrence = nil
+            }
+
+            let canonicalItemIDHex = shadowCanonicalItemIDHex(
+                candidate: candidate,
+                duplicateOccurrence: duplicateOccurrence
+            )
+            let estimatedDurationMs = saturatedDurationMilliseconds(
+                seconds: Double(candidate.item.sizeBytes) / throughputBytesPerSecond
+            )
 
             let schedulerItem = EncounterSchedulerV1.CargoItem(
                 itemID: canonicalItemIDHex,
@@ -249,7 +288,7 @@ public final class Router {
                 explicitUserInitiated: context.userIntentBoostItemIDs.contains(candidate.itemId),
                 contentClassScore: contentClassWeight(candidate: candidate),
                 destinationRank: destinationRank(candidate: candidate),
-                estimatedDurationMs: max(estimatedDurationMs, 0)
+                estimatedDurationMs: estimatedDurationMs
             )
 
             return ShadowCandidate(
@@ -263,13 +302,9 @@ public final class Router {
         }
     }
 
-    private func tierDistribution(
-        itemIDsHex: [String],
-        candidatesByID: [String: EncounterCandidate]
-    ) -> [Int] {
+    private func tierDistribution(selectedCandidates: [EncounterCandidate]) -> [Int] {
         var distribution = Array(repeating: 0, count: EncounterTier.allCases.count)
-        for itemIDHex in itemIDsHex {
-            guard let candidate = candidatesByID[itemIDHex] else { continue }
+        for candidate in selectedCandidates {
             distribution[candidate.tier.rawValue] += 1
         }
         return distribution
@@ -283,14 +318,10 @@ public final class Router {
         return distribution
     }
 
-    private func transitDirectBalance(
-        itemIDsHex: [String],
-        candidatesByID: [String: EncounterCandidate]
-    ) -> EncounterShadowTransitDirectBalance {
+    private func transitDirectBalance(selectedCandidates: [EncounterCandidate]) -> EncounterShadowTransitDirectBalance {
         var directCount = 0
         var transitCount = 0
-        for itemIDHex in itemIDsHex {
-            guard let candidate = candidatesByID[itemIDHex] else { continue }
+        for candidate in selectedCandidates {
             if candidate.destinationRelevant { directCount += 1 }
             if candidate.transitForwardingCandidate { transitCount += 1 }
         }
@@ -328,13 +359,88 @@ public final class Router {
         }
     }
 
-    private func shadowCanonicalItemIDHex(candidate: EncounterCandidate, index: Int) -> String {
+    private func shadowCanonicalItemIDHex(candidate: EncounterCandidate, duplicateOccurrence: Int?) -> String {
         var material = Data("encounter-shadow-v1".utf8)
         material.append(candidate.itemId)
         material.append(UInt8(candidate.tier.rawValue))
-        var indexBigEndian = UInt64(index).bigEndian
-        withUnsafeBytes(of: &indexBigEndian) { material.append(contentsOf: $0) }
+
+        if let duplicateOccurrence {
+            material.append(0xFF)
+            var occurrenceBigEndian = UInt64(duplicateOccurrence).bigEndian
+            withUnsafeBytes(of: &occurrenceBigEndian) { material.append(contentsOf: $0) }
+        }
+
         return Hex.encode(AethosIDs.sha256(material))
+    }
+
+    private func candidatesByLegacyItemID(candidates: [EncounterCandidate]) -> [String: [EncounterCandidate]] {
+        candidates.reduce(into: [String: [EncounterCandidate]]()) { result, candidate in
+            result[Hex.encode(candidate.itemId), default: []].append(candidate)
+        }
+    }
+
+    private func candidatesByCanonicalItemID(candidates: [ShadowCandidate]) -> [String: [ShadowCandidate]] {
+        candidates.reduce(into: [String: [ShadowCandidate]]()) { result, candidate in
+            result[candidate.canonicalItemIDHex, default: []].append(candidate)
+        }
+    }
+
+    private func mapSelectedLegacyCandidates(
+        itemIDsHex: [String],
+        candidatesByLegacyItemID: [String: [EncounterCandidate]]
+    ) -> (selectedCandidates: [EncounterCandidate], unmappedCount: Int) {
+        var selectedCandidates: [EncounterCandidate] = []
+        selectedCandidates.reserveCapacity(itemIDsHex.count)
+        var nextIndexByLegacyItemID: [String: Int] = [:]
+        var unmappedCount = 0
+
+        for itemIDHex in itemIDsHex {
+            let nextIndex = nextIndexByLegacyItemID[itemIDHex, default: 0]
+            guard let candidates = candidatesByLegacyItemID[itemIDHex], nextIndex < candidates.count else {
+                unmappedCount += 1
+                continue
+            }
+
+            selectedCandidates.append(candidates[nextIndex])
+            nextIndexByLegacyItemID[itemIDHex, default: 0] += 1
+        }
+
+        return (selectedCandidates: selectedCandidates, unmappedCount: unmappedCount)
+    }
+
+    private func mapSelectedShadowCandidates(
+        itemIDsHex: [String],
+        candidatesByCanonicalItemID: [String: [ShadowCandidate]]
+    ) -> (selectedCandidates: [ShadowCandidate], unmappedCount: Int) {
+        var selectedCandidates: [ShadowCandidate] = []
+        selectedCandidates.reserveCapacity(itemIDsHex.count)
+        var nextIndexByCanonicalItemID: [String: Int] = [:]
+        var unmappedCount = 0
+
+        for itemIDHex in itemIDsHex {
+            let nextIndex = nextIndexByCanonicalItemID[itemIDHex, default: 0]
+            guard let candidates = candidatesByCanonicalItemID[itemIDHex], nextIndex < candidates.count else {
+                unmappedCount += 1
+                continue
+            }
+
+            selectedCandidates.append(candidates[nextIndex])
+            nextIndexByCanonicalItemID[itemIDHex, default: 0] += 1
+        }
+
+        return (selectedCandidates: selectedCandidates, unmappedCount: unmappedCount)
+    }
+
+    private func saturatedDurationMilliseconds(seconds: TimeInterval) -> Int {
+        guard !seconds.isNaN else { return 0 }
+        if seconds.isInfinite {
+            return seconds.sign == .minus ? 0 : Int.max
+        }
+
+        let milliseconds = (seconds * 1_000).rounded(.toNearestOrEven)
+        if milliseconds <= 0 { return 0 }
+        if milliseconds >= Double(Int.max) { return Int.max }
+        return Int(milliseconds)
     }
 
     private func unixMilliseconds(date: Date) -> UInt64 {

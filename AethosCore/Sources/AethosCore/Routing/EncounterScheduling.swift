@@ -102,7 +102,34 @@ public struct EncounterShadowComparison: Equatable, Sendable {
         case stopReasonChanged
         case tierDistributionChanged
         case transitDirectBalanceChanged
+        case selectedItemMappingLoss
         case schedulerError
+
+        public static func detect(
+            legacyTopNItemIDsHex: [String],
+            canonicalTopNItemIDsHex: [String],
+            legacyFirstSelectedItemIDHex: String?,
+            canonicalFirstSelectedItemIDHex: String?,
+            legacyStopReason: String,
+            canonicalStopReason: String,
+            legacyTierDistribution: [Int],
+            canonicalTierDistribution: [Int],
+            legacyTransitDirectBalance: EncounterShadowTransitDirectBalance,
+            canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance,
+            legacyUnmappedSelectedItemCount: Int,
+            canonicalUnmappedSelectedItemCount: Int
+        ) -> [Difference] {
+            var differences: [Difference] = []
+            if legacyTopNItemIDsHex != canonicalTopNItemIDsHex { differences.append(.topNChanged) }
+            if legacyFirstSelectedItemIDHex != canonicalFirstSelectedItemIDHex { differences.append(.firstSelectedChanged) }
+            if legacyStopReason != canonicalStopReason { differences.append(.stopReasonChanged) }
+            if legacyTierDistribution != canonicalTierDistribution { differences.append(.tierDistributionChanged) }
+            if legacyTransitDirectBalance != canonicalTransitDirectBalance { differences.append(.transitDirectBalanceChanged) }
+            if legacyUnmappedSelectedItemCount > 0 || canonicalUnmappedSelectedItemCount > 0 {
+                differences.append(.selectedItemMappingLoss)
+            }
+            return differences
+        }
     }
 
     public let topN: Int
@@ -116,6 +143,8 @@ public struct EncounterShadowComparison: Equatable, Sendable {
     public let canonicalTierDistribution: [Int]?
     public let legacyTransitDirectBalance: EncounterShadowTransitDirectBalance
     public let canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance?
+    public let legacyUnmappedSelectedItemCount: Int
+    public let canonicalUnmappedSelectedItemCount: Int
     public let schedulerErrorDescription: String?
     public let differences: [Difference]
 
@@ -131,6 +160,8 @@ public struct EncounterShadowComparison: Equatable, Sendable {
         canonicalTierDistribution: [Int]?,
         legacyTransitDirectBalance: EncounterShadowTransitDirectBalance,
         canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance?,
+        legacyUnmappedSelectedItemCount: Int,
+        canonicalUnmappedSelectedItemCount: Int,
         schedulerErrorDescription: String?,
         differences: [Difference]
     ) {
@@ -145,6 +176,8 @@ public struct EncounterShadowComparison: Equatable, Sendable {
         self.canonicalTierDistribution = canonicalTierDistribution
         self.legacyTransitDirectBalance = legacyTransitDirectBalance
         self.canonicalTransitDirectBalance = canonicalTransitDirectBalance
+        self.legacyUnmappedSelectedItemCount = legacyUnmappedSelectedItemCount
+        self.canonicalUnmappedSelectedItemCount = canonicalUnmappedSelectedItemCount
         self.schedulerErrorDescription = schedulerErrorDescription
         self.differences = differences
     }

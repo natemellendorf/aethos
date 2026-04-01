@@ -64,6 +64,7 @@ Key code:
 - `stopReasonChanged`
 - `tierDistributionChanged`
 - `transitDirectBalanceChanged`
+- `selectedItemMappingLoss`
 - `schedulerError`
 
 ## Low-risk cutover path

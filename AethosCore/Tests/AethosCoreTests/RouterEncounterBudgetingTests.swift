@@ -382,7 +382,7 @@ func shadowModeComparisonIncludesTelemetryForRepresentativeBlinkLane() throws {
 }
 
 @Test
-func shadowModeComparisonDetectsPrefixAndStopReasonDrift() throws {
+func shadowModeComparisonDifferenceFlagsReflectComparedTelemetryFields() throws {
     let store = try makeStore()
     let router = Router(store: store)
     let now = Date(timeIntervalSince1970: 110_000)
@@ -424,16 +424,47 @@ func shadowModeComparisonDetectsPrefixAndStopReasonDrift() throws {
     )
 
     let comparison = try #require(plan.shadowComparison)
-    #expect(comparison.differences.contains(.topNChanged))
-    #expect(comparison.differences.contains(.firstSelectedChanged))
-    #expect(comparison.differences.contains(.tierDistributionChanged))
-    #expect(comparison.differences.contains(.transitDirectBalanceChanged))
+    #expect(comparison.differences.contains(.topNChanged) == (comparison.legacyTopNItemIDsHex != comparison.canonicalTopNItemIDsHex))
+    #expect(comparison.differences.contains(.firstSelectedChanged) == (comparison.legacyFirstSelectedItemIDHex != comparison.canonicalFirstSelectedItemIDHex))
+
     let canonicalStopReason = try #require(comparison.canonicalStopReason)
-    if comparison.legacyStopReason == canonicalStopReason {
-        #expect(!comparison.differences.contains(.stopReasonChanged))
-    } else {
-        #expect(comparison.differences.contains(.stopReasonChanged))
-    }
+    #expect(comparison.differences.contains(.stopReasonChanged) == (comparison.legacyStopReason != canonicalStopReason))
+
+    let canonicalTierDistribution = try #require(comparison.canonicalTierDistribution)
+    #expect(comparison.differences.contains(.tierDistributionChanged) == (comparison.legacyTierDistribution != canonicalTierDistribution))
+
+    let canonicalTransitDirectBalance = try #require(comparison.canonicalTransitDirectBalance)
+    #expect(comparison.differences.contains(.transitDirectBalanceChanged) == (comparison.legacyTransitDirectBalance != canonicalTransitDirectBalance))
+
+    let hasMappingLoss = comparison.legacyUnmappedSelectedItemCount > 0 || comparison.canonicalUnmappedSelectedItemCount > 0
+    #expect(comparison.differences.contains(.selectedItemMappingLoss) == hasMappingLoss)
+}
+
+@Test
+func shadowModeDifferenceDetectionIsDeterministicForForcedDriftInputs() {
+    let differences = EncounterShadowComparison.Difference.detect(
+        legacyTopNItemIDsHex: ["a"],
+        canonicalTopNItemIDsHex: ["b"],
+        legacyFirstSelectedItemIDHex: "a",
+        canonicalFirstSelectedItemIDHex: "b",
+        legacyStopReason: EncounterSelectionStopReason.completed.rawValue,
+        canonicalStopReason: EncounterSelectionStopReason.budgetItemsExhausted.rawValue,
+        legacyTierDistribution: [1, 0, 0, 0, 0, 0],
+        canonicalTierDistribution: [0, 1, 0, 0, 0, 0],
+        legacyTransitDirectBalance: EncounterShadowTransitDirectBalance(directCount: 1, transitCount: 0),
+        canonicalTransitDirectBalance: EncounterShadowTransitDirectBalance(directCount: 0, transitCount: 1),
+        legacyUnmappedSelectedItemCount: 1,
+        canonicalUnmappedSelectedItemCount: 0
+    )
+
+    #expect(differences == [
+        .topNChanged,
+        .firstSelectedChanged,
+        .stopReasonChanged,
+        .tierDistributionChanged,
+        .transitDirectBalanceChanged,
+        .selectedItemMappingLoss,
+    ])
 }
 
 @Test
@@ -518,35 +549,15 @@ private func seedChunkTransfer(store: AethosStore, now: Date, toWayfarerId: Data
 }
 
 private func loadFixture(named name: String) throws -> EncounterBudgetFixture {
-    let root = try repoRootForEncounterFixtures()
-    let fixtureCandidates = [
-        root.appendingPathComponent("Tests/AethosCoreTests/Resources/Fixtures/encounter-budgeting/\(name).json"),
-        root.appendingPathComponent("AethosCore/Tests/AethosCoreTests/Resources/Fixtures/encounter-budgeting/\(name).json")
-    ]
-    guard let url = fixtureCandidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+    guard let url = Bundle.module.url(
+        forResource: name,
+        withExtension: "json",
+        subdirectory: "Fixtures/encounter-budgeting"
+    ) else {
         throw NSError(domain: "RouterEncounterBudgetingTests", code: 2)
     }
     let bytes = try Data(contentsOf: url)
     return try JSONDecoder().decode(EncounterBudgetFixture.self, from: bytes)
-}
-
-private func repoRootForEncounterFixtures(filePath: String = #filePath) throws -> URL {
-    let fileManager = FileManager.default
-    var candidate = URL(fileURLWithPath: filePath).deletingLastPathComponent().standardizedFileURL
-
-    while true {
-        let packageSwift = candidate.appendingPathComponent("Package.swift", isDirectory: false)
-        var isDir = ObjCBool(false)
-        if fileManager.fileExists(atPath: packageSwift.path, isDirectory: &isDir), !isDir.boolValue {
-            return candidate
-        }
-
-        let parent = candidate.deletingLastPathComponent().standardizedFileURL
-        if parent.path == candidate.path {
-            throw NSError(domain: "RouterEncounterBudgetingTests", code: 1)
-        }
-        candidate = parent
-    }
 }
 
 private func canonicalStopReason(from decisionLogs: [EncounterDecisionLog]) -> String {

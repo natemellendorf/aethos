@@ -32,7 +32,10 @@ let package = Package(
             dependencies: [
                 "AethosCore"
             ],
-            path: "Tests/AethosCoreTests"
+            path: "Tests/AethosCoreTests",
+            resources: [
+                .copy("Resources")
+            ]
         ),
         .testTarget(
             name: "AethosCoreExtendedTests",
