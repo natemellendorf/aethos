@@ -40,6 +40,7 @@ Invariants:
 2. An encounter instance MUST remain on one bearer for its lifetime.
 3. If local orchestration chooses a different bearer, it MUST terminate the current encounter instance and create a new encounter instance.
 4. Every `EncounterAttempt` MUST terminate in exactly one of: `clean-end`, `failed-end`, or `policy-stop`.
+   Clarification: terminal outcomes are `clean-end|failed-end|policy-stop`, while terminal state names are `terminal-clean-end|terminal-failed-end|terminal-policy-stop`.
 5. Interruption markers MAY be emitted in addition to attempt termination outcomes; `EncounterContext` uses those markers to plan subsequent encounter instances.
 
 ## 3. HELLO and identity derivation
