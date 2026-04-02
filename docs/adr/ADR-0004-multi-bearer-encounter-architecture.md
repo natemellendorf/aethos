@@ -60,7 +60,7 @@ Protocol correctness boundary
 
 1. **Encounter-first authority**: selection, transition, and preemption decisions MUST be made at encounter scope (`EncounterContext`), not inside CLAs/Transport Adapters.
 2. **Scheduler final authority**: scheduler policy MUST be the final authority for ordering and budgeting decisions.
-3. **Routing candidate boundary**: routing MAY propose candidates, but routing MUST NOT violate scheduler tiers, budgets, or preemption outcomes.
+3. **Routing candidate boundary**: routing MAY propose candidates, but routing MUST NOT violate scheduler tiers (priority/budget classes in `docs/protocol/encounter-budgeting.md`), budgets, or preemption outcomes.
 4. **Bearer-agnostic protocol semantics**: Gossip V1 frame validity, object identity, and acceptance/rejection semantics MUST NOT vary by bearer.
 5. **Function separation**: discovery, control, and data decisions MUST remain logically separated by policy, accounting, and telemetry, even when one bearer multiplexes multiple functions.
 6. **Capability-set explainability**: every selection or transition decision MUST be explainable using observed capability sets and active policy constraints.
