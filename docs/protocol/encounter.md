@@ -26,6 +26,21 @@ Session objectives:
 3. Local schedulers MAY run multiple opportunities over time (or in parallel) across bearers, but each opportunity MUST independently satisfy this encounter contract.
 4. Bearer switching decisions are local-only and MUST NOT require new wire fields or frame variants.
 
+## 2.2 Local lifecycle entities (normative)
+
+Encounter lifecycle modeling uses three local-only entities with distinct scope:
+
+1. `EncounterContext` (durable): long-lived orchestration state for a peer/contact across multiple encounter instances; owns policy memory, transition intent, and resume markers.
+2. `Encounter` instance (bearer-scoped): one bounded encounter on exactly one bearer opportunity.
+3. `EncounterAttempt` (execution-scoped): one concrete runtime attempt inside one encounter instance (for example: connect -> HELLO -> SUMMARY/REQUEST/TRANSFER loop -> close/fail).
+
+Invariants:
+
+1. `EncounterContext` MAY create multiple encounter instances over time.
+2. An encounter instance MUST remain on one bearer for its lifetime.
+3. If local orchestration chooses a different bearer, it MUST terminate the current encounter instance and create a new encounter instance.
+4. Every attempt MUST terminate in exactly one of: `clean-end`, `failed-end`, or `policy-stop`, or emit an interruption marker that is resolved by the `EncounterContext` into one of those outcomes.
+
 ## 3. HELLO and identity derivation
 
 Source attribution note: see `docs/protocol/gossip.md` §2.1 for active-contract precedence across protocol/spec/ADR documents.
@@ -239,6 +254,160 @@ What MUST NOT carry across:
 3. bearer-specific transport/session handles as protocol identity.
 
 Cross-bearer resume/upgrade/downgrade transitions are subject to downgrade-resistance policy in `docs/adr/ADR-0004-multi-bearer-encounter-architecture.md`.
+
+## 8.5 Encounter lifecycle state machine v1 (local-only)
+
+This state machine is local orchestration behavior only. It MUST NOT introduce new on-wire fields.
+
+### 8.5.1 `EncounterContext` (durable) states
+
+Canonical durable states:
+
+1. `idle`: no active encounter instance.
+2. `evaluating-opportunity`: evaluating candidate bearer opportunities/capability sets.
+3. `active-instance`: one encounter instance is active.
+4. `resume-pending`: interruption recorded; next transition decision pending.
+
+Deterministic transitions:
+
+1. `idle -> evaluating-opportunity` on contact visibility or queued pending work.
+2. `evaluating-opportunity -> active-instance` on accepted candidate after capability/refusal evaluation.
+3. `active-instance -> resume-pending` on interruption marker `contact_lost` or `encounter_timeout`.
+4. `active-instance -> evaluating-opportunity` when instance terminates and pending work remains.
+5. `active-instance -> idle` when instance terminates and no pending work remains.
+6. `resume-pending -> evaluating-opportunity` when planning next transition (`failover`, `handoff`, `upgrade`, `downgrade`, `resume`).
+
+### 8.5.2 Encounter instance (bearer-scoped) states
+
+Canonical instance states:
+
+1. `initiated`
+2. `running`
+3. `interrupted`
+4. `terminal-clean-end`
+5. `terminal-failed-end`
+6. `terminal-policy-stop`
+
+Deterministic transitions:
+
+1. `initiated -> running` when attempt enters protocol execution (HELLO/SUMMARY flow).
+2. `running -> interrupted` on `contact_lost` or `encounter_timeout` before a terminal decision.
+3. `running -> terminal-*` via the terminal mapping rules in §8.8.
+4. `interrupted -> terminal-failed-end` when interruption cannot be recovered in the same instance.
+
+### 8.5.3 `EncounterAttempt` (execution-scoped) states
+
+Canonical attempt states:
+
+1. `pending`
+2. `connecting`
+3. `handshaking` (HELLO/version/identity checks)
+4. `exchanging` (SUMMARY/REQUEST/TRANSFER/RECEIPT cycles)
+5. `closing`
+6. `terminal-clean-end | terminal-failed-end | terminal-policy-stop`
+
+Deterministic transitions:
+
+1. `pending -> connecting -> handshaking -> exchanging -> closing` for normal completion.
+2. Failure in `handshaking` or `exchanging` that is non-policy and unrecoverable in-attempt MUST produce `terminal-failed-end`.
+3. Scheduler-directed local stop MUST produce `terminal-policy-stop` only when `stopReason=policy-stop`.
+4. Any budget/completion stop reason from scheduler (`completed`, `no-eligible-items`, or budget/time caps) MUST map to `terminal-clean-end` unless a concurrent transport/protocol/runtime fault occurred.
+
+## 8.6 Function lanes: discovery, control, data, resume (local-only)
+
+Function-lane evaluation is attempt-local and deterministic:
+
+1. **discovery**: candidate visibility and contact opportunity updates (`supportsDiscovery`).
+2. **control**: HELLO/SUMMARY/REQUEST/RECEIPT control-plane exchange (`supportsControl`).
+3. **data**: object/chunk transfer flow (`supportsData`).
+4. **resume**: continuation of pending local work markers (`supportsResume` plus valid local resume state).
+
+Rules:
+
+1. `EncounterContext` MUST evaluate lane eligibility using capability-set preflight from `docs/protocol/bearer-capability-model-v1.md` before activating the lane.
+2. If a required lane is unsupported, refusal MUST use canonical taxonomy (`capability_mismatch`, `resume_not_supported`, or other ordered refusal from ADR-0004).
+3. Discovery downgrade exceptions MUST NOT authorize control or data lanes unless control/data policy checks pass.
+
+## 8.7 Transition intents across encounter instances (local-only)
+
+Transition intents are `EncounterContext` decisions between bearer-scoped encounter instances:
+
+1. `upgrade`: choose a stronger/higher-capacity next bearer opportunity.
+2. `downgrade`: choose a weaker/lower-capacity next bearer opportunity that still passes policy minima.
+3. `failover`: move to another candidate after interruption or failure.
+4. `handoff`: planned switch to another bearer while preserving pending-work continuity.
+5. `resume`: continue pending units of work in a newly created encounter instance.
+
+Rules:
+
+1. Every transition intent MUST terminate the current instance before starting the next one.
+2. `upgrade`/`downgrade`/`failover`/`handoff`/`resume` MUST be explainable by capability-set and scheduler inputs.
+3. `downgrade` and cross-bearer `resume` MUST enforce ADR-0004 downgrade-resistance refusal order.
+
+## 8.8 Deterministic terminal mapping: stopReason/stopClass/refusalReason
+
+### 8.8.1 Scheduler `stopReason` -> terminal outcome and `stopClass`
+
+When scheduler emits canonical `stopReason` (`docs/protocol/encounter-scheduler-v1.md`), terminal mapping MUST be:
+
+- `policy-stop` -> terminal outcome `policy-stop`, `stopClass=policy_stop`
+- `completed` -> terminal outcome `clean-end`, `stopClass=completed`
+- `no-eligible-items` -> terminal outcome `clean-end`, `stopClass=no_eligible_items`
+- `budget-items-exhausted` -> terminal outcome `clean-end`, `stopClass=budget_exhausted`
+- `budget-bytes-exhausted` -> terminal outcome `clean-end`, `stopClass=budget_exhausted`
+- `encounter-time-exhausted` -> terminal outcome `clean-end`, `stopClass=budget_exhausted`
+- `durable-ratio-cap-reached` -> terminal outcome `clean-end`, `stopClass=budget_exhausted`
+
+If a transport/protocol/runtime fault is present for the same attempt, `failed-end` MUST override the clean-end mapping.
+
+### 8.8.2 Refusal taxonomy -> terminal outcome
+
+Refusal reasons MUST use ordered canonical taxonomy from capability preflight + ADR-0004:
+
+- capability preflight/time-scope: `time_scope_invalid`, `time_scope_expired`, `time_scope_stale`
+- ADR-0004 refusal order: `peer_incompatible`, `capability_mismatch`, `resume_not_supported`, `resume_token_invalid`, `resume_state_missing`, `security_posture_insufficient`, `downgrade_resistance_triggered`
+- extension namespace: `x_[a-z0-9_]+`
+
+Deterministic mapping:
+
+1. If refusal reason is one of `peer_incompatible` or `resume_token_invalid`, terminal outcome MUST be `failed-end`.
+2. All other refusal reasons MUST map to terminal outcome `policy-stop`.
+3. For refusal-mapped `policy-stop`, scheduler-compatible diagnostics MUST emit `stopReason=policy-stop` and `stopClass=policy_stop`.
+
+### 8.8.3 Interruption markers and resume semantics
+
+`contact_lost` and `encounter_timeout` are local interruption markers, not wire fields and not refusal reasons.
+
+1. On interruption marker, attempt/instance MUST move to `interrupted` and persist resumable pending-work markers.
+2. `EncounterContext` MUST re-enter `evaluating-opportunity` and re-run capability-set evaluation (including `timeScope`) before any resume decision.
+3. If next candidate passes policy and resume is allowed, context MUST open a new encounter instance and apply transition intent `resume` (or `failover`/`handoff` with resume markers).
+4. If no candidate can pass evaluation, context MUST resolve terminal outcome using §8.8.2 refusal mapping.
+
+## 8.9 Canonical EncounterManager responsibilities (model v1)
+
+`EncounterManager` is the local orchestrator model anchored in `EncounterContext`.
+
+Responsibilities:
+
+1. Maintain durable `EncounterContext` and per-instance/attempt lifecycle state.
+2. Evaluate capability sets (including deterministic `timeScope` refusal behavior) before lane activation.
+3. Invoke scheduler for deterministic ranking, selected prefix, and canonical `stopReason`.
+4. Apply terminal mapping rules in §8.8 and persist interruption/resume markers.
+5. Decide and emit transition intent (`upgrade`/`downgrade`/`failover`/`handoff`/`resume`) between instances.
+
+Authority boundary (normative):
+
+1. CLAs/Transport Adapters MUST only create and characterize opportunities (capability advertisement + session lifecycle events).
+2. CLAs/Transport Adapters MUST NOT make routing, scheduler, ranking, budget, or downgrade-policy authority decisions.
+3. Routing MAY propose candidates; scheduler policy remains final authority for selected prefix and stop outcome classification.
+
+## 8.10 Required interaction points (for interfaces/telemetry follow-on work)
+
+To support bead `.5` (interfaces) and `.6` (telemetry contract), implementations SHOULD preserve these explicit interaction points:
+
+1. Scheduler interaction: consume deterministic selected prefix and canonical `stopReason`; derive `stopClass` via §8.8.1 mapping.
+2. Capability interaction: evaluate `timeScope` and refusal order exactly as defined in `docs/protocol/bearer-capability-model-v1.md` + ADR-0004.
+3. Telemetry interaction (local-only hooks): emit lifecycle transitions, transition intent, terminal outcome, `stopReason`/`stopClass` (when defined), and `refusalReason` (when defined) as separate encounter-orchestration events.
 
 ## 9. Transport-neutral correctness constraints
 
