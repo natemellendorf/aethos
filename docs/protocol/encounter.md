@@ -39,7 +39,8 @@ Invariants:
 1. `EncounterContext` MAY create multiple encounter instances over time.
 2. An encounter instance MUST remain on one bearer for its lifetime.
 3. If local orchestration chooses a different bearer, it MUST terminate the current encounter instance and create a new encounter instance.
-4. Every attempt MUST terminate in exactly one of: `clean-end`, `failed-end`, or `policy-stop`, or emit an interruption marker that is resolved by the `EncounterContext` into one of those outcomes.
+4. Every `EncounterAttempt` MUST terminate in exactly one of: `clean-end`, `failed-end`, or `policy-stop`.
+5. Interruption markers MAY be emitted in addition to attempt termination outcomes; `EncounterContext` uses those markers to plan subsequent encounter instances.
 
 ## 3. HELLO and identity derivation
 
@@ -272,7 +273,7 @@ Deterministic transitions:
 
 1. `idle -> evaluating-opportunity` on contact visibility or queued pending work.
 2. `evaluating-opportunity -> active-instance` on accepted candidate after capability/refusal evaluation.
-3. `active-instance -> resume-pending` on interruption marker `contact_lost` or `encounter_timeout`.
+3. `active-instance -> resume-pending` on interruption marker `contact_lost` or `session_idle_timeout`.
 4. `active-instance -> evaluating-opportunity` when instance terminates and pending work remains.
 5. `active-instance -> idle` when instance terminates and no pending work remains.
 6. `resume-pending -> evaluating-opportunity` when planning next transition (`failover`, `handoff`, `upgrade`, `downgrade`, `resume`).
@@ -291,7 +292,7 @@ Canonical instance states:
 Deterministic transitions:
 
 1. `initiated -> running` when attempt enters protocol execution (HELLO/SUMMARY flow).
-2. `running -> interrupted` on `contact_lost` or `encounter_timeout` before a terminal decision.
+2. `running -> interrupted` on `contact_lost` or `session_idle_timeout`; the active attempt MUST terminate `failed-end` while emitting the interruption marker.
 3. `running -> terminal-*` via the terminal mapping rules in §8.8.
 4. `interrupted -> terminal-failed-end` when interruption cannot be recovered in the same instance.
 
@@ -360,6 +361,8 @@ When scheduler emits canonical `stopReason` (`docs/protocol/encounter-scheduler-
 
 If a transport/protocol/runtime fault is present for the same attempt, `failed-end` MUST override the clean-end mapping.
 
+Disambiguation (mandatory): scheduler `stopReason=encounter-time-exhausted` is a planning/budget stop and therefore maps to `clean-end`; it MUST NOT be conflated with interruption marker `session_idle_timeout`, which indicates a transport/session fault signal and drives interruption handling.
+
 ### 8.8.2 Refusal taxonomy -> terminal outcome
 
 Refusal reasons MUST use ordered canonical taxonomy from capability preflight + ADR-0004:
@@ -367,6 +370,8 @@ Refusal reasons MUST use ordered canonical taxonomy from capability preflight + 
 - capability preflight/time-scope: `time_scope_invalid`, `time_scope_expired`, `time_scope_stale`
 - ADR-0004 refusal order: `peer_incompatible`, `capability_mismatch`, `resume_not_supported`, `resume_token_invalid`, `resume_state_missing`, `security_posture_insufficient`, `downgrade_resistance_triggered`
 - extension namespace: `x_[a-z0-9_]+`
+
+`time_scope_*` refusal reasons MUST be evaluated first and MUST short-circuit evaluation; ADR-0004 refusal mapping MUST NOT override a `time_scope_*` result.
 
 Deterministic mapping:
 
@@ -376,9 +381,9 @@ Deterministic mapping:
 
 ### 8.8.3 Interruption markers and resume semantics
 
-`contact_lost` and `encounter_timeout` are local interruption markers, not wire fields and not refusal reasons.
+`contact_lost` and `session_idle_timeout` are local interruption markers, not wire fields and not refusal reasons.
 
-1. On interruption marker, attempt/instance MUST move to `interrupted` and persist resumable pending-work markers.
+1. On interruption marker, the encounter instance MUST move to `interrupted`; the active attempt MUST terminate `failed-end` and persist resumable pending-work markers.
 2. `EncounterContext` MUST re-enter `evaluating-opportunity` and re-run capability-set evaluation (including `timeScope`) before any resume decision.
 3. If next candidate passes policy and resume is allowed, context MUST open a new encounter instance and apply transition intent `resume` (or `failover`/`handoff` with resume markers).
 4. If no candidate can pass evaluation, context MUST resolve terminal outcome using §8.8.2 refusal mapping.
@@ -401,9 +406,9 @@ Authority boundary (normative):
 2. CLAs/Transport Adapters MUST NOT make routing, scheduler, ranking, budget, or downgrade-policy authority decisions.
 3. Routing MAY propose candidates; scheduler policy remains final authority for selected prefix and stop outcome classification.
 
-## 8.10 Required interaction points (for interfaces/telemetry follow-on work)
+## 8.10 Required interaction points (non-normative for future interface/telemetry work)
 
-To support bead `.5` (interfaces) and `.6` (telemetry contract), implementations SHOULD preserve these explicit interaction points:
+For future interface and telemetry contract work, implementations SHOULD preserve these explicit interaction points:
 
 1. Scheduler interaction: consume deterministic selected prefix and canonical `stopReason`; derive `stopClass` via §8.8.1 mapping.
 2. Capability interaction: evaluate `timeScope` and refusal order exactly as defined in `docs/protocol/bearer-capability-model-v1.md` + ADR-0004.
