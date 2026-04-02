@@ -36,6 +36,8 @@ Every capability set MUST use the following top-level structure:
 All timestamps in this model are UTC Unix epoch milliseconds (`UInt64`).
 Comparisons MUST use UTC Unix-millisecond numeric values; local timezone/locale MUST NOT affect evaluation.
 
+`nowUnixMs` is a required evaluation input and MUST be interpreted as UTC Unix epoch milliseconds (`UInt64`) from the local wall clock.
+
 ## 4. Field definitions (required unless noted)
 
 ### 4.1 `timeScope`
@@ -59,11 +61,12 @@ Invariants (deterministic, mandatory):
 
 Deterministic refusal mapping (mandatory):
 
-1. if `nowUnixMs >= staleAfter` -> `time_scope_stale`
-2. if `validUntil` is present and `nowUnixMs >= validUntil` -> `time_scope_expired`
-3. if any invariant is violated -> `time_scope_invalid`
+1. if any invariant is violated -> `time_scope_invalid`
+2. else if `validUntil` is present and `nowUnixMs >= validUntil` -> `time_scope_expired`
+3. else if `nowUnixMs >= staleAfter` -> `time_scope_stale`
+4. else OK
 
-If multiple conditions are true, implementations MUST use this first-match precedence order.
+Invariant checks MUST be evaluated before freshness/expiry checks.
 
 ### 4.2 `securityPosture`
 
@@ -104,7 +107,7 @@ If requested function semantics are unsupported, refusal MUST be deterministic (
 
 ```json
 {
-  "maxFrameBytes": 0,
+  "maxFrameBytes": 65536,
   "preferredTransferUnitBytes": 32768,
   "estimatedGoodputBytesPerSecond": 0,
   "maxConcurrentSessions": 1
@@ -116,6 +119,8 @@ If requested function semantics are unsupported, refusal MUST be deterministic (
 - `estimatedGoodputBytesPerSecond` (`UInt64`, >= 0)
 - `maxConcurrentSessions` (`UInt16`, >= 1)
 
+`maxFrameBytes` is a transport payload/unit limit for local capability evaluation. It MUST NOT redefine or alter Gossip V1 frame semantics.
+
 `preferredTransferUnitBytes` SHOULD be `32768` for MVP0 compatibility.
 
 ### 4.5 `keepaliveIdleRules`
@@ -123,9 +128,9 @@ If requested function semantics are unsupported, refusal MUST be deterministic (
 ```json
 {
   "requiresKeepalive": true,
-  "keepaliveIntervalMs": 0,
-  "idleTimeoutMs": 0,
-  "hardSessionLifetimeMs": 0,
+  "keepaliveIntervalMs": 10000,
+  "idleTimeoutMs": 30000,
+  "hardSessionLifetimeMs": 60000,
   "maxConsecutiveMissedKeepalives": 0
 }
 ```
@@ -147,11 +152,13 @@ Invariants:
 For each candidate capability set, `EncounterContext` MUST evaluate in this order:
 
 1. parse/version checks (`capabilitySetVersion == 1`)
-2. `timeScope` invariants and freshness/expiry mapping (`time_scope_stale`, `time_scope_expired`, `time_scope_invalid`)
+2. `timeScope` invariants and freshness/expiry mapping (`time_scope_invalid`, `time_scope_expired`, `time_scope_stale`)
 3. requested-function compatibility (`capability_mismatch`, `resume_not_supported`)
 4. ADR-0004 downgrade/assurance policy refusal order for remaining checks
 
 If step 2 refuses, later checks MUST NOT override the `time_scope_*` refusal reason.
+
+ADR-0004 refusal mapping applies after capability-set preflight. `time_scope_*` checks run first and MAY short-circuit evaluation before ADR-0004 table rows are considered.
 
 ## 6. Mapping guidance: observation -> capability fields -> refusal outcomes
 

@@ -294,6 +294,28 @@
           "type": "string",
           "pattern": "^(time_scope_stale|time_scope_expired|time_scope_invalid|capability_mismatch|resume_not_supported|security_posture_insufficient|downgrade_resistance_triggered|x_[a-z0-9_]+)$"
         }
+      },
+      "if": {
+        "properties": {
+          "accepted": {
+            "const": true
+          }
+        },
+        "required": [
+          "accepted"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "refusalReason"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "refusalReason"
+        ]
       }
     }
   }
