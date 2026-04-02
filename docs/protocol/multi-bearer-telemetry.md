@@ -245,7 +245,7 @@ Forwarding events MUST carry scheduler explainability fields from `docs/protocol
 
 `stopReason`/`stopClass` remain scheduler diagnostics and MUST NOT be retyped as `refusalReason` unless an explicit transition/selection refusal event is emitted.
 
-Disambiguation (mandatory): scheduler `stopReason=encounter-time-exhausted` is a budgeting/classification stop and maps to clean-end policy handling; it MUST NOT be conflated with interruption marker `session_idle_timeout`.
+Disambiguation (mandatory): scheduler `stopReason=encounter-time-exhausted` is a budgeting/classification stop and maps to encounter terminal token `terminalOutcome=clean-end`; it MUST NOT be conflated with interruption marker `session_idle_timeout`.
 
 ## 11. Admin-record hooks (optional, local-only)
 
