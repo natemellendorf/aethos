@@ -32,6 +32,12 @@ The scheduler is defined as:
 - deterministic tie-breaking and preemption behavior,
 - explainability logs emitted for each decision.
 
+Bearer neutrality clarification:
+
+- Encounter budgeting and scheduler decisions are bearer-neutral policy logic.
+- Bearer selection/switching is local orchestration only and MUST NOT change wire contract semantics.
+- `policy-stop` is distinct from budget exhaustion and must be recorded as a separate local stop class.
+
 ## Tier Contract (Exact)
 
 - tier 0: control/receipts/checkpoints/resumability

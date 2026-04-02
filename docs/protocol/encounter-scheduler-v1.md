@@ -15,6 +15,8 @@ Scheduler inputs are:
 - encounter class,
 - budget profile,
 - `nowUnixMs`,
+- `encounterAttemptID` (local-only identifier for the current bearer-scoped encounter attempt),
+- optional `bearerClass` (local-only coarse label such as `lan`, `relay`, or `other` for diagnostics only),
 - candidate cargo items.
 
 Outputs are:
@@ -24,6 +26,8 @@ Outputs are:
 - per-item score breakdown,
 - deterministic stop reason,
 - optional tie-break reason for adjacent equal-score decisions.
+
+`encounterAttemptID` and `bearerClass` are runtime diagnostics only. They MUST NOT be transmitted as protocol fields and MUST NOT alter frame semantics.
 
 ## 3. Hard tier-first ordering (global)
 
@@ -199,7 +203,7 @@ Rule 8 therefore ranks lexicographically smaller `itemID` values last.
 
 ## 10. Selection prefix and stop reason
 
-After deterministic ranking, select items in order until adding the next item would violate budget profile constraints.
+After deterministic ranking, select items in order until adding the next item would violate budget profile constraints or local policy requests stop.
 
 Budget constraints MAY include:
 
@@ -234,9 +238,21 @@ The first failing constraint in this sequence defines the terminal stop reason.
 
 If no eligible candidates exist before selection starts, stop reason is `no-eligible-items`.
 
+`policy-stop` is a local scheduler decision and not a wire-level failure. Implementations MAY trigger it before any append attempt or between append attempts.
+
+### 10.2 Canonical stop-reason precedence
+
+Implementations MUST resolve stop reasons in this deterministic precedence order:
+
+1. `policy-stop` (if local policy stop signal is active),
+2. `no-eligible-items` (if selection never starts because no eligible items exist),
+3. first failing budget constraint from §10.1,
+4. `completed` (if all ranked eligible candidates were processed without earlier stop).
+
 Canonical stop reasons:
 
 - `completed`
+- `policy-stop`
 - `budget-items-exhausted`
 - `budget-bytes-exhausted`
 - `encounter-time-exhausted`

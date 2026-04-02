@@ -126,6 +126,8 @@ Transport responsibilities:
 Transport implementations MUST NOT modify frame semantics, hash derivation, or acceptance behavior.
 Transport peer identifiers are metadata only and MUST NOT override canonical message author attribution.
 
+Cross-bearer retry, upgrade/downgrade, and resume decisions are local orchestration only. Implementations MAY start a new bearer-scoped encounter attempt when another attempt ends, but MUST keep wire contract semantics unchanged.
+
 ## 10.1 Relay responsibilities
 
 Relay participants in gossip MUST:

@@ -67,6 +67,7 @@ This ordering is local policy only and MUST NOT change frame validity or interop
 1. Partial transfer completion is acceptable.
 2. Repeated encounters MUST continue convergence idempotently by `item_id`.
 3. Alternate paths SHOULD preserve liveness during bearer churn.
+4. If an encounter attempt ends and local policy retries on another bearer, the retry MUST be treated as a new bearer-scoped encounter instance with unchanged frame semantics.
 
 ## 8. Security considerations
 

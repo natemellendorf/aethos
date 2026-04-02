@@ -10,12 +10,21 @@ RFC 2119 terms are normative in this document.
 
 An encounter is a temporary peer session over any bearer. Session semantics MUST be identical across LAN, relay, and future bearers.
 
+In multi-bearer operation, each encounter instance is bearer-scoped. Bearer selection, switching, and retry sequencing are local orchestration decisions and MUST NOT change frame semantics, frame types, or envelope schema.
+
 Session objectives:
 
 1. establish version/identity compatibility,
 2. exchange deterministic inventory summary,
 3. request and transfer missing objects within fixed budgets,
 4. converge idempotently across repeated encounters.
+
+## 2.1 Multi-bearer encounter scoping (normative)
+
+1. A single encounter instance MUST execute on exactly one bearer.
+2. Moving work to a different bearer MUST be modeled as ending the current encounter instance and starting a new encounter instance.
+3. Local schedulers MAY run multiple opportunities over time (or in parallel) across bearers, but each opportunity MUST independently satisfy this encounter contract.
+4. Bearer switching decisions are local-only and MUST NOT require new wire fields or frame variants.
 
 ## 3. HELLO and identity derivation
 
@@ -187,12 +196,53 @@ This scheduling guidance MUST NOT alter protocol validity, interoperability, or 
 
 For runtime budgeting/prioritization hook design, see `docs/protocol/encounter-budgeting.md`.
 
+## 8.3 Local-only terminal outcomes (normative)
+
+Encounter terminal outcomes are local runtime outcomes, not wire objects:
+
+1. `clean-end`: encounter ends intentionally after successful progress, completion, or orderly peer shutdown.
+2. `failed-end`: encounter ends due to protocol failure, transport/runtime fault, or other non-policy error.
+3. `policy-stop`: local policy intentionally stops the encounter attempt even if additional protocol-valid work could continue.
+
+Outcome handling requirements:
+
+1. Implementations MUST record terminal outcome locally for diagnostics/scheduling.
+2. Implementations MUST NOT treat terminal outcome labels as additional frame-level semantics.
+3. Implementations MAY use terminal outcomes to choose the next local encounter opportunity.
+
+## 8.4 Local-only upgrade/downgrade/resume semantics (normative)
+
+Upgrade/downgrade/resume are local scheduler semantics across encounter instances:
+
+1. `upgrade`: local orchestration chooses a higher-capacity next opportunity.
+2. `downgrade`: local orchestration chooses a lower-capacity next opportunity.
+3. `resume`: local orchestration continues pending work in a later encounter instance.
+
+What MAY carry across encounters:
+
+1. validated local store state (`item_id` inventory, receipt state, durability state),
+2. deterministic local scheduler state (ranking/budget diagnostics),
+3. local interruption/resume markers for pending units of work.
+
+What MUST be re-done per new encounter instance:
+
+1. HELLO version/identity compatibility checks,
+2. SUMMARY exchange and REQUEST construction against the new encounter snapshot,
+3. frame-boundary and per-frame validation for the active bearer.
+
+What MUST NOT carry across:
+
+1. partially decoded frame bytes,
+2. unvalidated objects,
+3. bearer-specific transport/session handles as protocol identity.
+
 ## 9. Transport-neutral correctness constraints
 
 1. Bearers MAY differ in discovery and channel setup.
 2. Bearers MUST NOT alter acceptance, rejection, hashing, identity, `expiry_unix_ms`, or hop-count semantics.
 3. Bearers MUST NOT inject sender IDs that override envelope-derived author attribution.
 4. Linux and iOS implementations MUST share identical RFC 8949 deterministic CBOR and Bloom algorithms.
+5. Bearer changes across opportunities MUST remain local orchestration only and MUST NOT modify wire contract semantics.
 
 ## 10. Security considerations
 

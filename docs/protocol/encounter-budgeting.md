@@ -57,13 +57,22 @@ The runtime uses hybrid scheduling:
 Each decision log must include at least:
 
 - encounter class
-- selected bearer
+- selected bearer (or attempted bearer sequence)
+- encounter attempt id (`encounterAttemptID`, local-only)
+- optional bearer class label (`bearerClass`, local-only diagnostics)
 - estimated time/byte budget
 - candidate counts by tier
 - chosen item id
 - score breakdown
 - stop reason
 - interruption/resume markers
+
+Stop-reason diagnostics MUST distinguish:
+
+- `policy_stop`: local policy intentionally ended the attempt,
+- `budget_exhausted`: budget constraint stopped further append.
+
+When multiple attempts are made, logs SHOULD retain attempt history (e.g., bearer sequence and per-attempt stop reason) to explain local orchestration decisions.
 
 Logs are local-only diagnostics and must not be transmitted.
 
@@ -81,6 +90,12 @@ Logs are local-only diagnostics and must not be transmitted.
 - Budget stop emits interruption marker.
 - Next encounter repeats deterministic planning over remaining queue state.
 - Partial completion is expected; eventual convergence is preserved.
+
+Resume markers are bearer-agnostic local state:
+
+- they MUST track pending protocol work by object/progress identity, not by bearer handle,
+- they MAY be reused when the next encounter runs on a different bearer,
+- they MUST NOT imply carry-forward of partially decoded frame bytes or skipped handshake/summary steps.
 
 ## 8) Risk Register
 

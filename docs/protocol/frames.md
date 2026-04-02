@@ -12,6 +12,10 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 
 ## 2. Canonical wire model
 
+Frames are bearer-agnostic protocol objects. Bearers differ only in frame-boundary carriage (§2.3) and session/discovery orchestration outside this catalog.
+
+Bearer switching/selection semantics are local runtime behavior and MUST NOT introduce new frame types, envelope keys, or payload keys in Gossip V1.
+
 ### 2.1 Encoding
 
 1. All gossip frames **MUST** be encoded as canonical CBOR using **RFC 8949 deterministic encoding**.
