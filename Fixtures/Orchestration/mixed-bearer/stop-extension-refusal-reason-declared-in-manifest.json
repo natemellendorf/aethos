@@ -36,8 +36,8 @@
       "encounterInstanceID": "inst-003",
       "encounterAttemptID": "attempt-003",
       "payload": {
-        "stopReason": "encounter-time-exhausted",
-        "stopClass": "budget_exhausted"
+        "stopReason": "policy-stop",
+        "stopClass": "policy_stop"
       }
     }
   ],

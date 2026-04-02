@@ -40,6 +40,6 @@
   "expected": {
     "outcome": "reject",
     "refusalReason": "time_scope_stale",
-    "terminalOutcome": "failed-end"
+    "terminalOutcome": "policy-stop"
   }
 }
