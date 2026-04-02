@@ -92,6 +92,8 @@ When multiple attempts are made, logs SHOULD retain attempt history (e.g., beare
 
 Logs are local-only diagnostics and must not be transmitted.
 
+For multi-bearer encounter selection/transition telemetry layering and refusal taxonomy binding, see `docs/protocol/multi-bearer-telemetry.md`. In particular, `policy_stop`/`policy-stop` remain stop/terminal classification tokens and MUST NOT be used as `refusalReason`.
+
 ## 6) Runtime Hook Surface (Initial)
 
 - `EncounterBudgetProfile`: bytes/items/time/durable cap estimates.

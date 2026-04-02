@@ -415,6 +415,8 @@ For future interface and telemetry contract work, implementations SHOULD preserv
 2. Capability interaction: evaluate `timeScope` and refusal order exactly as defined in `docs/protocol/bearer-capability-model-v1.md` + ADR-0004.
 3. Telemetry interaction (local-only hooks): emit lifecycle transitions, transition intent, terminal outcome, `stopReason`/`stopClass` (when defined), and `refusalReason` (when defined) as separate encounter-orchestration events.
 
+Canonical event keys, 3-layer attribution boundaries, and extension refusal-reason declaration rules are defined in `docs/protocol/multi-bearer-telemetry.md`.
+
 ## 9. Transport-neutral correctness constraints
 
 1. Bearers MAY differ in discovery and channel setup.
