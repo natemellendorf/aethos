@@ -1,5 +1,3 @@
-import Foundation
-
 public struct BearerCapabilitySnapshot: Equatable, Sendable, Codable {
     public let bearerID: BearerID
     public let supportedLanes: Set<BearerFunctionLane>
@@ -21,12 +19,13 @@ public enum BearerSessionEventKind: String, Equatable, Sendable, Codable {
     case opportunityLost = "opportunity_lost"
     case sessionOpened = "session_opened"
     case sessionClosed = "session_closed"
-    case interruptionObserved = "interruption_observed"
+    /// CLA-scoped interruption notification (distinct from telemetry `eventType`).
+    case sessionInterruptionObserved = "session_interruption_observed"
 }
 
 public struct BearerSessionEvent: Equatable, Sendable, Codable {
     public let eventID: EventID
-    public let eventAtUnixMs: UInt64
+    public let occurredAtUnixMs: UInt64
     public let bearerID: BearerID
     public let kind: BearerSessionEventKind
     public let encounterInstanceID: EncounterInstanceID?
@@ -34,14 +33,14 @@ public struct BearerSessionEvent: Equatable, Sendable, Codable {
 
     public init(
         eventID: EventID,
-        eventAtUnixMs: UInt64,
+        occurredAtUnixMs: UInt64,
         bearerID: BearerID,
         kind: BearerSessionEventKind,
         encounterInstanceID: EncounterInstanceID? = nil,
         interruptionReason: InterruptionReason? = nil
     ) {
         self.eventID = eventID
-        self.eventAtUnixMs = eventAtUnixMs
+        self.occurredAtUnixMs = occurredAtUnixMs
         self.bearerID = bearerID
         self.kind = kind
         self.encounterInstanceID = encounterInstanceID
@@ -51,11 +50,18 @@ public struct BearerSessionEvent: Equatable, Sendable, Codable {
 
 public enum OrchestrationContractError: Error, Equatable, Sendable {
     case acceptedCandidateCannotHaveRefusalReason
+    case acceptedCandidateCannotHaveTimeScopeEvaluation
     case refusedCandidateMissingRefusalReason
     case timeScopeEvalRequiredForTimeScopeRefusal
+    case refusedCandidateCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal
+    case refusedCandidateTimeScopeEvaluationMismatch(expected: TimeScopeEvaluationResult, actual: TimeScopeEvaluationResult)
     case selectedCandidateNotAccepted(BearerID)
     case acceptedTransitionCannotHaveRefusalReason
+    case acceptedTransitionCannotHaveTimeScopeEvaluation
     case refusedTransitionMissingRefusalReason
+    case refusedTransitionCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal
+    case refusedTransitionTimeScopeEvaluationMismatch(expected: TimeScopeEvaluationResult, actual: TimeScopeEvaluationResult)
+    case refusedTransitionCannotSelectCandidate
     case selectedBearerRequiredWhenTransitionAccepted
 }
 
@@ -75,6 +81,9 @@ public struct EncounterSelectionCandidateEvaluation: Equatable, Sendable {
             guard refusalReason == nil else {
                 throw OrchestrationContractError.acceptedCandidateCannotHaveRefusalReason
             }
+            guard timeScopeEval == nil else {
+                throw OrchestrationContractError.acceptedCandidateCannotHaveTimeScopeEvaluation
+            }
             self.candidateID = candidateID
             self.accepted = accepted
             self.refusalReason = nil
@@ -85,9 +94,19 @@ public struct EncounterSelectionCandidateEvaluation: Equatable, Sendable {
         guard let refusalReason else {
             throw OrchestrationContractError.refusedCandidateMissingRefusalReason
         }
-        if refusalReason == .timeScopeInvalid || refusalReason == .timeScopeExpired || refusalReason == .timeScopeStale {
-            guard timeScopeEval != nil else {
+        if let expectedResult = refusalReason.requiredTimeScopeEvaluationResult {
+            guard let timeScopeEval else {
                 throw OrchestrationContractError.timeScopeEvalRequiredForTimeScopeRefusal
+            }
+            guard timeScopeEval.result == expectedResult else {
+                throw OrchestrationContractError.refusedCandidateTimeScopeEvaluationMismatch(
+                    expected: expectedResult,
+                    actual: timeScopeEval.result
+                )
+            }
+        } else {
+            guard timeScopeEval == nil else {
+                throw OrchestrationContractError.refusedCandidateCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal
             }
         }
 
@@ -145,6 +164,9 @@ public struct EncounterTransitionDecision: Equatable, Sendable {
             guard refusalReason == nil else {
                 throw OrchestrationContractError.acceptedTransitionCannotHaveRefusalReason
             }
+            guard timeScopeEval == nil else {
+                throw OrchestrationContractError.acceptedTransitionCannotHaveTimeScopeEvaluation
+            }
 
             self.transitionIntent = transitionIntent
             self.fromEncounterInstanceID = fromEncounterInstanceID
@@ -156,12 +178,26 @@ public struct EncounterTransitionDecision: Equatable, Sendable {
             return
         }
 
+        guard selectedCandidateID == nil else {
+            throw OrchestrationContractError.refusedTransitionCannotSelectCandidate
+        }
+
         guard let refusalReason else {
             throw OrchestrationContractError.refusedTransitionMissingRefusalReason
         }
-        if refusalReason == .timeScopeInvalid || refusalReason == .timeScopeExpired || refusalReason == .timeScopeStale {
-            guard timeScopeEval != nil else {
+        if let expectedResult = refusalReason.requiredTimeScopeEvaluationResult {
+            guard let timeScopeEval else {
                 throw OrchestrationContractError.timeScopeEvalRequiredForTimeScopeRefusal
+            }
+            guard timeScopeEval.result == expectedResult else {
+                throw OrchestrationContractError.refusedTransitionTimeScopeEvaluationMismatch(
+                    expected: expectedResult,
+                    actual: timeScopeEval.result
+                )
+            }
+        } else {
+            guard timeScopeEval == nil else {
+                throw OrchestrationContractError.refusedTransitionCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal
             }
         }
 

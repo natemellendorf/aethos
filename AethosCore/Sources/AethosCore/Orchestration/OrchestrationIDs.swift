@@ -10,6 +10,16 @@ public struct EncounterContextID: RawRepresentable, Hashable, Codable, Sendable 
     public init() {
         self.init(rawValue: UUID().uuidString.lowercased())
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.init(rawValue: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct EncounterInstanceID: RawRepresentable, Hashable, Codable, Sendable {
@@ -21,6 +31,16 @@ public struct EncounterInstanceID: RawRepresentable, Hashable, Codable, Sendable
 
     public init() {
         self.init(rawValue: UUID().uuidString.lowercased())
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.init(rawValue: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -34,6 +54,16 @@ public struct EncounterAttemptID: RawRepresentable, Hashable, Codable, Sendable 
     public init() {
         self.init(rawValue: UUID().uuidString.lowercased())
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.init(rawValue: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct BearerID: RawRepresentable, Hashable, Codable, Sendable {
@@ -46,6 +76,16 @@ public struct BearerID: RawRepresentable, Hashable, Codable, Sendable {
     public init() {
         self.init(rawValue: UUID().uuidString.lowercased())
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.init(rawValue: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct EventID: RawRepresentable, Hashable, Codable, Sendable {
@@ -57,5 +97,15 @@ public struct EventID: RawRepresentable, Hashable, Codable, Sendable {
 
     public init() {
         self.init(rawValue: UUID().uuidString.lowercased())
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.init(rawValue: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }

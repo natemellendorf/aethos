@@ -1,5 +1,3 @@
-import Foundation
-
 public struct TimeScope: Equatable, Sendable, Codable {
     /// UTC Unix epoch milliseconds.
     public let observedAt: UInt64

@@ -1,5 +1,3 @@
-import Foundation
-
 public struct RefusalReason: RawRepresentable, Hashable, Sendable, Codable {
     public let rawValue: String
 
@@ -43,11 +41,18 @@ public struct RefusalReason: RawRepresentable, Hashable, Sendable, Codable {
     }
 
     public static func isValidExtensionCode(_ code: String) -> Bool {
-        let utf8 = Array(code.utf8)
-        guard utf8.count >= 3 else { return false }
-        guard utf8[0] == 0x78, utf8[1] == 0x5F else { return false } // x_
+        var iterator = code.utf8.makeIterator()
+        guard iterator.next() == 0x78, iterator.next() == 0x5F else { return false } // x_
+        guard let firstSuffixByte = iterator.next() else { return false }
 
-        for byte in utf8.dropFirst(2) {
+        switch firstSuffixByte {
+        case 0x61...0x7A, 0x30...0x39, 0x5F:
+            break
+        default:
+            return false
+        }
+
+        while let byte = iterator.next() {
             switch byte {
             case 0x61...0x7A, 0x30...0x39, 0x5F: // a-z, 0-9, _
                 continue
@@ -65,6 +70,19 @@ public struct RefusalReason: RawRepresentable, Hashable, Sendable, Codable {
 
     public var isExtension: Bool {
         Self.isValidExtensionCode(rawValue)
+    }
+
+    public var requiredTimeScopeEvaluationResult: TimeScopeEvaluationResult? {
+        switch self {
+        case .timeScopeInvalid:
+            return .timeScopeInvalid
+        case .timeScopeExpired:
+            return .timeScopeExpired
+        case .timeScopeStale:
+            return .timeScopeStale
+        default:
+            return nil
+        }
     }
 
     public init(from decoder: Decoder) throws {

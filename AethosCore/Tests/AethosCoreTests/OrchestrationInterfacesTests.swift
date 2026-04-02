@@ -143,11 +143,48 @@ func selectionOutcomeEnforcesAcceptanceAndTimeScopeRules() throws {
             selectedCandidateID: candidate
         )
     }
+
+    #expect(throws: OrchestrationContractError.acceptedCandidateCannotHaveRefusalReason) {
+        _ = try EncounterSelectionCandidateEvaluation(
+            candidateID: candidate,
+            accepted: true,
+            refusalReason: .capabilityMismatch,
+            timeScopeEval: nil
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.acceptedCandidateCannotHaveTimeScopeEvaluation) {
+        _ = try EncounterSelectionCandidateEvaluation(
+            candidateID: candidate,
+            accepted: true,
+            refusalReason: nil,
+            timeScopeEval: timeScopeEval
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.refusedCandidateCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal) {
+        _ = try EncounterSelectionCandidateEvaluation(
+            candidateID: candidate,
+            accepted: false,
+            refusalReason: .capabilityMismatch,
+            timeScopeEval: timeScopeEval
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.refusedCandidateTimeScopeEvaluationMismatch(expected: .timeScopeExpired, actual: .timeScopeStale)) {
+        _ = try EncounterSelectionCandidateEvaluation(
+            candidateID: candidate,
+            accepted: false,
+            refusalReason: .timeScopeExpired,
+            timeScopeEval: timeScopeEval
+        )
+    }
 }
 
 @Test
 func transitionDecisionEnforcesAcceptanceAndRefusalRules() {
     let fromInstance = EncounterInstanceID(rawValue: "from-1")
+    let selectedCandidate = BearerID(rawValue: "bearer-selected")
 
     #expect(throws: OrchestrationContractError.selectedBearerRequiredWhenTransitionAccepted) {
         _ = try EncounterTransitionDecision(
@@ -169,6 +206,11 @@ func transitionDecisionEnforcesAcceptanceAndRefusalRules() {
         )
     }
 
+    let staleEval = TimeScopeEvaluator.evaluate(
+        TimeScope(observedAt: 100, staleAfter: 200),
+        nowUnixMs: 220
+    )
+
     #expect(throws: OrchestrationContractError.timeScopeEvalRequiredForTimeScopeRefusal) {
         _ = try EncounterTransitionDecision(
             transitionIntent: .resume,
@@ -180,30 +222,134 @@ func transitionDecisionEnforcesAcceptanceAndRefusalRules() {
             timeScopeEval: nil
         )
     }
-}
 
-private struct TestTelemetryPayload: TelemetryEventPayload {
-    let code: String
+    #expect(throws: OrchestrationContractError.acceptedTransitionCannotHaveRefusalReason) {
+        _ = try EncounterTransitionDecision(
+            transitionIntent: .upgrade,
+            fromEncounterInstanceID: fromInstance,
+            toEncounterInstanceID: nil,
+            selectedCandidateID: selectedCandidate,
+            accepted: true,
+            refusalReason: .capabilityMismatch,
+            timeScopeEval: nil
+        )
+    }
 
-    func asDictionary() -> [String: String] {
-        ["code": code]
+    #expect(throws: OrchestrationContractError.acceptedTransitionCannotHaveTimeScopeEvaluation) {
+        _ = try EncounterTransitionDecision(
+            transitionIntent: .upgrade,
+            fromEncounterInstanceID: fromInstance,
+            toEncounterInstanceID: nil,
+            selectedCandidateID: selectedCandidate,
+            accepted: true,
+            refusalReason: nil,
+            timeScopeEval: staleEval
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.refusedTransitionCannotHaveTimeScopeEvaluationForNonTimeScopeRefusal) {
+        _ = try EncounterTransitionDecision(
+            transitionIntent: .resume,
+            fromEncounterInstanceID: fromInstance,
+            toEncounterInstanceID: nil,
+            selectedCandidateID: nil,
+            accepted: false,
+            refusalReason: .capabilityMismatch,
+            timeScopeEval: staleEval
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.refusedTransitionTimeScopeEvaluationMismatch(expected: .timeScopeExpired, actual: .timeScopeStale)) {
+        _ = try EncounterTransitionDecision(
+            transitionIntent: .resume,
+            fromEncounterInstanceID: fromInstance,
+            toEncounterInstanceID: nil,
+            selectedCandidateID: nil,
+            accepted: false,
+            refusalReason: .timeScopeExpired,
+            timeScopeEval: staleEval
+        )
+    }
+
+    #expect(throws: OrchestrationContractError.refusedTransitionCannotSelectCandidate) {
+        _ = try EncounterTransitionDecision(
+            transitionIntent: .resume,
+            fromEncounterInstanceID: fromInstance,
+            toEncounterInstanceID: nil,
+            selectedCandidateID: selectedCandidate,
+            accepted: false,
+            refusalReason: .sessionUnavailable,
+            timeScopeEval: nil
+        )
     }
 }
 
 @Test
 func telemetryEventCarriesRequiredEnvelopeFields() {
     let eventID = EventID(rawValue: "evt-1")
-    let payload = TestTelemetryPayload(code: "selection_evaluated")
+    let encounterContextID = EncounterContextID(rawValue: "ctx-1")
+    let encounterInstanceID = EncounterInstanceID(rawValue: "inst-1")
+    let encounterAttemptID = EncounterAttemptID(rawValue: "attempt-1")
+    let bearerID = BearerID(rawValue: "bearer-1")
 
     let event = TelemetryEvent(
         eventID: eventID,
-        eventAtUnixMs: 1_760_000_000_000,
         layer: .encounter,
-        payload: payload
+        eventType: "selection_evaluated",
+        eventSequence: 7,
+        occurredAtUnixMs: 1_760_000_000_000,
+        encounterContextID: encounterContextID,
+        encounterInstanceID: encounterInstanceID,
+        encounterAttemptID: encounterAttemptID,
+        bearerID: bearerID,
+        payload: [
+            "accepted": .bool(false),
+            "retryInMs": .int(3000),
+            "reasons": .array([.string("capability_mismatch"), .string("session_unavailable")]),
+            "details": .object([
+                "marker": .string("resume"),
+                "weight": .double(0.7),
+                "none": .null,
+            ]),
+        ]
     )
 
+    #expect(event.contractVersion == 1)
     #expect(event.eventID == eventID)
-    #expect(event.eventAtUnixMs == 1_760_000_000_000)
+    #expect(event.eventType == "selection_evaluated")
+    #expect(event.eventSequence == 7)
+    #expect(event.occurredAtUnixMs == 1_760_000_000_000)
+    #expect(event.encounterContextID == encounterContextID)
+    #expect(event.encounterInstanceID == encounterInstanceID)
+    #expect(event.encounterAttemptID == encounterAttemptID)
+    #expect(event.bearerID == bearerID)
     #expect(event.layer == .encounter)
-    #expect(event.payload["code"] == "selection_evaluated")
+    #expect(event.payload["accepted"] == .bool(false))
+}
+
+@Test
+func telemetryEventAndJSONValueCodableRoundTrip() throws {
+    let original = TelemetryEvent(
+        contractVersion: 1,
+        eventID: EventID(rawValue: "evt-2"),
+        layer: .forwarding,
+        eventType: "transition_refused",
+        eventSequence: 99,
+        occurredAtUnixMs: 1_760_000_999_999,
+        encounterContextID: EncounterContextID(rawValue: "ctx-2"),
+        encounterInstanceID: EncounterInstanceID(rawValue: "inst-2"),
+        encounterAttemptID: EncounterAttemptID(rawValue: "attempt-2"),
+        bearerID: nil,
+        payload: [
+            "scalar": .string("ok"),
+            "nested": .object([
+                "num": .int(12),
+                "arr": .array([.bool(true), .double(1.5)]),
+            ]),
+        ]
+    )
+
+    let encoded = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(TelemetryEvent.self, from: encoded)
+    #expect(decoded == original)
 }
