@@ -64,15 +64,31 @@ Each decision log must include at least:
 - candidate counts by tier
 - chosen item id
 - score breakdown
-- stop reason
+- `stopReason` (kebab-case canonical scheduler token from `docs/protocol/encounter-scheduler-v1.md`)
+- `stopClass` (local-only rollup bucket)
 - interruption/resume markers
 
-Stop-reason diagnostics MUST distinguish:
+`stopReason` MUST be one of:
 
-- `policy_stop`: local policy intentionally ended the attempt,
-- `budget_exhausted`: budget constraint stopped further append.
+- `completed`
+- `policy-stop`
+- `budget-items-exhausted`
+- `budget-bytes-exhausted`
+- `encounter-time-exhausted`
+- `durable-ratio-cap-reached`
+- `no-eligible-items`
 
-When multiple attempts are made, logs SHOULD retain attempt history (e.g., bearer sequence and per-attempt stop reason) to explain local orchestration decisions.
+`stopClass` values are local-only snake_case diagnostics and MUST be derived from `stopReason` using this mapping:
+
+- `policy-stop` -> `policy_stop`
+- `budget-items-exhausted` -> `budget_exhausted`
+- `budget-bytes-exhausted` -> `budget_exhausted`
+- `encounter-time-exhausted` -> `budget_exhausted`
+- `durable-ratio-cap-reached` -> `budget_exhausted`
+- `completed` -> `completed`
+- `no-eligible-items` -> `no_eligible_items`
+
+When multiple attempts are made, logs SHOULD retain attempt history (e.g., bearer sequence and per-attempt `stopReason`/`stopClass`) to explain local orchestration decisions.
 
 Logs are local-only diagnostics and must not be transmitted.
 
@@ -96,6 +112,8 @@ Resume markers are bearer-agnostic local state:
 - they MUST track pending protocol work by object/progress identity, not by bearer handle,
 - they MAY be reused when the next encounter runs on a different bearer,
 - they MUST NOT imply carry-forward of partially decoded frame bytes or skipped handshake/summary steps.
+
+Cross-bearer resume/upgrade/downgrade transitions are subject to downgrade-resistance policy in `docs/adr/ADR-0004-multi-bearer-encounter-architecture.md`.
 
 ## 8) Risk Register
 

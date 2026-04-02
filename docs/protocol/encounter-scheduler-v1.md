@@ -15,9 +15,12 @@ Scheduler inputs are:
 - encounter class,
 - budget profile,
 - `nowUnixMs`,
-- `encounterAttemptID` (local-only identifier for the current bearer-scoped encounter attempt),
-- optional `bearerClass` (local-only coarse label such as `lan`, `relay`, or `other` for diagnostics only),
 - candidate cargo items.
+
+Local diagnostics context MAY additionally include:
+
+- `encounterAttemptID` (local-only identifier for the current bearer-scoped encounter attempt),
+- optional `bearerClass` (local-only coarse label such as `lan`, `relay`, or `other`).
 
 Outputs are:
 
@@ -27,7 +30,7 @@ Outputs are:
 - deterministic stop reason,
 - optional tie-break reason for adjacent equal-score decisions.
 
-`encounterAttemptID` and `bearerClass` are runtime diagnostics only. They MUST NOT be transmitted as protocol fields and MUST NOT alter frame semantics.
+`encounterAttemptID` and `bearerClass` are runtime diagnostics/correlation fields only. They MUST NOT be transmitted as protocol fields, and they MUST NOT affect ranking order, selected prefix, per-item scores, or `stopReason`.
 
 ## 3. Hard tier-first ordering (global)
 
@@ -227,14 +230,14 @@ Budget constraints MAY include:
 
 ### 10.1 Canonical constraint evaluation order
 
-When testing whether the next ranked candidate can be appended, implementations MUST evaluate constraints in this exact order:
+When selection is stopping due to a budget constraint (that is, no active `policy-stop` signal and at least one eligible candidate exists), implementations MUST evaluate constraints in this exact order:
 
 1. `maxItems`
 2. `maxBytes`
 3. `maxDurationMs`
 4. `durableCargoRatioCap`
 
-The first failing constraint in this sequence defines the terminal stop reason.
+The first failing constraint in this sequence defines the constraint-derived terminal `stopReason`.
 
 If no eligible candidates exist before selection starts, stop reason is `no-eligible-items`.
 
@@ -242,9 +245,9 @@ If no eligible candidates exist before selection starts, stop reason is `no-elig
 
 ### 10.2 Canonical stop-reason precedence
 
-Implementations MUST resolve stop reasons in this deterministic precedence order:
+Implementations MUST resolve `stopReason` in this deterministic precedence order:
 
-1. `policy-stop` (if local policy stop signal is active),
+1. `policy-stop` (if local policy stop signal is active; this overrides constraint-derived reasons),
 2. `no-eligible-items` (if selection never starts because no eligible items exist),
 3. first failing budget constraint from §10.1,
 4. `completed` (if all ranked eligible candidates were processed without earlier stop).

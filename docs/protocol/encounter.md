@@ -210,6 +210,8 @@ Outcome handling requirements:
 2. Implementations MUST NOT treat terminal outcome labels as additional frame-level semantics.
 3. Implementations MAY use terminal outcomes to choose the next local encounter opportunity.
 
+Scheduler mapping note (local-only): `stopReason=policy-stop` maps to terminal outcome `policy-stop`; `stopReason` values `completed`, `no-eligible-items`, `budget-items-exhausted`, `budget-bytes-exhausted`, `encounter-time-exhausted`, and `durable-ratio-cap-reached` map to terminal outcome `clean-end` unless a transport/protocol fault occurred; transport/protocol/runtime faults map to `failed-end`.
+
 ## 8.4 Local-only upgrade/downgrade/resume semantics (normative)
 
 Upgrade/downgrade/resume are local scheduler semantics across encounter instances:
@@ -235,6 +237,8 @@ What MUST NOT carry across:
 1. partially decoded frame bytes,
 2. unvalidated objects,
 3. bearer-specific transport/session handles as protocol identity.
+
+Cross-bearer resume/upgrade/downgrade transitions are subject to downgrade-resistance policy in `docs/adr/ADR-0004-multi-bearer-encounter-architecture.md`.
 
 ## 9. Transport-neutral correctness constraints
 
