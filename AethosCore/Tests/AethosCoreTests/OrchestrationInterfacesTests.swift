@@ -330,7 +330,6 @@ func telemetryEventCarriesRequiredEnvelopeFields() {
 @Test
 func telemetryEventAndJSONValueCodableRoundTrip() throws {
     let original = TelemetryEvent(
-        contractVersion: 1,
         eventID: EventID(rawValue: "evt-2"),
         layer: .forwarding,
         eventType: "transition_refused",
@@ -352,4 +351,34 @@ func telemetryEventAndJSONValueCodableRoundTrip() throws {
     let encoded = try JSONEncoder().encode(original)
     let decoded = try JSONDecoder().decode(TelemetryEvent.self, from: encoded)
     #expect(decoded == original)
+}
+
+@Test
+func telemetryEventDecodeRejectsNonV1ContractVersion() throws {
+    let invalidVersionPayload = """
+    {
+      "contractVersion": 2,
+      "eventID": "evt-invalid",
+      "layer": "encounter",
+      "eventType": "selection_evaluated",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760000000000,
+      "encounterContextID": "ctx-invalid",
+      "encounterInstanceID": "inst-invalid",
+      "encounterAttemptID": "attempt-invalid",
+      "payload": {}
+    }
+    """
+
+    let payloadData = try #require(invalidVersionPayload.data(using: .utf8))
+    #expect(throws: DecodingError.self) {
+        _ = try JSONDecoder().decode(TelemetryEvent.self, from: payloadData)
+    }
+}
+
+@Test
+func jsonValuePrefersIntDecodingForIntegerLiterals() throws {
+    let payloadData = try #require("1".data(using: .utf8))
+    let decoded = try JSONDecoder().decode(JSONValue.self, from: payloadData)
+    #expect(decoded == .int(1))
 }

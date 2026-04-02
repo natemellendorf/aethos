@@ -4,6 +4,10 @@ public enum TelemetryLayer: String, Equatable, Sendable, Codable {
     case adminRecord = "admin_record"
 }
 
+/// Lightweight JSON-compatible value model for telemetry payloads.
+///
+/// Numeric decode normalization is deterministic: integer decoding is attempted
+/// before floating-point decoding, so values like `1` decode as `.int(1)`.
 public enum JSONValue: Equatable, Sendable, Codable {
     case null
     case bool(Bool)
@@ -69,16 +73,8 @@ public enum JSONValue: Equatable, Sendable, Codable {
     }
 }
 
-public struct EmptyTelemetryPayload: Equatable, Sendable {
-    public init() {}
-
-    public func asObject() -> [String: JSONValue] {
-        [:]
-    }
-}
-
 public struct TelemetryEvent: Equatable, Sendable, Codable {
-    public let contractVersion: UInt8
+    public let contractVersion: UInt8 = 1
     public let eventID: EventID
     public let layer: TelemetryLayer
     public let eventType: String
@@ -90,8 +86,21 @@ public struct TelemetryEvent: Equatable, Sendable, Codable {
     public let bearerID: BearerID?
     public let payload: [String: JSONValue]
 
+    private enum CodingKeys: String, CodingKey {
+        case contractVersion
+        case eventID
+        case layer
+        case eventType
+        case eventSequence
+        case occurredAtUnixMs
+        case encounterContextID
+        case encounterInstanceID
+        case encounterAttemptID
+        case bearerID
+        case payload
+    }
+
     public init(
-        contractVersion: UInt8 = 1,
         eventID: EventID,
         layer: TelemetryLayer,
         eventType: String,
@@ -103,7 +112,6 @@ public struct TelemetryEvent: Equatable, Sendable, Codable {
         bearerID: BearerID? = nil,
         payload: [String: JSONValue] = [:]
     ) {
-        self.contractVersion = contractVersion
         self.eventID = eventID
         self.layer = layer
         self.eventType = eventType
@@ -114,6 +122,44 @@ public struct TelemetryEvent: Equatable, Sendable, Codable {
         self.encounterAttemptID = encounterAttemptID
         self.bearerID = bearerID
         self.payload = payload
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedContractVersion = try container.decode(UInt8.self, forKey: .contractVersion)
+        guard decodedContractVersion == 1 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .contractVersion,
+                in: container,
+                debugDescription: "Unsupported telemetry contractVersion: \(decodedContractVersion). Expected 1."
+            )
+        }
+
+        eventID = try container.decode(EventID.self, forKey: .eventID)
+        layer = try container.decode(TelemetryLayer.self, forKey: .layer)
+        eventType = try container.decode(String.self, forKey: .eventType)
+        eventSequence = try container.decode(UInt64.self, forKey: .eventSequence)
+        occurredAtUnixMs = try container.decode(UInt64.self, forKey: .occurredAtUnixMs)
+        encounterContextID = try container.decode(EncounterContextID.self, forKey: .encounterContextID)
+        encounterInstanceID = try container.decode(EncounterInstanceID.self, forKey: .encounterInstanceID)
+        encounterAttemptID = try container.decode(EncounterAttemptID.self, forKey: .encounterAttemptID)
+        bearerID = try container.decodeIfPresent(BearerID.self, forKey: .bearerID)
+        payload = try container.decodeIfPresent([String: JSONValue].self, forKey: .payload) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(contractVersion, forKey: .contractVersion)
+        try container.encode(eventID, forKey: .eventID)
+        try container.encode(layer, forKey: .layer)
+        try container.encode(eventType, forKey: .eventType)
+        try container.encode(eventSequence, forKey: .eventSequence)
+        try container.encode(occurredAtUnixMs, forKey: .occurredAtUnixMs)
+        try container.encode(encounterContextID, forKey: .encounterContextID)
+        try container.encode(encounterInstanceID, forKey: .encounterInstanceID)
+        try container.encode(encounterAttemptID, forKey: .encounterAttemptID)
+        try container.encodeIfPresent(bearerID, forKey: .bearerID)
+        try container.encode(payload, forKey: .payload)
     }
 }
 
