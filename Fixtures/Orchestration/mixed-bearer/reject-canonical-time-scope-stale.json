@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "reject-canonical-time-scope-stale",
+  "description": "Reject outcome fixture using canonical refusal reason time_scope_stale.",
+  "nowUnixMs": 1760000900000,
+  "timeScope": {
+    "observedAtUnixMs": 1760000000000,
+    "staleAfterUnixMs": 1760000300000,
+    "validUntilUnixMs": 1760001200000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-reject-time-scope-stale-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760000900000,
+      "encounterContextID": "ctx-001",
+      "encounterInstanceID": "inst-001",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "refusalReason": "time_scope_stale"
+      }
+    }
+  ],
+  "forwarding": [],
+  "admin_record": [],
+  "expected": {
+    "outcome": "reject",
+    "refusalReason": "time_scope_stale",
+    "terminalOutcome": "failed-end"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "accept-empty-telemetry-layers",
+  "description": "Accept outcome fixture proving all telemetry layer keys are present even when empty.",
+  "nowUnixMs": 1760000000000,
+  "timeScope": {
+    "observedAtUnixMs": 1759999999000,
+    "staleAfterUnixMs": 1760000300000
+  },
+  "encounter": [],
+  "forwarding": [],
+  "admin_record": [],
+  "expected": {
+    "outcome": "accept",
+    "terminalOutcome": "clean-end"
+  }
+}

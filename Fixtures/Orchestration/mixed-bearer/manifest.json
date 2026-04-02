@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 1,
+  "suiteID": "mbe-mixed-bearer-v1",
+  "schema": "./schema.json",
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "extensions": {
+    "declaredExtensionRefusalReasons": [
+      {
+        "code": "x_radio_scan_busy",
+        "layer": "encounter",
+        "description": "Local radio scanner is occupied by higher-priority operation"
+      }
+    ]
+  },
+  "lanes": [
+    "encounter",
+    "forwarding",
+    "admin_record"
+  ],
+  "fixtures": [
+    {
+      "lane": "encounter",
+      "fixture": "./accept-empty-telemetry-layers.json",
+      "locksIn": "All three telemetry layer keys are mandatory even when empty arrays."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./reject-canonical-time-scope-stale.json",
+      "locksIn": "Reject/stop/defer outcomes require refusalReason and canonical codes are accepted."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./defer-extension-refusal-reason-declared-in-fixture.json",
+      "locksIn": "x_-prefixed refusalReason codes are valid only with explicit declaration."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./stop-extension-refusal-reason-declared-in-manifest.json",
+      "locksIn": "Fixtures MAY reference manifest-declared extension refusal reasons via explicit marker."
+    }
+  ]
+}

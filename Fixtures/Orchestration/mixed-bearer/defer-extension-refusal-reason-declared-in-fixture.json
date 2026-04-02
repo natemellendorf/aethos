@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "defer-extension-refusal-reason-declared-in-fixture",
+  "description": "Defer outcome fixture using fixture-local extension refusal reason declaration.",
+  "nowUnixMs": 1760001000000,
+  "timeScope": {
+    "observedAtUnixMs": 1760000900000,
+    "staleAfterUnixMs": 1760001300000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-defer-extension-001",
+      "layer": "encounter",
+      "eventType": "selection_evaluated",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760001000000,
+      "encounterContextID": "ctx-002",
+      "encounterInstanceID": "inst-002",
+      "encounterAttemptID": "attempt-002",
+      "payload": {
+        "refusalReason": "x_probe_window_closed"
+      }
+    }
+  ],
+  "forwarding": [],
+  "admin_record": [],
+  "declaredExtensionRefusalReasons": [
+    {
+      "code": "x_probe_window_closed",
+      "layer": "encounter",
+      "description": "Local scan/probe window is closed by temporary policy"
+    }
+  ],
+  "expected": {
+    "outcome": "defer",
+    "refusalReason": "x_probe_window_closed",
+    "terminalOutcome": "clean-end",
+    "stopClass": "budget_exhausted"
+  }
+}
