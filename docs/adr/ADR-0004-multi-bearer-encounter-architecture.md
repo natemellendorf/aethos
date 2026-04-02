@@ -117,6 +117,8 @@ The following refusal reasons are mandatory canonical tokens for policy denial a
 
 Implementations MUST evaluate refusal conditions in the listed order, and `refusalReason` MUST be the first matching row.
 
+This mapping applies after capability-set preflight; `time_scope_*` short-circuit outcomes are evaluated before these rows per `docs/protocol/bearer-capability-model-v1.md`.
+
 | Evaluation order | Deterministic condition (first match wins) | refusalReason |
 | --- | --- | --- |
 | 1 | Peer cannot satisfy required protocol/identity compatibility for requested function | `peer_incompatible` |
