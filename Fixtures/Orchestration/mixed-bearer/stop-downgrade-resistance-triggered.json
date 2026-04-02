@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "stop-downgrade-resistance-triggered",
+  "description": "Stops orchestration when a candidate bearer would downgrade active-session assurance.",
+  "nowUnixMs": 1760103100000,
+  "timeScope": {
+    "observedAtUnixMs": 1760103000000,
+    "staleAfterUnixMs": 1760103600000,
+    "validUntilUnixMs": 1760104000000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-transition-refused-downgrade-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760103100000,
+      "encounterContextID": "ctx-downgrade-stop",
+      "encounterInstanceID": "inst-downgrade-stop",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-ble-proxy",
+      "payload": {
+        "transitionIntent": "handoff",
+        "fromBearerID": "bearer-wifi-direct",
+        "toBearerID": "bearer-ble-proxy",
+        "refusalReason": "downgrade_resistance_triggered"
+      }
+    }
+  ],
+  "forwarding": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-forwarding-policy-stop-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760103100001,
+      "encounterContextID": "ctx-downgrade-stop",
+      "encounterInstanceID": "inst-downgrade-stop",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "stopReason": "policy-stop",
+        "stopClass": "policy_stop"
+      }
+    }
+  ],
+  "admin_record": [],
+  "expected": {
+    "outcome": "stop",
+    "refusalReason": "downgrade_resistance_triggered",
+    "terminalOutcome": "policy-stop",
+    "stopClass": "policy_stop"
+  }
+}

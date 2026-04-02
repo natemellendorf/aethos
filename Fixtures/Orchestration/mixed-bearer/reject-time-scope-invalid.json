@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "reject-time-scope-invalid",
+  "description": "Rejects transition when capability time scope invariants are invalid.",
+  "nowUnixMs": 1760106100000,
+  "timeScope": {
+    "observedAtUnixMs": 1760106005000,
+    "staleAfterUnixMs": 1760106000000,
+    "validUntilUnixMs": 1760106200000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-transition-refused-time-scope-invalid-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760106100000,
+      "encounterContextID": "ctx-time-scope-invalid",
+      "encounterInstanceID": "inst-time-scope-invalid",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-lte-002",
+      "payload": {
+        "transitionIntent": "upgrade",
+        "refusalReason": "time_scope_invalid",
+        "timeScopeEval": {
+          "observedAtUnixMs": 1760106005000,
+          "staleAfterUnixMs": 1760106000000,
+          "validUntilUnixMs": 1760106200000,
+          "nowUnixMs": 1760106100000,
+          "invariants": {
+            "observedAtLteStaleAfter": false,
+            "staleAfterLteValidUntil": true
+          },
+          "result": "time_scope_invalid"
+        }
+      }
+    }
+  ],
+  "forwarding": [],
+  "admin_record": [],
+  "expected": {
+    "outcome": "reject",
+    "refusalReason": "time_scope_invalid",
+    "terminalOutcome": "policy-stop"
+  }
+}

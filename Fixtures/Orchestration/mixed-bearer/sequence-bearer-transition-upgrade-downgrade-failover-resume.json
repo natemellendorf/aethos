@@ -1,0 +1,241 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "sequence-bearer-transition-upgrade-downgrade-failover-resume",
+  "description": "Multi-attempt sequence covering upgrade, downgrade refusal, failover handoff, interruption and resume token failure.",
+  "nowUnixMs": 1760109300000,
+  "timeScope": {
+    "observedAtUnixMs": 1760109000000,
+    "staleAfterUnixMs": 1760109600000,
+    "validUntilUnixMs": 1760110200000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt1-transition-upgrade-001",
+      "layer": "encounter",
+      "eventType": "transition_evaluated",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760109000000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-bluetooth-mesh",
+      "payload": {
+        "transitionIntent": "upgrade",
+        "fromBearerID": "bearer-bluetooth-mesh",
+        "toBearerID": "bearer-wifi-direct",
+        "accepted": true
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt2-downgrade-refused-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760109050000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-002",
+      "bearerID": "bearer-ble-proxy",
+      "payload": {
+        "transitionIntent": "downgrade",
+        "fromBearerID": "bearer-wifi-direct",
+        "toBearerID": "bearer-ble-proxy",
+        "refusalReason": "downgrade_resistance_triggered"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt2-interrupt-contact-lost-001",
+      "layer": "encounter",
+      "eventType": "interruption_observed",
+      "eventSequence": 2,
+      "occurredAtUnixMs": 1760109053000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-002",
+      "bearerID": "bearer-wifi-direct",
+      "payload": {
+        "interruptionReason": "contact_lost",
+        "resumeMarkerID": "resume-marker-seq-001"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt3-transition-failover-001",
+      "layer": "encounter",
+      "eventType": "transition_evaluated",
+      "eventSequence": 3,
+      "occurredAtUnixMs": 1760109100000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-003",
+      "bearerID": "bearer-relay-ip",
+      "payload": {
+        "transitionIntent": "failover",
+        "fromBearerID": "bearer-wifi-direct",
+        "toBearerID": "bearer-relay-ip",
+        "accepted": true
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt3-interrupt-session-idle-timeout-001",
+      "layer": "encounter",
+      "eventType": "interruption_observed",
+      "eventSequence": 4,
+      "occurredAtUnixMs": 1760109150000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-003",
+      "bearerID": "bearer-relay-ip",
+      "payload": {
+        "interruptionReason": "session_idle_timeout",
+        "resumeMarkerID": "resume-marker-seq-002"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt4-transition-handoff-001",
+      "layer": "encounter",
+      "eventType": "transition_evaluated",
+      "eventSequence": 5,
+      "occurredAtUnixMs": 1760109200000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-004",
+      "bearerID": "bearer-satellite-backhaul",
+      "payload": {
+        "transitionIntent": "handoff",
+        "fromBearerID": "bearer-relay-ip",
+        "toBearerID": "bearer-satellite-backhaul",
+        "accepted": true
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-attempt4-resume-token-invalid-001",
+      "layer": "encounter",
+      "eventType": "resume_evaluated",
+      "eventSequence": 6,
+      "occurredAtUnixMs": 1760109300000,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-004",
+      "bearerID": "bearer-satellite-backhaul",
+      "payload": {
+        "resumeMarkerID": "resume-marker-seq-002",
+        "resumeRequested": true,
+        "accepted": false,
+        "refusalReason": "resume_token_invalid"
+      }
+    }
+  ],
+  "forwarding": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-forwarding-attempt1-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760109000001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "stopReason": "completed",
+        "stopClass": "completed"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-forwarding-attempt2-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760109050001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-002",
+      "payload": {
+        "stopReason": "policy-stop",
+        "stopClass": "policy_stop"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-forwarding-attempt3-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 2,
+      "occurredAtUnixMs": 1760109100001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-003",
+      "payload": {
+        "stopReason": "encounter-time-exhausted",
+        "stopClass": "budget_exhausted"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-forwarding-attempt4-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 3,
+      "occurredAtUnixMs": 1760109200001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-004",
+      "payload": {
+        "stopReason": "no-eligible-items",
+        "stopClass": "no_eligible_items"
+      }
+    }
+  ],
+  "admin_record": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-admin-attempt2-interruption-001",
+      "layer": "admin_record",
+      "eventType": "audit_record_emitted",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760109053001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-002",
+      "payload": {
+        "hookName": "interruption_record",
+        "hookOutcome": "emitted",
+        "sourceEventRef": {
+          "eventID": "event-sequence-attempt2-interrupt-contact-lost-001"
+        }
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-sequence-admin-attempt3-interruption-001",
+      "layer": "admin_record",
+      "eventType": "audit_record_emitted",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760109150001,
+      "encounterContextID": "ctx-sequence-001",
+      "encounterInstanceID": "inst-sequence-001",
+      "encounterAttemptID": "attempt-003",
+      "payload": {
+        "hookName": "interruption_record",
+        "hookOutcome": "emitted",
+        "sourceEventRef": {
+          "eventID": "event-sequence-attempt3-interrupt-session-idle-timeout-001"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "outcome": "reject",
+    "refusalReason": "resume_token_invalid",
+    "terminalOutcome": "failed-end",
+    "stopClass": "no_eligible_items"
+  }
+}

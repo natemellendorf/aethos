@@ -25,18 +25,53 @@
     },
     {
       "lane": "encounter",
-      "fixture": "./reject-canonical-time-scope-stale.json",
-      "locksIn": "Reject/stop/defer outcomes require refusalReason and canonical codes are accepted."
-    },
-    {
-      "lane": "encounter",
       "fixture": "./defer-extension-refusal-reason-declared-in-fixture.json",
       "locksIn": "x_-prefixed refusalReason codes are valid only with explicit declaration."
     },
     {
       "lane": "encounter",
+      "fixture": "./reject-canonical-time-scope-stale.json",
+      "locksIn": "Reject/stop/defer outcomes require refusalReason and canonical codes are accepted."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./reject-resume-token-invalid.json",
+      "locksIn": "Resume validation failures map to canonical refusalReason resume_token_invalid and failed-end terminal outcome."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./reject-time-scope-expired.json",
+      "locksIn": "Expired hard time scope cutoff maps to time_scope_expired with explicit timeScopeEval diagnostics."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./reject-time-scope-invalid.json",
+      "locksIn": "timeScope invariant violations map to time_scope_invalid with deterministic timeScopeEval attribution."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./sequence-bearer-transition-upgrade-downgrade-failover-resume.json",
+      "locksIn": "Multi-attempt mixed-bearer transition sequence retains per-attempt telemetry across encounter, forwarding, and admin_record layers."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./stop-budget-exhausted-clean-end.json",
+      "locksIn": "Budget exhaustion refusal remains distinct from scheduler stopReason mapping and preserves clean-end terminal classification for encounter-time-exhausted."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./stop-downgrade-resistance-triggered.json",
+      "locksIn": "Downgrade-resistance refusal drives stop outcome while terminal classification remains policy-stop."
+    },
+    {
+      "lane": "encounter",
       "fixture": "./stop-extension-refusal-reason-declared-in-manifest.json",
       "locksIn": "Fixtures MAY reference manifest-declared extension refusal reasons via explicit marker."
+    },
+    {
+      "lane": "encounter",
+      "fixture": "./stop-policy-classification-with-canonical-cause.json",
+      "locksIn": "policy-stop and policy_stop are classification tokens only; refusalReason remains a concrete canonical cause."
     }
   ]
 }

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "reject-time-scope-expired",
+  "description": "Rejects transition when capability time scope has passed validUntil cutoff.",
+  "nowUnixMs": 1760105200000,
+  "timeScope": {
+    "observedAtUnixMs": 1760105000000,
+    "staleAfterUnixMs": 1760105100000,
+    "validUntilUnixMs": 1760105200000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-transition-refused-time-scope-expired-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760105200000,
+      "encounterContextID": "ctx-time-scope-expired",
+      "encounterInstanceID": "inst-time-scope-expired",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-lte-001",
+      "payload": {
+        "transitionIntent": "resume",
+        "refusalReason": "time_scope_expired",
+        "timeScopeEval": {
+          "observedAtUnixMs": 1760105000000,
+          "staleAfterUnixMs": 1760105100000,
+          "validUntilUnixMs": 1760105200000,
+          "nowUnixMs": 1760105200000,
+          "invariants": {
+            "observedAtLteStaleAfter": true,
+            "staleAfterLteValidUntil": true
+          },
+          "result": "time_scope_expired"
+        }
+      }
+    }
+  ],
+  "forwarding": [],
+  "admin_record": [],
+  "expected": {
+    "outcome": "reject",
+    "refusalReason": "time_scope_expired",
+    "terminalOutcome": "policy-stop"
+  }
+}
