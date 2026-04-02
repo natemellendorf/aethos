@@ -177,21 +177,6 @@
         "stopReason": "encounter-time-exhausted",
         "stopClass": "budget_exhausted"
       }
-    },
-    {
-      "contractVersion": 1,
-      "eventID": "event-sequence-forwarding-attempt4-001",
-      "layer": "forwarding",
-      "eventType": "budget_evaluated",
-      "eventSequence": 3,
-      "occurredAtUnixMs": 1760109200001,
-      "encounterContextID": "ctx-sequence-001",
-      "encounterInstanceID": "inst-sequence-001",
-      "encounterAttemptID": "attempt-004",
-      "payload": {
-        "stopReason": "no-eligible-items",
-        "stopClass": "no_eligible_items"
-      }
     }
   ],
   "admin_record": [
@@ -235,7 +220,6 @@
   "expected": {
     "outcome": "reject",
     "refusalReason": "resume_token_invalid",
-    "terminalOutcome": "failed-end",
-    "stopClass": "no_eligible_items"
+    "terminalOutcome": "failed-end"
   }
 }

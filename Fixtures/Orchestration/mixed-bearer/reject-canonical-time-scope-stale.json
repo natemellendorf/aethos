@@ -20,7 +20,18 @@
       "encounterInstanceID": "inst-001",
       "encounterAttemptID": "attempt-001",
       "payload": {
-        "refusalReason": "time_scope_stale"
+        "refusalReason": "time_scope_stale",
+        "timeScopeEval": {
+          "observedAtUnixMs": 1760000000000,
+          "staleAfterUnixMs": 1760000300000,
+          "validUntilUnixMs": 1760001200000,
+          "nowUnixMs": 1760000900000,
+          "invariants": {
+            "observedAtLteStaleAfter": true,
+            "staleAfterLteValidUntil": true
+          },
+          "result": "time_scope_stale"
+        }
       }
     }
   ],
