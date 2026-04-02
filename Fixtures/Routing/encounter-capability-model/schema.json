@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aethos.dev/fixtures/routing/encounter-capability-model/v1/schema.json",
+  "title": "Aethos Bearer Capability Model Fixture Schema v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fixtureID",
+    "nowUnixMs",
+    "capabilitySet",
+    "expected"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "encounter-capability-model.v1"
+    },
+    "fixtureID": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "nowUnixMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "capabilitySet": {
+      "$ref": "#/$defs/capabilitySet"
+    },
+    "expected": {
+      "$ref": "#/$defs/expected"
+    }
+  },
+  "$defs": {
+    "uint8": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "uint16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "uint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "uint64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "timeScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "observedAt",
+        "staleAfter"
+      ],
+      "properties": {
+        "observedAt": {
+          "$ref": "#/$defs/uint64"
+        },
+        "staleAfter": {
+          "$ref": "#/$defs/uint64"
+        },
+        "validUntil": {
+          "$ref": "#/$defs/uint64"
+        }
+      }
+    },
+    "securityPosture": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "securityPostureClass",
+        "authenticationAssuranceLevel",
+        "integrityProtectionLevel",
+        "confidentialityLevel",
+        "sessionBindingLevel"
+      ],
+      "properties": {
+        "securityPostureClass": {
+          "$ref": "#/$defs/uint8"
+        },
+        "authenticationAssuranceLevel": {
+          "$ref": "#/$defs/uint8"
+        },
+        "integrityProtectionLevel": {
+          "$ref": "#/$defs/uint8"
+        },
+        "confidentialityLevel": {
+          "$ref": "#/$defs/uint8"
+        },
+        "sessionBindingLevel": {
+          "$ref": "#/$defs/uint8"
+        }
+      }
+    },
+    "transferSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "supportsDiscovery",
+        "supportsControl",
+        "supportsData",
+        "supportsResume",
+        "orderedDelivery",
+        "reliabilityClass"
+      ],
+      "properties": {
+        "supportsDiscovery": {
+          "type": "boolean"
+        },
+        "supportsControl": {
+          "type": "boolean"
+        },
+        "supportsData": {
+          "type": "boolean"
+        },
+        "supportsResume": {
+          "type": "boolean"
+        },
+        "orderedDelivery": {
+          "type": "boolean"
+        },
+        "reliabilityClass": {
+          "$ref": "#/$defs/uint8"
+        }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "maxFrameBytes",
+        "preferredTransferUnitBytes",
+        "estimatedGoodputBytesPerSecond",
+        "maxConcurrentSessions"
+      ],
+      "properties": {
+        "maxFrameBytes": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/uint32"
+            },
+            {
+              "minimum": 1
+            }
+          ]
+        },
+        "preferredTransferUnitBytes": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/uint32"
+            },
+            {
+              "minimum": 1
+            }
+          ]
+        },
+        "estimatedGoodputBytesPerSecond": {
+          "$ref": "#/$defs/uint64"
+        },
+        "maxConcurrentSessions": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/uint16"
+            },
+            {
+              "minimum": 1
+            }
+          ]
+        }
+      }
+    },
+    "keepaliveIdleRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "requiresKeepalive",
+        "idleTimeoutMs"
+      ],
+      "properties": {
+        "requiresKeepalive": {
+          "type": "boolean"
+        },
+        "keepaliveIntervalMs": {
+          "$ref": "#/$defs/uint64"
+        },
+        "idleTimeoutMs": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/uint64"
+            },
+            {
+              "minimum": 1
+            }
+          ]
+        },
+        "hardSessionLifetimeMs": {
+          "$ref": "#/$defs/uint64"
+        },
+        "maxConsecutiveMissedKeepalives": {
+          "$ref": "#/$defs/uint16"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "requiresKeepalive": {
+                "const": true
+              }
+            },
+            "required": [
+              "requiresKeepalive"
+            ]
+          },
+          "then": {
+            "required": [
+              "keepaliveIntervalMs"
+            ]
+          }
+        }
+      ]
+    },
+    "capabilitySet": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[a-z0-9_]+$": true
+      },
+      "required": [
+        "capabilitySetVersion",
+        "timeScope",
+        "securityPosture",
+        "transferSemantics",
+        "resourceLimits",
+        "keepaliveIdleRules"
+      ],
+      "properties": {
+        "capabilitySetVersion": {
+          "const": 1
+        },
+        "timeScope": {
+          "$ref": "#/$defs/timeScope"
+        },
+        "securityPosture": {
+          "$ref": "#/$defs/securityPosture"
+        },
+        "transferSemantics": {
+          "$ref": "#/$defs/transferSemantics"
+        },
+        "resourceLimits": {
+          "$ref": "#/$defs/resourceLimits"
+        },
+        "keepaliveIdleRules": {
+          "$ref": "#/$defs/keepaliveIdleRules"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "refusalReason": {
+          "type": "string",
+          "pattern": "^(time_scope_stale|time_scope_expired|time_scope_invalid|capability_mismatch|resume_not_supported|security_posture_insufficient|downgrade_resistance_triggered|x_[a-z0-9_]+)$"
+        }
+      }
+    }
+  }
+}

@@ -67,6 +67,8 @@ Protocol correctness boundary
 7. **Explicit lifecycle transitions**: upgrade, downgrade, failover, and resume decisions MUST be explicit and observable in telemetry.
 8. **Telemetry layering separation**: encounter orchestration telemetry, forwarding/reconciliation telemetry, and administrative-record telemetry hooks MUST remain separately attributable.
 
+Canonical capability-set shape and deterministic `timeScope` evaluation for this ADR are defined in `docs/protocol/bearer-capability-model-v1.md`.
+
 ## Decision checklist
 
 Any architecture or implementation change in multi-bearer encounter flow MUST satisfy all checks:
