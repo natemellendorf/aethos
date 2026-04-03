@@ -47,11 +47,13 @@ This plan does not redefine contracts. It composes the existing ones:
 3. Allows downstreams to build **platform-specific CLAs** without requiring platform details inside AethosCore.
 4. Establishes a stable “decision loop skeleton” for selection and transitions, even if transfer/resume semantics are initially conservative.
 
-It is explicitly **downstream-ready**: the core types and contracts are in place, and downstreams can begin integration behind gates.
+It is explicitly **downstream-ready**: contract scaffolding exists (types, fixtures, runner), but runtime orchestration is still planned work and downstream integration should proceed behind gates.
 
-### 1.2 What is implementable now in AethosCore vs platform-specific
+### 1.2 What is implementable next in AethosCore vs platform-specific
 
-**Implement now in `AethosCore` (first-wave core):**
+These items are not yet implemented runtime behavior; they are the intended next implementation steps built on existing contract scaffolding.
+
+**Implement next in `AethosCore` (first-wave core):**
 - `EncounterContext` runtime skeleton (durable state + orchestration loop boundaries)
 - CLA registry + snapshotting (capability snapshots and event streams)
 - Selection evaluation + transition decision loop orchestration (policy-driven; deterministic ordering; refusal mapping)
@@ -213,7 +215,7 @@ The MixedBearer fixture suite is the **conformance gate** for:
 - three-lane attribution model (`encounter`, `forwarding`, `admin_record`)
 - deterministic timeScope invariants (`observedAt <= staleAfter`, `staleAfter <= validUntil` when present)
 - refusal reason coherence (`time_scope_*` requires `timeScopeEval`, etc.)
-- terminal outcome vs stopClass coherence (terminal mapping rules are enforced by tests)
+- terminal outcome vs stopClass coherence (subset coherence checks enforced by `MixedBearerFixtureRunnerTests`)
 
 This is not “nice to have”; it is the downstream integration safety net.
 
@@ -232,6 +234,11 @@ This is not “nice to have”; it is the downstream integration safety net.
   - your orchestration must emit telemetry events consistent with the contract
 
 ### 4.3 Practical gate checklist (what to run / what “green” means)
+
+Run these commands as the practical gate sequence:
+- `swift test --filter MixedBearerFixtureRunnerTests`
+- `swift test --filter MixedBearerFixtureMirrorGuardTests`
+- `swift test` (full suite)
 
 **Gate A: manifest + schema version**
 - The manifest `schemaVersion` must remain `mbe-mixed-bearer.v1`.
