@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "reject-resume-token-invalid",
+  "description": "Rejects a resume attempt when token validation fails.",
+  "nowUnixMs": 1760102100000,
+  "timeScope": {
+    "observedAtUnixMs": 1760102000000,
+    "staleAfterUnixMs": 1760102600000,
+    "validUntilUnixMs": 1760103000000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-resume-token-invalid-001",
+      "layer": "encounter",
+      "eventType": "resume_evaluated",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760102100000,
+      "encounterContextID": "ctx-resume-token-invalid",
+      "encounterInstanceID": "inst-resume-token-invalid",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-wifi-direct",
+      "payload": {
+        "resumeMarkerID": "resume-marker-001",
+        "resumeRequested": true,
+        "accepted": false,
+        "refusalReason": "resume_token_invalid"
+      }
+    }
+  ],
+  "forwarding": [],
+  "admin_record": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-admin-resume-token-invalid-001",
+      "layer": "admin_record",
+      "eventType": "audit_record_emitted",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760102100001,
+      "encounterContextID": "ctx-resume-token-invalid",
+      "encounterInstanceID": "inst-resume-token-invalid",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "hookName": "resume_validation",
+        "hookOutcome": "emitted",
+        "sourceEventRef": {
+          "eventID": "event-resume-token-invalid-001"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "outcome": "reject",
+    "refusalReason": "resume_token_invalid",
+    "terminalOutcome": "failed-end"
+  }
+}

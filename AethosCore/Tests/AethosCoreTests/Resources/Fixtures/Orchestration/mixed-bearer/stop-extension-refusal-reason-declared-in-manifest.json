@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "stop-extension-refusal-reason-declared-in-manifest",
+  "description": "Stop outcome fixture using manifest-declared extension refusal reason.",
+  "nowUnixMs": 1760002000000,
+  "timeScope": {
+    "observedAtUnixMs": 1760001000000,
+    "staleAfterUnixMs": 1760002600000,
+    "validUntilUnixMs": 1760004000000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-stop-extension-manifest-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 3,
+      "occurredAtUnixMs": 1760002000000,
+      "encounterContextID": "ctx-003",
+      "encounterInstanceID": "inst-003",
+      "encounterAttemptID": "attempt-003",
+      "payload": {
+        "refusalReason": "x_radio_scan_busy"
+      }
+    }
+  ],
+  "forwarding": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-forwarding-linkage-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 4,
+      "occurredAtUnixMs": 1760002000001,
+      "encounterContextID": "ctx-003",
+      "encounterInstanceID": "inst-003",
+      "encounterAttemptID": "attempt-003",
+      "payload": {
+        "stopReason": "policy-stop",
+        "stopClass": "policy_stop"
+      }
+    }
+  ],
+  "admin_record": [],
+  "extensionRefusalReasonsDeclaredInManifest": true,
+  "expected": {
+    "outcome": "stop",
+    "refusalReason": "x_radio_scan_busy",
+    "terminalOutcome": "policy-stop",
+    "stopClass": "policy_stop"
+  }
+}

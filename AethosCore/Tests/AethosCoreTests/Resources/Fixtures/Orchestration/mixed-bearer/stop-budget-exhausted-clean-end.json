@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "stop-budget-exhausted-clean-end",
+  "description": "Stops after budget exhaustion while preserving clean-end terminal mapping.",
+  "nowUnixMs": 1760104100000,
+  "timeScope": {
+    "observedAtUnixMs": 1760104000000,
+    "staleAfterUnixMs": 1760104600000,
+    "validUntilUnixMs": 1760105000000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-selection-refused-budget-exhausted-001",
+      "layer": "encounter",
+      "eventType": "selection_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760104100000,
+      "encounterContextID": "ctx-budget-stop",
+      "encounterInstanceID": "inst-budget-stop",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-relay-ip",
+      "payload": {
+        "selectionStage": "forwarding_budget",
+        "refusalReason": "budget_exhausted"
+      }
+    },
+    {
+      "contractVersion": 1,
+      "eventID": "event-terminal-budget-exhausted-001",
+      "layer": "encounter",
+      "eventType": "attempt_terminalized",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760104100002,
+      "encounterContextID": "ctx-budget-stop",
+      "encounterInstanceID": "inst-budget-stop",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-relay-ip",
+      "payload": {
+        "terminalOutcome": "clean-end",
+        "stopClass": "budget_exhausted"
+      }
+    }
+  ],
+  "forwarding": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-forwarding-budget-mapping-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 2,
+      "occurredAtUnixMs": 1760104100001,
+      "encounterContextID": "ctx-budget-stop",
+      "encounterInstanceID": "inst-budget-stop",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "stopReason": "encounter-time-exhausted",
+        "stopClass": "budget_exhausted"
+      }
+    }
+  ],
+  "admin_record": [],
+  "expected": {
+    "outcome": "stop",
+    "refusalReason": "budget_exhausted",
+    "terminalOutcome": "clean-end",
+    "stopClass": "budget_exhausted"
+  }
+}

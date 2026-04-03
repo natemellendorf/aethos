@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "mbe-mixed-bearer.v1",
+  "fixtureID": "stop-policy-classification-with-canonical-cause",
+  "description": "Policy stop classification with concrete canonical refusal cause and no policy token misuse.",
+  "nowUnixMs": 1760107100000,
+  "timeScope": {
+    "observedAtUnixMs": 1760107000000,
+    "staleAfterUnixMs": 1760107600000,
+    "validUntilUnixMs": 1760108000000
+  },
+  "encounter": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-policy-stop-security-posture-001",
+      "layer": "encounter",
+      "eventType": "transition_refused",
+      "eventSequence": 0,
+      "occurredAtUnixMs": 1760107100000,
+      "encounterContextID": "ctx-policy-classification",
+      "encounterInstanceID": "inst-policy-classification",
+      "encounterAttemptID": "attempt-001",
+      "bearerID": "bearer-relay-fallback",
+      "payload": {
+        "transitionIntent": "handoff",
+        "refusalReason": "security_posture_insufficient"
+      }
+    }
+  ],
+  "forwarding": [
+    {
+      "contractVersion": 1,
+      "eventID": "event-forwarding-policy-classification-001",
+      "layer": "forwarding",
+      "eventType": "budget_evaluated",
+      "eventSequence": 1,
+      "occurredAtUnixMs": 1760107100001,
+      "encounterContextID": "ctx-policy-classification",
+      "encounterInstanceID": "inst-policy-classification",
+      "encounterAttemptID": "attempt-001",
+      "payload": {
+        "stopReason": "policy-stop",
+        "stopClass": "policy_stop"
+      }
+    }
+  ],
+  "admin_record": [],
+  "expected": {
+    "outcome": "stop",
+    "refusalReason": "security_posture_insufficient",
+    "terminalOutcome": "policy-stop",
+    "stopClass": "policy_stop"
+  }
+}
