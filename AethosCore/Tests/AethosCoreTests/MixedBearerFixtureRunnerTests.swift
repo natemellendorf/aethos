@@ -23,6 +23,7 @@ final class MixedBearerFixtureRunnerTests: XCTestCase {
 
     func testMixedBearerFixturesMeetDeterministicRunnerInvariants() throws {
         let manifest = try MixedBearerFixtureTestSupport.loadManifest()
+        let schemaRules = try MixedBearerFixtureTestSupport.loadSchemaSubsetValidationRules()
         let fixturePaths = manifest.fixtures.map(\.normalizedFixtureRelativePath)
 
         let uniqueFixturePaths = Set(fixturePaths)
@@ -30,7 +31,12 @@ final class MixedBearerFixtureRunnerTests: XCTestCase {
 
         for fixtureReference in manifest.fixtures {
             let relativePath = fixtureReference.normalizedFixtureRelativePath
-            try validateFixture(relativePath: relativePath, fixtureReference: fixtureReference, manifest: manifest)
+            try validateFixture(
+                relativePath: relativePath,
+                fixtureReference: fixtureReference,
+                manifest: manifest,
+                schemaRules: schemaRules
+            )
         }
     }
 }
@@ -39,7 +45,8 @@ private extension MixedBearerFixtureRunnerTests {
     func validateFixture(
         relativePath: String,
         fixtureReference: MixedBearerFixtureTestSupport.FixtureReference,
-        manifest: MixedBearerFixtureTestSupport.Manifest
+        manifest: MixedBearerFixtureTestSupport.Manifest,
+        schemaRules: MixedBearerFixtureTestSupport.SchemaSubsetValidationRules
     ) throws {
         guard MixedBearerFixtureTestSupport.telemetryLaneKeys.contains(fixtureReference.lane) else {
             throw MixedBearerFixtureRunnerError.invalidFixture(
@@ -49,20 +56,78 @@ private extension MixedBearerFixtureRunnerTests {
         }
 
         let fixtureJSON = try MixedBearerFixtureTestSupport.loadFixtureJSON(relativePath: relativePath)
+        try assertSchemaSubsetValidation(
+            in: fixtureJSON,
+            schemaRules: schemaRules,
+            relativePath: relativePath
+        )
         try assertTelemetryLayerKeysExist(in: fixtureJSON, relativePath: relativePath)
 
         let fixture = try MixedBearerFixtureTestSupport.loadFixture(relativePath: relativePath)
         try assertSchemaVersionMatchesManifest(fixture: fixture, manifest: manifest, relativePath: relativePath)
         try assertTimeScopeInvariants(fixture: fixture, relativePath: relativePath)
         try assertExpectedOutcomeRefusalCoherence(fixture: fixture, manifest: manifest, relativePath: relativePath)
+        try assertExpectedTerminalOutcomeStopClassCoherence(fixture: fixture, relativePath: relativePath)
 
         let telemetryEvents = try decodeAndValidateTelemetryEvents(
             fixtureJSON: fixtureJSON,
             fixture: fixture,
             manifest: manifest,
+            schemaRules: schemaRules,
             relativePath: relativePath
         )
         try assertEventSequenceMonotonicByEncounterAttempt(events: telemetryEvents, relativePath: relativePath)
+    }
+
+    /// Validates a schema.json-driven subset only (not full JSON Schema evaluation).
+    func assertSchemaSubsetValidation(
+        in fixtureJSON: [String: Any],
+        schemaRules: MixedBearerFixtureTestSupport.SchemaSubsetValidationRules,
+        relativePath: String
+    ) throws {
+        for requiredKey in schemaRules.rootRequiredKeys.sorted() where fixtureJSON[requiredKey] == nil {
+            throw MixedBearerFixtureRunnerError.invalidFixture(
+                relativePath: relativePath,
+                detail: "schema.json subset validation: missing required top-level key \(requiredKey)"
+            )
+        }
+
+        guard let expectedObject = fixtureJSON["expected"] as? [String: Any] else {
+            throw MixedBearerFixtureRunnerError.invalidFixture(
+                relativePath: relativePath,
+                detail: "schema.json subset validation: expected must be an object"
+            )
+        }
+
+        if let terminalOutcomeAny = expectedObject["terminalOutcome"] {
+            guard let terminalOutcomeToken = terminalOutcomeAny as? String else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "schema.json subset validation: expected.terminalOutcome must be a string"
+                )
+            }
+            guard schemaRules.terminalOutcomeTokens.contains(terminalOutcomeToken) else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "schema.json subset validation: expected.terminalOutcome must be one of \(schemaRules.terminalOutcomeTokens.sorted())"
+                )
+            }
+        }
+
+        if let stopClassAny = expectedObject["stopClass"] {
+            guard let stopClassToken = stopClassAny as? String else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "schema.json subset validation: expected.stopClass must be a string"
+                )
+            }
+            guard schemaRules.stopClassTokens.contains(stopClassToken) else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "schema.json subset validation: expected.stopClass must be one of \(schemaRules.stopClassTokens.sorted())"
+                )
+            }
+        }
     }
 
     func assertSchemaVersionMatchesManifest(
@@ -99,9 +164,10 @@ private extension MixedBearerFixtureRunnerTests {
         fixtureJSON: [String: Any],
         fixture: MixedBearerFixtureTestSupport.FixtureDocument,
         manifest: MixedBearerFixtureTestSupport.Manifest,
+        schemaRules: MixedBearerFixtureTestSupport.SchemaSubsetValidationRules,
         relativePath: String
-    ) throws -> [TelemetryEvent] {
-        var combinedEvents: [TelemetryEvent] = []
+    ) throws -> [MixedBearerFixtureTestSupport.TelemetryFixtureEvent] {
+        var combinedEvents: [MixedBearerFixtureTestSupport.TelemetryFixtureEvent] = []
 
         for laneKey in MixedBearerFixtureTestSupport.telemetryLaneKeys {
             guard let laneEventsAny = fixtureJSON[laneKey] as? [Any] else {
@@ -123,7 +189,8 @@ private extension MixedBearerFixtureRunnerTests {
                     eventObject,
                     relativePath: relativePath,
                     laneKey: laneKey,
-                    index: index
+                    index: index,
+                    requiredKeys: schemaRules.telemetryEventRequiredKeys
                 )
 
                 let event = try MixedBearerFixtureTestSupport.decodeTelemetryEvent(
@@ -155,6 +222,11 @@ private extension MixedBearerFixtureRunnerTests {
                         relativePath: relativePath,
                         context: "\(laneKey)[\(index)].payload.refusalReason"
                     )
+                } else if event.payload["refusalReason"] != nil {
+                    throw MixedBearerFixtureRunnerError.invalidFixture(
+                        relativePath: relativePath,
+                        detail: "\(laneKey)[\(index)].payload.refusalReason must be a string when present"
+                    )
                 }
 
                 combinedEvents.append(event)
@@ -168,70 +240,29 @@ private extension MixedBearerFixtureRunnerTests {
         _ eventObject: [String: Any],
         relativePath: String,
         laneKey: String,
-        index: Int
+        index: Int,
+        requiredKeys: Set<String>
     ) throws {
         let context = "\(relativePath):\(laneKey)[\(index)]"
 
-        let alwaysRequired: [String] = [
-            "contractVersion",
-            "eventID",
-            "encounterAttemptID",
-            "eventSequence",
-            "layer",
-            "payload",
-        ]
-
-        for key in alwaysRequired where eventObject[key] == nil {
+        for key in requiredKeys.sorted() where eventObject[key] == nil {
             throw MixedBearerFixtureRunnerError.invalidFixture(
                 relativePath: relativePath,
-                detail: "\(context) missing required envelope key \(key)"
+                detail: "\(context) missing required telemetry envelope key \(key) (per schema.json telemetryEvent.required)"
             )
         }
-
-        try assertAliasKeyExists(
-            eventObject,
-            aliases: ["eventType", "kind"],
-            expectedKeyName: "kind",
-            relativePath: relativePath,
-            context: context
-        )
-
-        try assertAliasKeyExists(
-            eventObject,
-            aliases: ["occurredAtUnixMs", "createdAtUnixMs"],
-            expectedKeyName: "createdAtUnixMs",
-            relativePath: relativePath,
-            context: context
-        )
-
-        try assertAliasKeyExists(
-            eventObject,
-            aliases: ["encounterContextID", "encounterID"],
-            expectedKeyName: "encounterID",
-            relativePath: relativePath,
-            context: context
-        )
     }
 
-    func assertAliasKeyExists(
-        _ eventObject: [String: Any],
-        aliases: [String],
-        expectedKeyName: String,
-        relativePath: String,
-        context: String
+    func assertEventSequenceMonotonicByEncounterAttempt(
+        events: [MixedBearerFixtureTestSupport.TelemetryFixtureEvent],
+        relativePath: String
     ) throws {
-        guard aliases.contains(where: { eventObject[$0] != nil }) else {
-            throw MixedBearerFixtureRunnerError.invalidFixture(
-                relativePath: relativePath,
-                detail: "\(context) missing required envelope key \(expectedKeyName) (accepted aliases: \(aliases.joined(separator: ", ")))"
-            )
-        }
-    }
+        let groupedByAttempt = Dictionary(grouping: events, by: { $0.encounterAttemptID })
 
-    func assertEventSequenceMonotonicByEncounterAttempt(events: [TelemetryEvent], relativePath: String) throws {
-        let groupedByAttempt = Dictionary(grouping: events, by: { $0.encounterAttemptID.rawValue })
-
-        for (encounterAttemptID, attemptEvents) in groupedByAttempt {
+        for encounterAttemptID in groupedByAttempt.keys.sorted() {
+            guard let attemptEvents = groupedByAttempt[encounterAttemptID] else {
+                continue
+            }
             let sortedSequences = attemptEvents.map(\.eventSequence).sorted()
             guard Set(sortedSequences).count == sortedSequences.count else {
                 throw MixedBearerFixtureRunnerError.invalidFixture(
@@ -279,6 +310,64 @@ private extension MixedBearerFixtureRunnerTests {
                 manifest: manifest,
                 relativePath: relativePath,
                 context: "expected.refusalReason"
+            )
+        }
+    }
+
+    func assertExpectedTerminalOutcomeStopClassCoherence(
+        fixture: MixedBearerFixtureTestSupport.FixtureDocument,
+        relativePath: String
+    ) throws {
+        let expected = fixture.expected
+        let expectedRefusalReason = expected.refusalReason
+
+        switch expectedRefusalReason {
+        case .timeScopeStale?, .timeScopeExpired?, .timeScopeInvalid?:
+            guard expected.terminalOutcome == .policyStop else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "expected.refusalReason=\(expectedRefusalReason?.rawValue ?? "nil") requires expected.terminalOutcome=policy-stop"
+                )
+            }
+        case .resumeTokenInvalid?:
+            guard expected.terminalOutcome == .failedEnd else {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "expected.refusalReason=resume_token_invalid requires expected.terminalOutcome=failed-end"
+                )
+            }
+        default:
+            break
+        }
+
+        guard let terminalOutcome = expected.terminalOutcome else { return }
+
+        if terminalOutcome == .policyStop {
+            if expected.outcome == .stop {
+                guard let stopClass = expected.stopClass else {
+                    throw MixedBearerFixtureRunnerError.invalidFixture(
+                        relativePath: relativePath,
+                        detail: "expected.outcome=stop with expected.terminalOutcome=policy-stop requires expected.stopClass=policy_stop"
+                    )
+                }
+                guard stopClass == .policyStop else {
+                    throw MixedBearerFixtureRunnerError.invalidFixture(
+                        relativePath: relativePath,
+                        detail: "expected.terminalOutcome=policy-stop requires expected.stopClass=policy_stop; got \(stopClass.rawValue)"
+                    )
+                }
+            } else if let stopClass = expected.stopClass, stopClass != .policyStop {
+                throw MixedBearerFixtureRunnerError.invalidFixture(
+                    relativePath: relativePath,
+                    detail: "expected.terminalOutcome=policy-stop allows expected.stopClass only as policy_stop; got \(stopClass.rawValue)"
+                )
+            }
+        }
+
+        if expected.stopClass == .policyStop, terminalOutcome != .policyStop {
+            throw MixedBearerFixtureRunnerError.invalidFixture(
+                relativePath: relativePath,
+                detail: "expected.stopClass=policy_stop requires expected.terminalOutcome=policy-stop"
             )
         }
     }

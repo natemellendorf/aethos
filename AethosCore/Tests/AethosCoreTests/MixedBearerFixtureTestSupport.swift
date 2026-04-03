@@ -59,9 +59,6 @@ enum MixedBearerFixtureTestSupport {
         let fixtureID: String
         let nowUnixMs: UInt64
         let timeScope: FixtureTimeScope
-        let encounter: [TelemetryEvent]
-        let forwarding: [TelemetryEvent]
-        let adminRecord: [TelemetryEvent]
         let declaredExtensionRefusalReasons: [ExtensionRefusalReasonDeclaration]?
         let extensionRefusalReasonsDeclaredInManifest: Bool?
         let expected: ExpectedOutcome
@@ -71,9 +68,6 @@ enum MixedBearerFixtureTestSupport {
             case fixtureID
             case nowUnixMs
             case timeScope
-            case encounter
-            case forwarding
-            case adminRecord = "admin_record"
             case declaredExtensionRefusalReasons
             case extensionRefusalReasonsDeclaredInManifest
             case expected
@@ -95,8 +89,36 @@ enum MixedBearerFixtureTestSupport {
     struct ExpectedOutcome: Decodable {
         let outcome: Outcome
         let refusalReason: RefusalReason?
-        let terminalOutcome: String?
-        let stopClass: String?
+        let terminalOutcome: TerminalOutcome?
+        let stopClass: EncounterStopClass?
+    }
+
+    struct TelemetryFixtureEvent: Decodable {
+        let contractVersion: UInt8
+        let eventID: String
+        let layer: TelemetryLayer
+        let eventType: String
+        let eventSequence: UInt64
+        let occurredAtUnixMs: UInt64
+        let encounterContextID: String
+        let encounterInstanceID: String
+        let encounterAttemptID: String
+        let bearerID: String?
+        let payload: [String: JSONValue]
+    }
+
+    /// Minimal schema-driven checks loaded directly from schema.json.
+    ///
+    /// This is intentionally a subset (not a full JSON Schema engine):
+    /// - root required keys
+    /// - telemetry event required keys
+    /// - expected.terminalOutcome allowed tokens
+    /// - expected.stopClass allowed tokens
+    struct SchemaSubsetValidationRules {
+        let rootRequiredKeys: Set<String>
+        let telemetryEventRequiredKeys: Set<String>
+        let terminalOutcomeTokens: Set<String>
+        let stopClassTokens: Set<String>
     }
 
     enum Outcome: String, Decodable {
@@ -123,12 +145,90 @@ enum MixedBearerFixtureTestSupport {
         return dictionary
     }
 
+    static func loadSchemaSubsetValidationRules() throws -> SchemaSubsetValidationRules {
+        let schemaPath = "schema.json"
+        let schema = try loadFixtureJSON(relativePath: schemaPath)
+
+        let rootRequired = try requiredStringSet(
+            in: schema,
+            key: "required",
+            relativePath: schemaPath,
+            context: "schema.required"
+        )
+
+        let defs = try nestedObject(
+            in: schema,
+            key: "$defs",
+            relativePath: schemaPath,
+            context: "schema.$defs"
+        )
+
+        let telemetryEvent = try nestedObject(
+            in: defs,
+            key: "telemetryEvent",
+            relativePath: schemaPath,
+            context: "schema.$defs.telemetryEvent"
+        )
+        let telemetryEventRequired = try requiredStringSet(
+            in: telemetryEvent,
+            key: "required",
+            relativePath: schemaPath,
+            context: "schema.$defs.telemetryEvent.required"
+        )
+
+        let expectedOutcome = try nestedObject(
+            in: defs,
+            key: "expectedOutcome",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome"
+        )
+        let expectedProperties = try nestedObject(
+            in: expectedOutcome,
+            key: "properties",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome.properties"
+        )
+
+        let terminalOutcome = try nestedObject(
+            in: expectedProperties,
+            key: "terminalOutcome",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome.properties.terminalOutcome"
+        )
+        let terminalOutcomeTokens = try requiredStringSet(
+            in: terminalOutcome,
+            key: "enum",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome.properties.terminalOutcome.enum"
+        )
+
+        let stopClass = try nestedObject(
+            in: expectedProperties,
+            key: "stopClass",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome.properties.stopClass"
+        )
+        let stopClassTokens = try requiredStringSet(
+            in: stopClass,
+            key: "enum",
+            relativePath: schemaPath,
+            context: "schema.$defs.expectedOutcome.properties.stopClass.enum"
+        )
+
+        return SchemaSubsetValidationRules(
+            rootRequiredKeys: rootRequired,
+            telemetryEventRequiredKeys: telemetryEventRequired,
+            terminalOutcomeTokens: terminalOutcomeTokens,
+            stopClassTokens: stopClassTokens
+        )
+    }
+
     static func decodeTelemetryEvent(
         rawObject: [String: Any],
         relativePath: String,
         laneKey: String,
         index: Int
-    ) throws -> TelemetryEvent {
+    ) throws -> TelemetryFixtureEvent {
         let context = "\(relativePath):\(laneKey)[\(index)]"
         let data: Data
         do {
@@ -138,9 +238,9 @@ enum MixedBearerFixtureTestSupport {
         }
 
         do {
-            return try JSONDecoder().decode(TelemetryEvent.self, from: data)
+            return try JSONDecoder().decode(TelemetryFixtureEvent.self, from: data)
         } catch {
-            throw FixtureError.invalidFixture(relativePath: context, detail: "Event failed TelemetryEvent decode: \(error)")
+            throw FixtureError.invalidFixture(relativePath: context, detail: "Event failed mixed-bearer telemetry decode: \(error)")
         }
     }
 
@@ -169,6 +269,36 @@ enum MixedBearerFixtureTestSupport {
         } catch {
             throw FixtureError.invalidFixture(relativePath: relativePath, detail: "JSON decode failed: \(error)")
         }
+    }
+
+    private static func nestedObject(
+        in dictionary: [String: Any],
+        key: String,
+        relativePath: String,
+        context: String
+    ) throws -> [String: Any] {
+        guard let nested = dictionary[key] as? [String: Any] else {
+            throw FixtureError.invalidFixture(
+                relativePath: relativePath,
+                detail: "\(context) is missing or is not an object"
+            )
+        }
+        return nested
+    }
+
+    private static func requiredStringSet(
+        in dictionary: [String: Any],
+        key: String,
+        relativePath: String,
+        context: String
+    ) throws -> Set<String> {
+        guard let values = dictionary[key] as? [String], !values.isEmpty else {
+            throw FixtureError.invalidFixture(
+                relativePath: relativePath,
+                detail: "\(context) is missing or is not a non-empty string array"
+            )
+        }
+        return Set(values)
     }
 
     private static func normalizeResourcePath(_ path: String) -> String {
