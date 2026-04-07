@@ -29,11 +29,13 @@ This contract defines only BLE discovery identity advertisement bytes. It does *
 
 Legacy BLE advertising/scan-response PDUs are constrained to 31 bytes each. To preserve filterability and fit identity bytes:
 
-1. Primary advertisement **MUST** include the Aethos primary service UUID in AD type `0x07` (Complete List of 128-bit Service UUIDs).
-2. Identity payload bytes **MUST** be carried in AD type `0x21` (Service Data - 128-bit UUID).
-3. For legacy advertising, AD type `0x21` with identity payload **MUST** be in scan response.
-4. Implementations using BLE Extended Advertising MAY place AD type `0x21` in primary advertising data if space allows, but payload bytes and parse rules **MUST** remain identical to this contract.
-5. Implementations **MUST NOT** require AD type `0x07` and AD type `0x21` to coexist in the same 31-byte PDU.
+1. Primary advertisement **MUST** include the Aethos primary service UUID in AD type `0x07` (Complete List of 128-bit Service UUIDs) or AD type `0x06` (Incomplete List of 128-bit Service UUIDs).
+2. In AD type `0x06`/`0x07`, UUID bytes are concatenated 16-byte entries; list length rule is `(Length - 1) % 16 == 0`.
+3. Identity payload bytes **MUST** be carried in AD type `0x21` (Service Data - 128-bit UUID) keyed by the Aethos UUID.
+4. For legacy advertising, AD type `0x21` with identity payload **SHOULD** be in scan response.
+5. For extended advertising, AD type `0x21` with identity payload MAY be in primary advertising data.
+6. Parsers **MUST** search scan response for Aethos AD type `0x21` first, then primary advertising data.
+7. Implementations **MUST NOT** require UUID-list AD and service-data AD to coexist in the same 31-byte PDU.
 
 Rationale: AD type `0x21` includes a 16-byte UUID prefix; with legacy 31-byte constraints this leaves at most 13 payload bytes, so v1 freezes a 12-byte payload.
 
@@ -41,31 +43,44 @@ Rationale: AD type `0x21` includes a 16-byte UUID prefix; with legacy 31-byte co
 
 ### 4.1 Endianness for UUID bytes in AD structures
 
-For AD type `0x07` and AD type `0x21`, UUID octets on air are little-endian BLE order.
+For AD type `0x06`, AD type `0x07`, and AD type `0x21`, UUID octets on air are little-endian BLE order.
 
 - UUID canonical text: `181aa585-5a29-50f9-87f7-0e6cd20dee4e`
 - UUID bytes in AD payload: `4e ee 0d d2 6c 0e f7 87 f9 50 29 5a 85 a5 1a 18`
 
-### 4.2 Primary advertisement requirement
+### 4.2 Primary advertisement UUID-list requirement
 
 Primary advertisement MUST contain an AD structure:
 
-- `Length`: `0x11`
-- `Type`: `0x07`
-- `Data`: 16-byte little-endian Aethos UUID
+- `Type`: `0x07` (preferred) or `0x06` (accepted)
+- `Length`: MUST satisfy `(Length - 1) % 16 == 0`
+- `Data`: one or more concatenated 16-byte little-endian UUIDs
+- At least one UUID entry MUST equal the Aethos UUID
 
-Example AD fragment (hex):
+Example (single UUID, hex):
 
 `11 07 4e ee 0d d2 6c 0e f7 87 f9 50 29 5a 85 a5 1a 18`
 
-### 4.3 Scan response service data requirement (legacy mode)
+Example (multi-UUID list with Aethos present, hex):
 
-Scan response MUST contain exactly one v1 identity AD structure:
+`21 07 ff ee dd cc bb aa 99 88 77 66 55 44 33 22 11 00 4e ee 0d d2 6c 0e f7 87 f9 50 29 5a 85 a5 1a 18`
+
+### 4.3 Identity service-data requirement (`0x21`)
+
+Advertising set (primary + optional scan response) MUST contain Aethos v1 identity bytes in AD type `0x21`:
 
 - `Length`: `0x1D` (29 bytes = 1 type + 16 UUID + 12 payload)
 - `Type`: `0x21`
 - `Data[0..15]`: 16-byte little-endian Aethos UUID
 - `Data[16..27]`: 12-byte identity payload (Section 5)
+
+Uniqueness and duplicate handling:
+
+1. Scanners **MUST** inspect scan response first, then primary advertising data.
+2. If no Aethos AD type `0x21` is found across both, parser **MUST** reject.
+3. If more than one Aethos AD type `0x21` appears in the same PDU, parser **MUST** reject.
+4. If exactly one Aethos AD type `0x21` appears in each PDU (one in scan response + one in primary), payload bytes **MUST** be identical; mismatch **MUST** reject.
+5. When both are present and identical, scanner **MUST** parse the scan-response copy as authoritative.
 
 ## 5. Identity payload wire format (fixed 12 bytes)
 
@@ -100,6 +115,7 @@ Capability reserved-bit rule (forward compatible):
 1. Advertisers **MUST** set reserved bits (3..15) to zero in v1.
 2. Scanners **MUST NOT** ascribe meaning to unknown/reserved bits.
 3. Scanners **MUST NOT** reject solely because reserved capability bits are set.
+4. For dedupe/linkage decisions, scanners SHOULD normalize capabilities as `(capabilities & 0x0007)` and treat bits 3..15 as zero.
 
 ### 5.3 `identity_ref` constraints
 
@@ -114,6 +130,11 @@ Capability reserved-bit rule (forward compatible):
 Context bytes for both derivations are ASCII with trailing NUL:
 
 - `"aethos:ble:idref:v1\0"`
+
+Authoritative derivation vectors are in:
+
+- `Fixtures/BLE/identity-v1/vector-stable-derivation.json`
+- `Fixtures/BLE/identity-v1/vector-rotating-derivation.json`
 
 ### 6.1 Stable mode (`identity_rotating = 0`)
 
@@ -140,10 +161,12 @@ Where:
 ## 7. Privacy, rotation, and anti-fingerprinting
 
 1. Implementations that require stronger unlinkability SHOULD use rotating mode.
-2. When `identity_private=1`, scanners SHOULD avoid long-term linkage beyond short operational windows.
-3. Implementations SHOULD avoid adding stable identifying AD structures (for example static local names) alongside this contract when privacy is requested.
-4. Deduplication SHOULD treat `identity_ref` as short-lived and use a rolling 60-second correlation window.
-5. Rotating identities MUST be expected to change over time and MUST NOT be treated as permanent node identity.
+2. Advertisers setting `identity_private=1` SHOULD also set `identity_rotating=1`.
+3. When `identity_private=1`, scanners SHOULD avoid long-term linkage beyond short operational windows.
+4. Scanners SHOULD avoid persisting or logging raw identity payload bytes when `identity_private=1`.
+5. Implementations SHOULD avoid adding stable identifying AD structures (for example static local names) alongside this contract when privacy is requested.
+6. Deduplication SHOULD treat `identity_ref` as short-lived and use a rolling 60-second correlation window.
+7. Rotating identities MUST be expected to change over time and MUST NOT be treated as permanent node identity.
 
 ## 8. Authentication/tag statement for v1
 
@@ -158,12 +181,15 @@ Scanner/parser behavior for v1 MUST fail closed when any required condition is v
 
 ### 9.1 Required acceptance checks
 
-1. Primary advertisement includes AD type `0x07` with the exact Aethos UUID.
-2. Scan response includes AD type `0x21` with the exact Aethos UUID.
-3. AD type `0x21` payload length after UUID is exactly 12 bytes.
-4. `version == 0x01`.
-5. `flags` reserved bits (2..7) are all zero.
-6. `identity_ref` is not all zero.
+1. Primary advertisement includes AD type `0x06` or `0x07` whose UUID list contains the exact Aethos UUID.
+2. For AD type `0x06`/`0x07`, `(Length - 1) % 16 == 0`.
+3. At least one AD type `0x21` with Aethos UUID exists in scan response or primary advertising data.
+4. No PDU contains multiple Aethos AD type `0x21` entries.
+5. If both scan response and primary contain Aethos AD type `0x21`, payload bytes are identical.
+6. AD type `0x21` payload length after UUID is exactly 12 bytes.
+7. `version == 0x01`.
+8. `flags` reserved bits (2..7) are all zero.
+9. `identity_ref` is not all zero.
 
 If any check fails, parser MUST reject this BLE identity payload.
 
@@ -175,10 +201,10 @@ Unknown or unsupported `version` values MUST be rejected (fail closed). Parsers 
 
 A conforming implementation MUST:
 
-1. Advertise primary UUID in AD type `0x07` for Aethos filtering.
-2. Emit/parse AD type `0x21` service data with exact UUID + 12-byte payload bytes.
-3. Enforce fail-closed checks in Section 9.
-4. Interpret capability bits 0..2 as defined and ignore unknown capability bits.
+1. Advertisers: include Aethos UUID in AD type `0x07` or `0x06` UUID lists and set reserved capability bits (3..15) to zero.
+2. Advertisers: emit AD type `0x21` with exact Aethos UUID + 12-byte payload bytes.
+3. Scanners: enforce fail-closed checks in Section 9.
+4. Scanners: interpret capability bits 0..2 as defined, tolerate unknown capability bits for forward compatibility, and mask bits 3..15 to zero for dedupe/linkage.
 5. Keep BLE payload minimal and non-CBOR; explicit version byte governs parsing.
 
 Authoritative conformance vectors are in `Fixtures/BLE/identity-v1/`.

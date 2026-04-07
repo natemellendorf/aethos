@@ -18,8 +18,8 @@ With Service Data AD type `0x21`, 16 bytes are consumed by the 128-bit UUID befo
 
 `docs/protocol/ble-identity-v1.md` is the canonical contract for BLE identity bytes. It freezes:
 
-1. Primary UUID in AD type `0x07` for filtering in primary advertisement.
-2. Identity payload in AD type `0x21` in scan response for legacy mode.
+1. Primary UUID in AD type `0x07` (or `0x06`) UUID lists for filtering in primary advertisement.
+2. Identity payload in AD type `0x21` in scan response for legacy mode, with extended-advertising allowance in primary advertising data.
 3. Fixed payload length of 12 bytes (`version`, `flags`, `capabilities`, `identity_ref`).
 4. `identity_ref` length of 8 bytes with stable and rotating derivation modes.
 5. Fail-closed parser requirements for length/version/reserved-flag/all-zero-id checks.
