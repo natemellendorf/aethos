@@ -1,0 +1,12 @@
+{
+  "fixtureID": "invalid-reserved-flag-bit-set",
+  "description": "Invalid: reserved flag bit (bit 2..7) is set and parser must fail closed.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18010403001122334455667788"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "RESERVED_FLAG_BITS_SET"
+  }
+}

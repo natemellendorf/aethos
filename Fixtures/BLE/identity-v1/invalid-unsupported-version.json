@@ -1,0 +1,12 @@
+{
+  "fixtureID": "invalid-unsupported-version",
+  "description": "Invalid: unsupported version value must be rejected without fallback.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18020003001122334455667788"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "UNSUPPORTED_VERSION"
+  }
+}

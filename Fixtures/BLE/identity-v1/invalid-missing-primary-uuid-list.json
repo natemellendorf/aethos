@@ -1,0 +1,12 @@
+{
+  "fixtureID": "invalid-missing-primary-uuid-list",
+  "description": "Invalid: primary advertisement omits AD type 0x07 Aethos UUID list.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "020106050954455354",
+    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "MISSING_PRIMARY_UUID_LIST"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "fixtureID": "invalid-wrong-primary-uuid",
+  "description": "Invalid: primary advertisement UUID list does not contain frozen Aethos UUID.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "020106110700112233445566778899aabbccddeeff",
+    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "WRONG_PRIMARY_UUID"
+  }
+}

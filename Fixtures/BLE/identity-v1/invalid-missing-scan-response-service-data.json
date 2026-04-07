@@ -1,0 +1,12 @@
+{
+  "fixtureID": "invalid-missing-scan-response-service-data",
+  "description": "Invalid: scan response omits AD type 0x21 service data for BLE identity payload.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseHex": "050954455354"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "MISSING_SCAN_RESPONSE_SERVICE_DATA"
+  }
+}

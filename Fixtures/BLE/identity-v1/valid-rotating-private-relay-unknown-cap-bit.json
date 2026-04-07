@@ -1,0 +1,30 @@
+{
+  "fixtureID": "valid-rotating-private-relay-unknown-cap-bit",
+  "description": "Valid rotating/private identity with RELAY capability and reserved capability bit 8 set; parser accepts and ignores unknown bit meaning.",
+  "legacyAdvertising": {
+    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a1801030401a1a2a3a4a5a6a7a8"
+  },
+  "expected": {
+    "valid": true,
+    "parsed": {
+      "serviceUuid": "181aa585-5a29-50f9-87f7-0e6cd20dee4e",
+      "version": 1,
+      "flags": {
+        "raw": "0x03",
+        "identityRotating": true,
+        "identityPrivate": true
+      },
+      "capabilities": {
+        "rawLittleEndianHex": "0401",
+        "lan": false,
+        "mpc": false,
+        "relay": true,
+        "unknownBitsSet": [
+          8
+        ]
+      },
+      "identityRefHex": "a1a2a3a4a5a6a7a8"
+    }
+  }
+}
