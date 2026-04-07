@@ -1,0 +1,13 @@
+{
+  "fixtureID": "invalid-multi-uuid-list-excludes-aethos",
+  "description": "Invalid: primary AD type 0x07 carries multiple 128-bit UUIDs but excludes the frozen Aethos UUID.",
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "020106210700112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788",
+    "constraints": "synthetic"
+  },
+  "expected": {
+    "valid": false,
+    "errorCode": "WRONG_PRIMARY_UUID"
+  }
+}

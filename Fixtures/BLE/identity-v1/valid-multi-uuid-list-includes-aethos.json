@@ -1,9 +1,10 @@
 {
   "fixtureID": "valid-multi-uuid-list-includes-aethos",
   "description": "Valid: primary AD type 0x07 carries multiple 128-bit UUIDs and includes Aethos UUID; scan response carries one valid identity service-data AD type 0x21.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "0201062107ffeeddccbbaa998877665544332211004eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "0201062107ffeeddccbbaa998877665544332211004eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788",
+    "constraints": "synthetic"
   },
   "expected": {
     "valid": true,

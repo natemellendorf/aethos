@@ -1,9 +1,10 @@
 {
   "fixtureID": "invalid-multiple-aethos-service-data-in-scan-response",
   "description": "Invalid: scan response contains more than one Aethos AD type 0x21 structure.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a180100030011223344556677881d214eee0dd26c0ef787f950295a85a51a18010003009988776655443322"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a180100030011223344556677881d214eee0dd26c0ef787f950295a85a51a18010003009988776655443322",
+    "constraints": "synthetic"
   },
   "expected": {
     "valid": false,

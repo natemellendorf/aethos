@@ -1,9 +1,10 @@
 {
   "fixtureID": "invalid-wrong-service-data-uuid",
   "description": "Invalid: service-data UUID in scan response does not match frozen Aethos UUID.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d2100112233445566778899aabbccddeeff010003001122334455667788"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d2100112233445566778899aabbccddeeff010003001122334455667788",
+    "constraints": "legacy"
   },
   "expected": {
     "valid": false,

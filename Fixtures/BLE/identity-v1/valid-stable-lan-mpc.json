@@ -1,9 +1,10 @@
 {
   "fixtureID": "valid-stable-lan-mpc",
   "description": "Primary advertisement includes UUID list; scan response carries valid v1 service data with stable identity and LAN+MPC capabilities.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a18010003001122334455667788",
+    "constraints": "legacy"
   },
   "expected": {
     "valid": true,

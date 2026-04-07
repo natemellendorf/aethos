@@ -3,7 +3,7 @@
   "description": "Rotating identity_ref derivation test vector using k_ble, epoch integer, and explicit LE64 epoch encoding.",
   "derivation": {
     "mode": "rotating",
-    "contextAscii": "aethos:ble:idref:v1\\u0000",
+    "contextDescription": "ASCII \"aethos:ble:idref:v1\" followed by one NUL byte.",
     "contextHex": "616574686f733a626c653a69647265663a763100",
     "kBleHex": "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
     "epoch": 123456,

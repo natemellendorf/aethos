@@ -1,9 +1,10 @@
 {
   "fixtureID": "valid-all-capabilities",
   "description": "Valid stable identity with LAN, MPC, and RELAY capabilities set.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a1801000700deadbeefcafebabe"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a1801000700deadbeefcafebabe",
+    "constraints": "legacy"
   },
   "expected": {
     "valid": true,

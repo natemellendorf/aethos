@@ -1,9 +1,10 @@
 {
   "fixtureID": "invalid-wrong-payload-length",
   "description": "Invalid: service-data identity payload is not exactly 12 bytes.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1c214eee0dd26c0ef787f950295a85a51a180100030011223344556677"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1c214eee0dd26c0ef787f950295a85a51a180100030011223344556677",
+    "constraints": "legacy"
   },
   "expected": {
     "valid": false,

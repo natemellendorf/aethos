@@ -10,6 +10,7 @@
     "./valid-multi-uuid-list-includes-aethos.json",
     "./invalid-wrong-service-data-uuid.json",
     "./invalid-wrong-primary-uuid.json",
+    "./invalid-multi-uuid-list-excludes-aethos.json",
     "./invalid-missing-primary-uuid-list.json",
     "./invalid-missing-identity-service-data.json",
     "./invalid-wrong-payload-length.json",

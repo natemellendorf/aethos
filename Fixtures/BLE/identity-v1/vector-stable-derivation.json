@@ -3,7 +3,7 @@
   "description": "Stable identity_ref derivation test vector using canonical lowercase-hex wayfarer_id bytes with fixed context string.",
   "derivation": {
     "mode": "stable",
-    "contextAscii": "aethos:ble:idref:v1\\u0000",
+    "contextDescription": "ASCII \"aethos:ble:idref:v1\" followed by one NUL byte.",
     "contextHex": "616574686f733a626c653a69647265663a763100",
     "wayfarerIdHex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
     "expectedIdentityRefHex": "93ba95052d19e57c"

@@ -1,9 +1,10 @@
 {
   "fixtureID": "valid-scanner-tolerates-unknown-capability-bit",
   "description": "Scanner-tolerance case: payload sets unknown capability bit 8; scanner accepts for forward compatibility, ignores unknown-bit meaning, and masks unknown bits for dedupe/linkage.",
-  "legacyAdvertising": {
-    "primaryAdvHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
-    "scanResponseHex": "1d214eee0dd26c0ef787f950295a85a51a1801030401a1a2a3a4a5a6a7a8"
+  "advertisingPdu": {
+    "primaryAdvAdStructuresHex": "02010611074eee0dd26c0ef787f950295a85a51a18",
+    "scanResponseAdStructuresHex": "1d214eee0dd26c0ef787f950295a85a51a1801030401a1a2a3a4a5a6a7a8",
+    "constraints": "legacy"
   },
   "expected": {
     "valid": true,
