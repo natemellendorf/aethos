@@ -1,7 +1,8 @@
 # ADR: BLE Discovery Identity Contract v1 Placement and Budget
 
-- Status: Accepted
+- Status: Superseded by [ADR-BLE-IDENTITY-V2](ADR-BLE-IDENTITY-V2.md)
 - Date: 2026-04-07
+- Superseded: 2026-04-11
 
 ## Context
 
