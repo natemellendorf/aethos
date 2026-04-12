@@ -1,6 +1,10 @@
 # BLE Discovery Identity Contract v1
 
-Status: authoritative BLE discovery identity wire contract.
+> **⚠️ DEPRECATED** — This specification is superseded by [BLE Discovery Identity Contract v2](ble-identity-v2.md).
+> New implementations MUST use V2. This document is retained for historical reference and migration support.
+> See [ADR-BLE-IDENTITY-V2](../adr/ADR-BLE-IDENTITY-V2.md) for the decision record.
+
+Status: **deprecated**. Superseded by `docs/protocol/ble-identity-v2.md`.
 
 ## 1. Normative language and authority
 
