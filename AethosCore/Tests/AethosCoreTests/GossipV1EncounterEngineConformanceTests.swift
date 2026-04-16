@@ -814,6 +814,96 @@ func gossipV1_engine_receiptMustBeForImmediatelyPrecedingOutboundTransfer() thro
     }
 }
 
+@Test
+func gossipV1_engine_fullRejection_doesNotEmitReceipt() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    let store = InMemoryGossipStore()
+    let now: UInt64 = 1_000
+    let clock = FixedClock(nowMs: now)
+    _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
+
+    let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 21)
+    let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+    let expired = try GossipV1TransferFrame.Object(itemID: itemID, envelopeBytes: envelopeBytes, expiryUnixMs: 0, hopCount: 0)
+    let transfer = GossipV1TransferFrame(unsafeObjects: [expired])
+
+    let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
+    #expect(result.outbound.isEmpty)
+    #expect(result.acceptedTransferItemIDs.isEmpty)
+    #expect(result.acceptedReceiptItemIDs.isEmpty)
+    #expect(result.nonfatalValidationErrors == [.transferExpired(nowUnixMs: now, expiryUnixMs: 0)])
+}
+
+@Test
+func gossipV1_engine_partialAcceptance_emitsReceiptForAcceptedSubset() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    let store = InMemoryGossipStore()
+    let now: UInt64 = 1_000
+    let clock = FixedClock(nowMs: now)
+    _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
+
+    let validEnvelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 22)
+    let expiredEnvelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 23)
+    let validItemID = GossipV1ItemID.derive(fromEnvelopeBytes: validEnvelopeBytes)
+    let expiredItemID = GossipV1ItemID.derive(fromEnvelopeBytes: expiredEnvelopeBytes)
+
+    let valid = try GossipV1TransferFrame.Object(
+        itemID: validItemID,
+        envelopeBytes: validEnvelopeBytes,
+        expiryUnixMs: now + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1,
+        hopCount: 0
+    )
+    let expired = try GossipV1TransferFrame.Object(
+        itemID: expiredItemID,
+        envelopeBytes: expiredEnvelopeBytes,
+        expiryUnixMs: 0,
+        hopCount: 0
+    )
+    let transfer = GossipV1TransferFrame(unsafeObjects: [valid, expired])
+
+    let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
+    #expect(result.outbound.count == 1)
+    guard case .receipt(let receipt) = result.outbound.first else {
+        return #expect(Bool(false), "expected receipt outbound")
+    }
+    #expect(receipt.received == [validItemID])
+    #expect(result.acceptedTransferItemIDs == [validItemID])
+    #expect(result.acceptedReceiptItemIDs.isEmpty)
+    #expect(result.nonfatalValidationErrors == [.transferExpired(nowUnixMs: now, expiryUnixMs: 0)])
+}
+
+@Test
+func gossipV1_engine_fullAcceptance_emitsReceipt() throws {
+    let localHello = try makeHello(version: GossipV1.GOSSIP_VERSION)
+    var engine = GossipV1EncounterEngine(config: .init(localHello: localHello))
+    let store = InMemoryGossipStore()
+    let now: UInt64 = 1_000
+    let clock = FixedClock(nowMs: now)
+    _ = try engine.ingestInboundFrame(.hello(localHello), clock: FixedClock(nowMs: 0), store: store)
+
+    let envelopeBytes = try GossipV1TestSupport.makeTransferEnvelopeBytes(seed: 24)
+    let itemID = GossipV1ItemID.derive(fromEnvelopeBytes: envelopeBytes)
+    let object = try GossipV1TransferFrame.Object(
+        itemID: itemID,
+        envelopeBytes: envelopeBytes,
+        expiryUnixMs: now + GossipV1.CLOCK_SKEW_TOLERANCE_MS + 1,
+        hopCount: 0
+    )
+    let transfer = try GossipV1TransferFrame(objects: [object])
+
+    let result = try engine.ingestInboundFrame(.transfer(transfer), clock: clock, store: store)
+    #expect(result.outbound.count == 1)
+    guard case .receipt(let receipt) = result.outbound.first else {
+        return #expect(Bool(false), "expected receipt outbound")
+    }
+    #expect(receipt.received == [itemID])
+    #expect(result.acceptedTransferItemIDs == [itemID])
+    #expect(result.acceptedReceiptItemIDs.isEmpty)
+    #expect(result.nonfatalValidationErrors.isEmpty)
+}
+
 // MARK: - Helpers
 
 private func makeHello(version: UInt64, maxWant: UInt64 = 128, maxTransfer: UInt64 = 16) throws -> GossipV1HelloFrame {

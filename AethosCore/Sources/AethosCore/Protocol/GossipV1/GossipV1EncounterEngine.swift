@@ -239,10 +239,21 @@ public struct GossipV1EncounterEngine: Sendable {
         case .transfer(let transfer):
             let ingest = try handleInboundTransfer(transfer, clock: clock, store: store)
             let accepted = ingest.accepted
-            let receipt = try buildReceiptForLastInboundTransfer(received: accepted)
+            // Suppress RECEIPT when no items were accepted (full rejection).
+            // Sending an empty RECEIPT falsely signals progress and can trigger
+            // runaway resync loops in transport runtimes.
+            let outbound: [GossipV1Frame]
+            if accepted.isEmpty {
+                // Clear last-transfer state so the engine does not expect a receipt.
+                lastValidInboundTransferIDs = nil
+                outbound = []
+            } else {
+                let receipt = try buildReceiptForLastInboundTransfer(received: accepted)
+                outbound = [receipt]
+            }
             return InboundResult(
                 state: state,
-                outbound: [receipt],
+                outbound: outbound,
                 acceptedTransferItemIDs: accepted,
                 acceptedReceiptItemIDs: [],
                 nonfatalValidationErrors: ingest.nonfatalErrors
